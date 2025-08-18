@@ -1,0 +1,122 @@
+[
+  {
+    "sku": "SEAL-20L",
+    "nombre": "SEAL",
+    "categoria": "Herbicida",
+    "cultivo": ["Maíz", "Sorgo"],
+    "plaga": ["Verdolaga", "Quinuilla", "Malva taporita", "Chiori"],
+    "dosis": "3–4 L/ha (maíz) | 3 L/ha (sorgo)",
+    "formulacion": "Herbicida selectivo de pre y postemergencia. Acción sistémica y contacto.",
+    "presentaciones": ["20 L"],
+    "precio_bs": 0,
+    "link_ficha": "https://tinyurl.com/PORTAFOLIO-NEWCHEM"
+  },
+  {
+    "sku": "SINERGY-10-20L",
+    "nombre": "SINERGY",
+    "categoria": "Herbicida",
+    "cultivo": ["Soya"],
+    "plaga": ["Rogelia", "Orizahá", "Cadillo", "Pata de gallina", "Pata de gallo"],
+    "dosis": "0.3–0.5 L/ha",
+    "formulacion": "Herbicida selectivo post emergente. Rápida absorción y amplio uso sobre el espectro de malezas.",
+    "presentaciones": ["10 L", "20 L"],
+    "precio_bs": 0,
+    "link_ficha": "https://tinyurl.com/PORTAFOLIO-NEWCHEM"
+  },
+  {
+    "sku": "DRIER-20-200L",
+    "nombre": "DRIER",
+    "categoria": "Herbicida",
+    "cultivo": ["Barbecho químico"],
+    "plaga": ["Chiori"],
+    "dosis": "2 L/ha",
+    "formulacion": "Herbicida de contacto y desecante. Rápida acción sobre las malezas.",
+    "presentaciones": ["20 L", "200 L"],
+    "precio_bs": 0,
+    "link_ficha": "https://tinyurl.com/PORTAFOLIO-NEWCHEM"
+  },
+  {
+    "sku": "GLISATO-20-200L",
+    "nombre": "GLISATO",
+    "categoria": "Herbicida",
+    "cultivo": ["Barbecho químico"],
+    "plaga": ["Rogelia", "Torito", "Verdolaga camba", "Emilia", "Leche leche", "Sanana", "Chiori", "Malva taporita", "Chupurujume", "Maicillo"],
+    "dosis": "2.5–3 L/ha",
+    "formulacion": "Herbicida no selectivo de acción sistémica y por translocación. Buena performance.",
+    "presentaciones": ["20 L", "200 L"],
+    "precio_bs": 0,
+    "link_ficha": "https://tinyurl.com/PORTAFOLIO-NEWCHEM"
+  },
+  {
+    "sku": "NICOXAM-10L",
+    "nombre": "NICOXAM",
+    "categoria": "Insecticida-Acaricida",
+    "cultivo": ["Soya"],
+    "plaga": ["Chinche verde pequeño"],
+    "dosis": "0.2–0.25 L/ha",
+    "formulacion": "Insecticida de contacto e ingestión. Excelente control para chinches.",
+    "presentaciones": ["10 L"],
+    "precio_bs": 0,
+    "link_ficha": "https://tinyurl.com/PORTAFOLIO-NEWCHEM"
+  },
+  {
+    "sku": "TRENCH-10L",
+    "nombre": "TRENCH",
+    "categoria": "Insecticida-Acaricida",
+    "cultivo": ["Soya"],
+    "plaga": ["Chinche café panza verde", "Mosca barrenadora"],
+    "dosis": "0.3–0.4 L/ha",
+    "formulacion": "Insecticida que actúa por contacto e ingestión. Excelente efecto de choque y volteo en plagas.",
+    "presentaciones": ["10 L"],
+    "precio_bs": 0,
+    "link_ficha": "https://tinyurl.com/PORTAFOLIO-NEWCHEM"
+  },
+  {
+    "sku": "MEXIN-5-10L",
+    "nombre": "MEXIN",
+    "categoria": "Insecticida-Acaricida",
+    "cultivo": ["Soya"],
+    "plaga": ["Ácaro"],
+    "dosis": "0.11–0.14 L/ha",
+    "formulacion": "Insecticida-Acaricida de contacto e ingestión. Control eficaz sobre ácaros.",
+    "presentaciones": ["5 L", "10 L"],
+    "precio_bs": 0,
+    "link_ficha": "https://tinyurl.com/PORTAFOLIO-NEWCHEM"
+  },
+  {
+    "sku": "FENPRONIL-1KG",
+    "nombre": "FENPRONIL",
+    "categoria": "Insecticida-Acaricida",
+    "cultivo": ["Soya"],
+    "plaga": ["Picudo gris pequeño", "Trips"],
+    "dosis": "45–60 g/100 kg de semilla o 80 g/ha",
+    "formulacion": "Insecticida de contacto e ingestión. Altamente efectivo y contundente sobre un amplio rango de plagas.",
+    "presentaciones": ["1 Kg"],
+    "precio_bs": 0,
+    "link_ficha": "https://tinyurl.com/PORTAFOLIO-NEWCHEM"
+  },
+  {
+    "sku": "NOATO-1KG",
+    "nombre": "NOATO",
+    "categoria": "Insecticida-Acaricida",
+    "cultivo": ["Soya"],
+    "plaga": ["Pegador de hoja"],
+    "dosis": "0.125–0.2 Kg/ha",
+    "formulacion": "Insecticida de contacto e ingestión. Formulación diferenciada, no tranca boquillas.",
+    "presentaciones": ["1 Kg"],
+    "precio_bs": 0,
+    "link_ficha": "https://tinyurl.com/PORTAFOLIO-NEWCHEM"
+  },
+  {
+    "sku": "LAYER-20KG",
+    "nombre": "LAYER",
+    "categoria": "Fungicida",
+    "cultivo": ["Soya"],
+    "plaga": ["Roya Asiática"],
+    "dosis": "2–3 Kg/ha",
+    "formulacion": "Fungicida de contacto, preventivo, curativo, erradicante, protector-multisitio. Buen control sobre enfermedades de fin de ciclo.",
+    "presentaciones": ["20 Kg"],
+    "precio_bs": 0,
+    "link_ficha": "https://tinyurl.com/PORTAFOLIO-NEWCHEM"
+  }
+]

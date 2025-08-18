@@ -1,0 +1,7 @@
+{
+  "greeting": "¡Hola! Soy el asistente de New Chem Agroquímicos. En que puedo ayudarte hoy?",
+  "ask_zone": {
+    "text": "Para adaptar la recomendación, ¿en qué departamento produces?",
+    "options": ["Santa Cruz", "Cochabamba", "La Paz"]
+  }
+}
