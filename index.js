@@ -1,4 +1,4 @@
-// index.js (Messenger Router) — flujo robusto con aperturas de vendedor
+// index.js (Messenger Router) — flujo robusto con aperturas de vendedor + producto desde catálogo + política de envíos
 import 'dotenv/config';
 import express from 'express';
 import fs from 'fs';
@@ -17,7 +17,7 @@ const STORE_LNG = process.env.STORE_LNG || '-63.1532503';
 // ===== DATA =====
 function loadJSON(p){ try { return JSON.parse(fs.readFileSync(p,'utf8')); } catch { return {}; } }
 let FAQS = loadJSON('./knowledge/faqs.json');
-let CATALOG = loadJSON('./knowledge/catalog.json'); // <- para reconocer productos
+let CATALOG = loadJSON('./knowledge/catalog.json'); // para reconocer productos
 
 // ===== CONSTANTES =====
 const DEPARTAMENTOS = ['Santa Cruz','Cochabamba','La Paz','Chuquisaca','Tarija','Oruro','Potosí','Beni','Pando'];
@@ -41,8 +41,13 @@ const sessions = new Map();
 function getSession(psid){
   if(!sessions.has(psid)){
     sessions.set(psid,{
-      pending: null,                  // 'nombre' | 'departamento' | 'subzona' | 'subzona_free'
-      vars: { departamento:null, subzona:null, hectareas:null, phone:null, productIntent:null, intent:null },
+      pending: null,  // 'nombre' | 'departamento' | 'subzona' | 'subzona_free' | 'prod_from_catalog'
+      vars: {
+        departamento:null, subzona:null,
+        hectareas:null, phone:null,
+        productIntent:null, // << producto de interés
+        intent:null
+      },
       profileName: null,
       flags: { greeted:false, finalShown:false, finalShownAt:0 },
       memory: [],
@@ -94,17 +99,16 @@ const asksPrice     = t => /(precio|cu[aá]nto vale|cu[aá]nto cuesta|cotizar|co
 const wantsAgent    = t => /asesor|humano|ejecutivo|vendedor|representante|agente|contact(a|o|arme)|whats?app|wasap|wsp|wpp|n[uú]mero|telefono|tel[eé]fono|celular/i.test(norm(t));
 const isGreeting    = t => /(hola|buen[oa]s (d[ií]as|tardes|noches)|hey|hello)/i.test(t);
 const asksProducts  = t => /(qu[eé] productos tienen|que venden|productos disponibles|l[ií]nea de productos)/i.test(t);
+const asksShipping  = t => /(env[ií]os?|env[ií]an|hacen env[ií]os|delivery|entrega|env[ií]an hasta|mandan|env[ií]o a)/i.test(norm(t));
 
-// ===== Reconocer producto (catálogo)
+// Reconocer producto (catálogo)
 function findProduct(text){
   const q = norm(text).replace(/[^a-z0-9\s]/g,' ').replace(/\s+/g,' ').trim();
   if(!CATALOG || !Array.isArray(CATALOG)) return null;
   let best=null, bestScore=0;
   for(const p of CATALOG){
     const name = norm(p.nombre||'').trim(); if(!name) continue;
-    // exact contains
-    if(q.includes(name)) return p;
-    // simple fuzzy: intersección de tokens
+    if(q.includes(name)) return p; // contains
     const qTok = new Set(q.split(' '));
     const nTok = new Set(name.split(' '));
     const inter = [...qTok].filter(x=>nTok.has(x)).length;
@@ -193,23 +197,24 @@ function summaryTextForFinal(s){
   const nombre = s.profileName || 'Cliente';
   const dep = s.vars.departamento || 'ND';
   const zona = s.vars.subzona || 'ND';
-  const extra = [
+  const extraLines = [
+    s.vars.productIntent ? `• Producto de interés: ${s.vars.productIntent}` : null,
     s.vars.hectareas ? `• Hectáreas: ${s.vars.hectareas}` : null,
     s.vars.phone ? `• Teléfono: ${s.vars.phone}` : null
   ].filter(Boolean).join('\n');
 
-  return `¡Excelente, ${nombre}! 🚜 abajo la demas información recopilada
+  return `¡Excelente, ${nombre}! 🚜 
 • Departamento: ${dep}
 • Zona: ${zona}
-${extra ? extra + '\n' : ''}Ten en cuenta que nuestra compra mínima es de USD 3.000 y la entrega del producto se realiza en nuestro almacén de Santa Cruz.
-📲 Seguimos por WhatsApp para coordinar tu cotización.
-Haz clic aquí 👇`;
+${extraLines ? extraLines + '\n' : ''}Ten en cuenta que nuestra compra mínima es de USD 3.000 y la entrega del producto se realiza en nuestro almacén de Santa Cruz.
+Continuemos en WhatsApp para coordinar tu cotización.`;
 }
 function whatsappLinkFromSession(s){
   if(!WA_SELLER_NUMBER) return null;
   const nombre = s.profileName || 'Cliente';
   const txt = [
     `Hola, soy ${nombre} (vía Messenger). Me gustaría realizar una cotización con New Chem:`,
+    s.vars.productIntent ? `• Producto: ${s.vars.productIntent}` : null,
     `• Departamento/Zona: ${s.vars.departamento || 'ND'}${s.vars.subzona? ' – '+s.vars.subzona:''}`,
     s.vars.hectareas ? `• Hectáreas: ${s.vars.hectareas}` : null,
     s.vars.phone ? `• Teléfono: ${s.vars.phone}` : null,
@@ -225,17 +230,17 @@ async function finishAndWhatsApp(psid){
   await sendText(psid, summaryTextForFinal(s));
   const wa = whatsappLinkFromSession(s);
   if (wa){
-    await sendButtons(psid, '📲 Continuar en WhatsApp', [{ type:'web_url', url: wa, title:'📲 Continuar en WhatsApp' }]);
+    await sendButtons(psid, 'WhatsApp', [{ type:'web_url', url: wa, title:'WhatsApp' }]);
   }else{
     await sendText(psid, 'Comparte un número de contacto y te escribimos por WhatsApp.');
   }
-  await sendQR(psid, '¿Deseas *continuar aquí* o *finalizar*?', [
-    { title:'Continuar', payload:'QR_CONTINUAR' },
+  await sendQR(psid, '¿Necesitas ayuda en algo mas?', [
+    { title:'Si, tengo otra duda', payload:'QR_CONTINUAR' },
     { title:'Finalizar', payload:'QR_FINALIZAR' }
   ]);
 }
 async function showHelp(psid){
-  await sendQR(psid, '¿En qué más te puedo ayudar? Puedo:', [
+  await sendQR(psid, '¿En qué más te puedo ayudar?', [
     { title:'Catálogo',  payload:'OPEN_CATALOG'  },
     { title:'Ubicación', payload:'OPEN_LOCATION' },
     { title:'Horario',   payload:'OPEN_HORARIOS' },
@@ -269,7 +274,7 @@ async function handleOpeningIntent(psid, text){
     s.vars.productIntent = prod.nombre;
     s.vars.intent = asksPrice(text) ? 'quote' : 'product';
     await sendText(psid,
-      `¡Excelente! Sobre *${prod.nombre}* podemos ayudarte con **precios, disponibilidad y dosis**. ` +
+      `¡Excelente! Sobre *${prod.nombre}* puedo ayudarte con **precios, disponibilidad y dosis**. ` +
       `Para enviarte una **cotización sin compromiso**, primero te ubico con unos datos rápidos.`
     );
     await askName(psid);
@@ -280,7 +285,7 @@ async function handleOpeningIntent(psid, text){
     s.vars.intent = 'quote';
     await sendText(psid,
       '¡Con gusto te preparo una **cotización personalizada**! ' +
-      'Para asignarte el asesor correcto según tu zona, empecemos con tus datos 👇'
+      'Me podrías ayudar con algunos datos para asignarte el asesor correcto.'
     );
     await askName(psid);
     return true;
@@ -288,10 +293,12 @@ async function handleOpeningIntent(psid, text){
 
   if (asksProducts(text)){
     await sendButtons(psid,
-      'Tenemos líneas de **herbicidas, insecticidas y fungicidas** de alta eficacia. ' +
-      'Si prefieres, puedes abrir el catálogo o te hago una cotización guiada.',
+      'Contamos con **herbicidas, insecticidas y fungicidas** de alta eficacia. ' +
+      'Puedes abrir el catálogo o, si me dices el producto, te preparo una cotización.',
       [{ type:'web_url', url: CATALOG_URL, title:'Ver catálogo' }]
     );
+    await sendText(psid, 'Si algo del catálogo te llamó la atención, cuéntame el *nombre del producto* y lo avanzamos de inmediato. 🙂');
+    getSession(psid).pending = 'prod_from_catalog';
     await askName(psid);
     return true;
   }
@@ -300,6 +307,8 @@ async function handleOpeningIntent(psid, text){
     await sendButtons(psid, 'Aquí tienes nuestro catálogo digital 👇', [
       { type:'web_url', url: CATALOG_URL, title:'Ver catálogo' }
     ]);
+    await sendText(psid, '¿Qué *producto* te interesó del catálogo? Si me dices el nombre, te ayudo con precio y disponibilidad. 🙂');
+    getSession(psid).pending = 'prod_from_catalog';
     await askName(psid);
     return true;
   }
@@ -341,6 +350,8 @@ router.post('/webhook', async (req,res)=>{
 
           if(qr==='OPEN_CATALOG'){
             await sendButtons(psid, 'Abrir catálogo completo', [{type:'web_url', url: CATALOG_URL, title:'Ver catálogo'}]);
+            await sendText(psid, '¿Qué *producto* del catálogo te interesó? Escríbeme el nombre y te apoyo con precio/disponibilidad. 🙂');
+            s.pending = 'prod_from_catalog';
             await showHelp(psid); continue;
           }
           if(qr==='OPEN_LOCATION'){
@@ -382,10 +393,24 @@ router.post('/webhook', async (req,res)=>{
         if(!s.flags.greeted && isGreeting(text)){
           s.flags.greeted = true;
           await sendText(psid, '👋 ¡Hola! Bienvenido(a) a New Chem.\nTenemos agroquímicos al mejor precio y calidad para tu campaña. 🌱');
-          // apertura inteligente si ya viene con intención
           const handled = await handleOpeningIntent(psid, text);
           if(!handled) await askName(psid);
           continue;
+        }
+
+        // === PRODUCTO desde catálogo (captura antes del nombre)
+        if(s.pending==='prod_from_catalog'){
+          const prod = findProduct(text);
+          if (prod){
+            s.vars.productIntent = prod.nombre;
+            s.pending=null;
+            if(!s.profileName) await askName(psid);
+            else await nextStep(psid);
+            continue;
+          }else{
+            await sendText(psid,'No identifiqué el producto. ¿Podrías escribir el *nombre exacto* tal como aparece en el catálogo?');
+            continue;
+          }
         }
 
         // === APERTURA INTELIGENTE cuando aún no tenemos nombre ===
@@ -397,6 +422,17 @@ router.post('/webhook', async (req,res)=>{
         // Captura pasiva
         const ha   = parseHectareas(text); if(ha) s.vars.hectareas = ha;
         const phone= parsePhone(text);     if(phone) s.vars.phone = phone;
+
+        // === PREGUNTAS DE ENVÍO (en cualquier etapa)
+        if(asksShipping(text)){
+          await sendText(psid,
+            'Realizamos la **entrega en nuestro almacén de Santa Cruz de la Sierra**. ' +
+            'Si lo necesitas, **podemos ayudarte a coordinar la logística del transporte** hasta tu zona, ' +
+            'pero este servicio **no está incluido** en el precio. 🙂'
+          );
+          await nextStep(psid);
+          continue;
+        }
 
         // === CAPTURA DE NOMBRE ===
         if(s.pending==='nombre' || (!s.profileName && !wantsCatalog(text) && !wantsLocation(text))){
@@ -442,8 +478,14 @@ router.post('/webhook', async (req,res)=>{
 
         // Intenciones globales (responden siempre)
         if(wantsLocation(text)){ await sendButtons(psid, 'Nuestra ubicación en Google Maps 👇', [{type:'web_url', url: linkMaps(), title:'Ver ubicación'}]); await showHelp(psid); continue; }
-        if(wantsCatalog(text)){  await sendButtons(psid, 'Abrir catálogo completo', [{type:'web_url', url: CATALOG_URL, title:'Ver catálogo'}]); await showHelp(psid); continue; }
-        if(asksPrice(text)){     await sendText(psid, 'Con gusto te preparamos una *cotización*. Primero confirmemos tu ubicación para asignarte el asesor correcto.'); await nextStep(psid); continue; }
+        if(wantsCatalog(text)){  await sendButtons(psid, 'Abrir catálogo completo', [{type:'web_url', url: CATALOG_URL, title:'Ver catálogo'}]); await sendText(psid,'¿Qué *producto* te interesó del catálogo?'); s.pending='prod_from_catalog'; await showHelp(psid); continue; }
+        if(asksPrice(text)){     // además podríamos atrapar nombre de producto aquí
+          const prodHit = findProduct(text);
+          if (prodHit) s.vars.productIntent = prodHit.nombre;
+          await sendText(psid, 'Con gusto te preparamos una *cotización*. Primero confirmemos tu ubicación para asignarte el asesor correcto.');
+          await nextStep(psid);
+          continue;
+        }
         if(wantsAgent(text)){    const wa = whatsappLinkFromSession(s); if (wa) await sendButtons(psid,'Te atiende un asesor por WhatsApp 👇',[{type:'web_url', url: wa, title:'📲 Abrir WhatsApp'}]); else await sendText(psid,'Compártenos un número de contacto y seguimos por WhatsApp.'); await showHelp(psid); continue; }
         if(wantsClose(text)){    await sendText(psid, '¡Gracias por escribirnos! Si más adelante te surge algo, aquí estoy para ayudarte. 👋'); clearSession(psid); continue; }
 
@@ -453,7 +495,7 @@ router.post('/webhook', async (req,res)=>{
         if(s.pending==='subzona_free'){ await askSubzonaLibre(psid); continue; }
 
         // Si nada aplica, ofrece ayuda amable
-        await sendText(psid, 'Puedo ayudarte con *cotizaciones, catálogo, horarios o ubicación*.');
+        await sendText(psid, 'Puedo ayudarte con *cotizaciones, catálogo, horarios, ubicación y envíos*.');
         await showHelp(psid);
       }
     }
