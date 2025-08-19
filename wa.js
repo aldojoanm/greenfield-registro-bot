@@ -47,7 +47,7 @@ function S(id){
       greeted:false,
       stage: 'discovery',
       pending: null,
-      asked: { departamento:false, subzona:false, cultivo:false, categoria:false },
+      asked: { departamento:false, subzona:false, cultivo:false, categoria:false, cantidad:false },
       vars: {
         departamento:null, subzona:null, category:null,
         cultivos: [],
@@ -206,7 +206,7 @@ function productFromReferral(ref){
   }catch{ return null; }
 }
 
-// ===== RESUMEN =====
+// ===== RESUMEN (único) =====
 function inferUnitFromProduct(s){
   const name = s?.vars?.last_product || '';
   const prod = name ? (CATALOG||[]).find(p => norm(p.nombre||'')===norm(name)) : null;
@@ -218,44 +218,33 @@ function inferUnitFromProduct(s){
   return 'Kg';
 }
 function summaryText(s){
-  const cliente = s.profileName || 'Cliente';
-  const base = [
-    'Perfecto, enseguida te enviaremos una cotización con estos datos:',
-    `• ${cliente}`,
-    `• Departamento: ${s.vars.departamento || 'ND'}`,
-    `• Zona: ${s.vars.subzona || 'ND'}`,
-    `• Cultivos: ${s.vars.cultivos?.length ? s.vars.cultivos.join(', ') : 'ND'}`
-  ];
-  const items = (s.vars.cart||[]).map(it=>`• ${it.nombre}${it.cantidad ? ` — ${it.cantidad}` : ''}`);
-  if(!items.length){
-    const single = s.vars.last_product || 'No especificado';
-    if(single) items.push(`• ${single}${s.vars.cantidad?` — ${s.vars.cantidad}`:''}`);
-  }
-  const logi = '**La entrega de tu pedido se realiza en nuestro almacén**. Con gusto podemos ayudarte a coordinar la logística del transporte si lo necesitas, pero ten en cuenta que este servicio no está incluido en el precio final.';
-  return `${base.join('\n')}\n${items.join('\n')}\n${s.vars.hectareas?`• Hectáreas: ${s.vars.hectareas}\n`:''}${s.vars.phone?`• Teléfono: ${s.vars.phone}\n`:''}**Compra mínima: US$ 3.000 (puedes combinar productos).*\\n${logi}`;
-}
-
-// ===== NUEVO: Resumen extra en tu formato solicitado =====
-function summaryTextUser(s){
   const nombre = s.profileName || 'Cliente';
   const dep = s.vars.departamento || 'ND';
   const zona = s.vars.subzona || 'ND';
   const cultivo = s.vars.cultivos?.[0] || (s.vars.cultivos||[]).join(', ') || 'ND';
   const etapa = s.vars.cultivo_etapa || 'ND';
-  let producto = s.vars.last_product || null;
-  let cantidad = s.vars.cantidad || null;
-  if(!producto && (s.vars.cart||[]).length){
-    producto = s.vars.cart[0].nombre;
-    cantidad = s.vars.cart[0].cantidad;
+
+  // Producto + cantidad (primer item del carrito o el actual)
+  let linesProductos = [];
+  if ((s.vars.cart||[]).length){
+    linesProductos = s.vars.cart.map(it=>`* ${it.nombre} — ${it.cantidad}`);
+  } else {
+    const p = s.vars.last_product || 'ND';
+    const c = s.vars.cantidad || 'ND';
+    linesProductos = [`* ${p} — ${c}`];
   }
-  return `Este es el resumen de tu solicitud:
-• Nombre: ${nombre}
-• Departamento: ${dep}
-• Zona (si aplica): ${zona}
-• Cultivo: ${cultivo}
-• Etapa de cultivo: ${etapa}
-• Producto: ${producto || 'ND'}
-• Cantidad: ${cantidad || 'ND'}`;
+
+  return [
+    'Perfecto, enseguida te enviaremos una cotización con estos datos:',
+    `* ${nombre}`,
+    `* Departamento: ${dep}`,
+    `* Zona: ${zona}`,
+    `* Cultivos: ${cultivo}`,
+    `* Etapa de cultivo: ${etapa}`,
+    ...linesProductos,
+    '*Compra mínima: US$ 3.000 (puedes combinar productos).',
+    '*La entrega de tu pedido se realiza en nuestro almacén*. Con gusto podemos ayudarte a coordinar la logística del transporte si lo necesitas, pero ten en cuenta que este servicio no está incluido en el precio final.'
+  ].join('\n');
 }
 
 // ===== IMÁGENES =====
@@ -356,31 +345,15 @@ async function askCultivo(to){
   await markPrompt(s,'cultivo'); s.pending='cultivo'; s.asked.cultivo=true;
   await toText(to,'Perfecto 🙌. Para darte una recomendación precisa, cuéntame por favor qué *cultivos* manejas (por ejemplo: soya).');
 }
+async function askEtapaCultivo(to){
+  const s=S(to); if (s.lastPrompt==='etapa_cultivo') return;
+  await markPrompt(s,'etapa_cultivo'); s.pending='etapa_cultivo';
+  await toText(to,'¿En qué *etapa* se encuentra tu cultivo? (siembra, pre-emergencia, floración, llenado, etc.)');
+}
 async function askCategory(to){
   const s=S(to); if (s.lastPrompt==='categoria') return;
   s.stage='product'; await markPrompt(s,'categoria'); s.pending='categoria'; s.asked.categoria=true;
   await toButtons(to,'¿Qué tipo de producto te interesa? Te puedo guiar 👇', CAT_QR.map(c=>({ title:c.title, payload:c.payload })));
-}
-
-// ===== NUEVO: flujo cultivo para leads de Messenger =====
-async function askCultivoStart(to){
-  await markPrompt(S(to),'cultivo'); S(to).pending='cultivo';
-  await toList(to, '📋 ¿Para qué cultivo necesitas el producto?', 'Elegir cultivo', [
-    { title:'Soya',    payload:'CROP_SOYA' },
-    { title:'Maíz',    payload:'CROP_MAIZ' },
-    { title:'Trigo',   payload:'CROP_TRIGO' },
-    { title:'Arroz',   payload:'CROP_ARROZ' },
-    { title:'Girasol', payload:'CROP_GIRASOL' },
-    { title:'Otro (escribir)', payload:'CROP_OTRO' }
-  ]);
-}
-async function askCultivoLibre(to){
-  await markPrompt(S(to),'cultivo_libre'); S(to).pending='cultivo_libre';
-  await toText(to,'Escribe el *nombre del cultivo* (por ejemplo: soya, maíz, papa, tomate…).');
-}
-async function askEtapaCultivo(to){
-  await markPrompt(S(to),'etapa_cultivo'); S(to).pending='etapa_cultivo';
-  await toText(to,'¿En qué *etapa* se encuentra tu cultivo? (siembra, pre-emergencia, floración, llenado, etc.)');
 }
 
 // ===== Listado por categoría (paginado) =====
@@ -407,18 +380,21 @@ async function showProduct(to, prod){
   const catNorm = normalizeCatLabel(prod.categoria||'');
   if(catNorm && !s.vars.category) s.vars.category = catNorm;
 
-  // NUEVO: ficha técnica explícita
-  await toText(to, `Aquí tienes la ficha técnica de *${prod.nombre}* 📄\n${prod.link_ficha || CATALOG_URL}`);
+  // Mostrar detalle + ficha TÉCNICA solo una vez por minuto por SKU
+  if (shouldShowDetail(s, prod.sku)) {
+    const linkFicha = prod.link_ficha || CATALOG_URL;
+    await toText(to, `Aquí tienes la ficha técnica de *${prod.nombre}* 📄\n${linkFicha}`);
 
-  if (!shouldShowDetail(s, prod.sku)) return;
-  const src = productImageSource(prod);
-  if (src) await toImage(to, src);
-  if(!src){
-    const plagas=(prod.plaga||[]).slice(0,5).join(', ')||'-';
-    const present=(prod.presentaciones||[]).join(', ')||'-';
-    await toText(to,`Gracias por la info 🙌. Sobre *${prod.nombre}* (${prod.categoria}):\n• Formulación / acción: ${prod.formulacion}\n• Dosis de referencia: ${prod.dosis}\n• Espectro objetivo: ${plagas}\n• Presentaciones: ${present}\nFicha técnica: ${prod.link_ficha}`);
+    const src = productImageSource(prod);
+    if (src) {
+      await toImage(to, src);
+    } else {
+      const plagas=(prod.plaga||[]).slice(0,5).join(', ')||'-';
+      const present=(prod.presentaciones||[]).join(', ')||'-';
+      await toText(to,`Sobre *${prod.nombre}* (${prod.categoria}):\n• Formulación / acción: ${prod.formulacion}\n• Dosis de referencia: ${prod.dosis}\n• Espectro objetivo: ${plagas}\n• Presentaciones: ${present}`);
+    }
+    markDetailShown(s, prod.sku);
   }
-  markDetailShown(s, prod.sku);
 }
 
 // ===== CARRITO =====
@@ -427,7 +403,9 @@ function addCurrentToCart(s){
   const exists = (s.vars.cart||[]).find(it=>it.sku===s.vars.last_sku);
   if(exists){ exists.cantidad = s.vars.cantidad; }
   else s.vars.cart.push({ sku:s.vars.last_sku, nombre:s.vars.last_product, cantidad:s.vars.cantidad });
+  // reset item state
   s.vars.last_product=null; s.vars.last_sku=null; s.vars.cantidad=null;
+  s.asked.cantidad=false;
   return true;
 }
 async function askAddMore(to){
@@ -439,9 +417,6 @@ async function askAddMore(to){
 async function afterSummary(to, variant='cart'){
   const s=S(to);
   await toText(to, summaryText(s));
-
-  // NUEVO: resumen adicional en tu formato
-  await toText(to, summaryTextUser(s));
 
   if (s.meta?.origin === 'messenger') {
     const quien = s.profileName ? `, ${s.profileName}` : '';
@@ -493,8 +468,11 @@ async function nextStep(to){
   if(!s.vars.last_product) return listByCategory(to);
 
   if(!s.vars.cantidad && !s.vars.hectareas){
-    s.pending='cantidad'; await markPrompt(s,'cantidad');
-    return toText(to,'Para poder realizar tu cotización, ¿me podrías decir qué *cantidad* necesitas *(L/KG)*?');
+    if (!s.asked.cantidad){
+      s.pending='cantidad'; await markPrompt(s,'cantidad'); s.asked.cantidad=true;
+      return toText(to,'Para poder realizar tu cotización, ¿me podrías decir qué *cantidad* necesitas *(L/KG)*?');
+    }
+    return;
   }
 }
 
@@ -572,22 +550,8 @@ router.post('/wa/webhook', async (req,res)=>{
         res.sendStatus(200); return;
       }
       if(id==='QR_SEGUIR'){ await toText(from,'Perfecto, seguimos por aquí 🙌. ¿En qué más te puedo ayudar?'); await askCategory(from); res.sendStatus(200); return; }
-      if(id==='ADD_MORE'){ s.vars.catOffset=0; s.vars.last_product=null; s.vars.last_sku=null; s.vars.cantidad=null; await toButtons(from,'Dime el *nombre del otro producto* o elige una categoría 👇', CAT_QR.map(c=>({title:c.title,payload:c.payload}))); res.sendStatus(200); return; }
+      if(id==='ADD_MORE'){ s.vars.catOffset=0; s.vars.last_product=null; s.vars.last_sku=null; s.vars.cantidad=null; s.asked.cantidad=false; await toButtons(from,'Dime el *nombre del otro producto* o elige una categoría 👇', CAT_QR.map(c=>({title:c.title,payload:c.payload}))); res.sendStatus(200); return; }
       if(id==='NO_MORE'){ await afterSummary(from, 'help'); res.sendStatus(200); return; }
-
-      // NUEVO: selección de cultivo (lista)
-      if(/^CROP_/.test(id)){
-        const map = { SOYA:'Soya', MAIZ:'Maíz', TRIGO:'Trigo', ARROZ:'Arroz', GIRASOL:'Girasol', OTRO:'Otro' };
-        const key = id.replace('CROP_','').toUpperCase();
-        if(key === 'OTRO'){
-          await askCultivoLibre(from);
-        }else{
-          s.vars.cultivos = Array.from(new Set([...(s.vars.cultivos||[]), map[key]]));
-          s.pending=null; s.lastPrompt=null;
-          await askEtapaCultivo(from); // etapa (libre)
-        }
-        res.sendStatus(200); return;
-      }
 
       if(/^REF_YES_/.test(id)){
         const sku = id.replace('REF_YES_','');
@@ -639,7 +603,10 @@ router.post('/wa/webhook', async (req,res)=>{
           s.vars.last_product = prod.nombre; s.vars.last_sku = prod.sku;
           const catNorm = normalizeCatLabel(prod.categoria||''); if(catNorm) s.vars.category = catNorm;
           await showProduct(from, prod);
-          if(!s.vars.cantidad){ s.pending='cantidad'; s.lastPrompt='cantidad'; s.lastPromptTs=Date.now(); await toText(from,'¿Qué *cantidad* necesitas *(L/KG)* para este producto?'); }
+          if(!s.vars.cantidad && !s.asked.cantidad){
+            s.pending='cantidad'; s.lastPrompt='cantidad'; s.lastPromptTs=Date.now(); s.asked.cantidad=true;
+            await toText(from,'¿Qué *cantidad* necesitas *(L/KG)* para este producto?');
+          }
         }
         res.sendStatus(200); return;
       }
@@ -651,11 +618,11 @@ router.post('/wa/webhook', async (req,res)=>{
       if(!text){ res.sendStatus(200); return; }
       remember(from,'user',text);
 
-      // NUEVO: lead desde Messenger (lanza saludo + cultivo)
+      // Lead de Messenger → saludo + flujo sin botones de cultivo
       const lead = parseMessengerLead(text);
       if (lead){
         s.meta.origin = 'messenger';
-        s.greeted = true; // evitar saludo duplicado
+        s.greeted = true;
         if (lead.name && !s.profileName) s.profileName = title(lead.name);
 
         if (lead.dptoZ){
@@ -671,7 +638,7 @@ router.post('/wa/webhook', async (req,res)=>{
 
         const quien = s.profileName ? ` ${s.profileName}` : '';
         await toText(from, `👋 Hola${quien}, gracias por continuar con *New Chem* vía WhatsApp.\nAquí encontrarás los agroquímicos esenciales para tu cultivo, al mejor precio. 🌱`);
-        await askCultivoStart(from); // menú cultivo
+        await askCultivo(from); // libre (sin botones)
         res.sendStatus(200); 
         return;
       }
@@ -684,21 +651,7 @@ router.post('/wa/webhook', async (req,res)=>{
         res.sendStatus(200); return;
       }
 
-      // NUEVO: cultivo libre (tras "Otro")
-      if (S(from).pending === 'cultivo_libre'){
-        const name = title(text.toLowerCase());
-        if(name){
-          S(from).vars.cultivos = Array.from(new Set([...(S(from).vars.cultivos||[]), name]));
-          S(from).pending=null; S(from).lastPrompt=null;
-          await askEtapaCultivo(from);
-        }else{
-          await toText(from,'Por favor, escribe el *nombre del cultivo*.');
-        }
-        res.sendStatus(200); 
-        return;
-      }
-
-      // NUEVO: etapa de cultivo (respuesta libre)
+      // ETAPA de cultivo (respuesta libre)
       if (S(from).pending === 'etapa_cultivo'){
         S(from).vars.cultivo_etapa = text;
         S(from).pending=null; S(from).lastPrompt=null;
@@ -717,7 +670,7 @@ router.post('/wa/webhook', async (req,res)=>{
       }
       if(wantsClose(text)){
         await toText(from,'¡Gracias por escribirnos! Si más adelante te surge algo, aquí estoy para ayudarte. 👋');
-        humanOn(from, 4); // silenciar bot 4h al cerrar por texto
+        humanOn(from, 4);
         clearS(from);
         res.sendStatus(200); return;
       }
@@ -756,12 +709,17 @@ router.post('/wa/webhook', async (req,res)=>{
       if(depTyped){ S(from).vars.departamento = depTyped; if(depTyped!=='Santa Cruz') S(from).vars.subzona=null; }
       if((S(from).vars.departamento==='Santa Cruz' || depTyped==='Santa Cruz') && subOnly){ S(from).vars.subzona = subOnly; }
 
-      // Cultivos por texto libre (soporta flujo original)
+      // Cultivos por texto libre (cuando estamos pidiéndolo)
       if (S(from).pending==='cultivo' || CROPS_RE.test(text)){
         const raw = text.split(/[,\s]+y\s+|,\s*|\s+y\s+/i).map(t=>t.trim()).filter(Boolean);
         const normalized = raw.map(t => title(t.toLowerCase()));
         S(from).vars.cultivos = Array.from(new Set([...(S(from).vars.cultivos||[]), ...normalized]));
-        if (S(from).pending==='cultivo'){ S(from).pending=null; S(from).lastPrompt=null; }
+        if (S(from).pending==='cultivo'){
+          S(from).pending=null; S(from).lastPrompt=null;
+          await askEtapaCultivo(from); // ← ahora pedimos etapa inmediatamente
+          res.sendStatus(200); 
+          return;
+        }
         if(!S(from).vars.category){ await askCategory(from); res.sendStatus(200); return; }
       }
 
@@ -783,7 +741,7 @@ router.post('/wa/webhook', async (req,res)=>{
 
       // Fuzzy
       if (S(from).stage==='product' && !prodExact && !S(from).vars.last_product
-          && !['departamento','subzona','cultivo','categoria','cantidad','product_name'].includes(S(from).pending||'') ) {
+          && !['departamento','subzona','cultivo','categoria','cantidad','product_name','etapa_cultivo'].includes(S(from).pending||'') ) {
         const cand = fuzzyCandidate(text);
         if (cand) { await toButtons(from, `¿Te referías a *${cand.prod.nombre}*?`, [{ title:`Sí, ${cand.prod.nombre}`, payload:`PROD_${cand.prod.sku}` },{ title:'No, ver categorías', payload:'CAT_HERBICIDA' }]); res.sendStatus(200); return; }
       }
@@ -792,7 +750,10 @@ router.post('/wa/webhook', async (req,res)=>{
         const prod = findProduct(S(from).vars.last_product) || prodExact;
         if (prod) {
           await showProduct(from, prod);
-          if (!S(from).vars.cantidad) { S(from).pending='cantidad'; S(from).lastPrompt='cantidad'; S(from).lastPromptTs=Date.now(); await toText(from,'¿Qué *cantidad* necesitas *(L/KG)* para este producto?'); }
+          if (!S(from).vars.cantidad && !S(from).asked.cantidad) {
+            S(from).pending='cantidad'; S(from).lastPrompt='cantidad'; S(from).lastPromptTs=Date.now(); S(from).asked.cantidad=true;
+            await toText(from,'¿Qué *cantidad* necesitas *(L/KG)* para este producto?');
+          }
         }
       }
 
