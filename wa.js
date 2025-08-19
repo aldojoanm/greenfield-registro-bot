@@ -383,7 +383,7 @@ async function showProduct(to, prod){
   // Mostrar detalle + ficha TÉCNICA solo una vez por minuto por SKU
   if (shouldShowDetail(s, prod.sku)) {
     const linkFicha = prod.link_ficha || CATALOG_URL;
-    await toText(to, `Aquí tienes la ficha técnica de *${prod.nombre}* 📄\n${linkFicha}`);
+    await toText(to, `Aquí tienes la ficha técnica de *${prod.nombre}* 📄`);
 
     const src = productImageSource(prod);
     if (src) {
@@ -426,7 +426,7 @@ async function afterSummary(to, variant='cart'){
   if (variant === 'help') {
     await toButtons(to,'¿Necesitas ayuda en algo más?', [
       { title:'Sí, continuar', payload:'QR_SEGUIR' },
-      { title:'Finalizar',     payload:'QR_FINALIZAR' }
+      { title:'Cotizar',     payload:'QR_FINALIZAR' }
     ]);
   } else {
     await toButtons(to,'¿Deseas añadir otro producto o finalizamos?', [
