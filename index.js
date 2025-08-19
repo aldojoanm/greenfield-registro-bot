@@ -211,18 +211,26 @@ Continuemos en WhatsApp para coordinar tu cotización.`;
 }
 function whatsappLinkFromSession(s){
   if(!WA_SELLER_NUMBER) return null;
+
   const nombre = s.profileName || 'Cliente';
+  const dep    = s.vars.departamento || 'ND';
+  const zona   = s.vars.subzona || 'ND';
+
   const txt = [
     `Hola, soy ${nombre} (vía Messenger). Me gustaría realizar una cotización con New Chem:`,
-    s.vars.productIntent ? `• Producto: ${s.vars.productIntent}` : null,
-    `• Departamento/Zona: ${s.vars.departamento || 'ND'}${s.vars.subzona? ' – '+s.vars.subzona:''}`,
-    s.vars.hectareas ? `• Hectáreas: ${s.vars.hectareas}` : null,
-    s.vars.phone ? `• Teléfono: ${s.vars.phone}` : null,
+    `Nombre: ${nombre}`,
+    `Departamento: ${dep}`,
+    `Zona: ${zona}`,
+    s.vars.productIntent ? `Producto: ${s.vars.productIntent}` : null,
+    s.vars.hectareas     ? `Hectáreas: ${s.vars.hectareas}`     : null,
+    s.vars.phone         ? `Teléfono: ${s.vars.phone}`           : null,
     `Entiendo la compra mínima de US$ 3.000.`,
     `La entrega del pedido se realiza en el almacén de Santa Cruz.`
   ].filter(Boolean).join('\n');
+
   return `https://wa.me/${WA_SELLER_NUMBER}?text=${encodeURIComponent(txt)}`;
 }
+
 async function finishAndWhatsApp(psid){
   const s=getSession(psid);
   if (s.flags.finalShown && Date.now()-s.flags.finalShownAt < 60000) return; // anti-duplicados

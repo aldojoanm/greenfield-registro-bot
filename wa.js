@@ -30,7 +30,7 @@ const CAT_QR = [
   { title: 'Insecticida', payload: 'CAT_INSECTICIDA' },
   { title: 'Fungicida',   payload: 'CAT_FUNGICIDA' }
 ];
-const linkMaps  = () => `https://www.google.com/maps?q=${encodeURIComponent(`${STORE_LAT},${STORE_LNG}`)}`);
+const linkMaps  = () => `https://www.google.com/maps?q=${encodeURIComponent(`${STORE_LAT},${STORE_LNG}`)}`;
 
 // ===== MODO HUMANO (mute 4h) =====
 const humanSilence = new Map(); 
@@ -173,48 +173,17 @@ const wantsBotBack = t => /([Aa]sistente [Vv]irtual)/i.test(t);
 
 const CROPS_RE = /\b(soya|soja|ma[ií]z|trigo|girasol|arroz|ca[ñn]a|sorgo|papa|tomate|cebolla|pimiento|chile|man[ií]|fr(i|e)jol|quinua|yuca|citrus|naranja|lim[oó]n|mandarina|uva|pl[aá]tano|banano|palta|aguacate|hortalizas?)\b/i;
 
-// ---- NUEVO: parser robusto "Departamento – Zona" ----
-function splitDeptAndZone(dptoZ=''){
-  let text = String(dptoZ).trim();
-  if(!text) return { dep:null, zone:null };
-
-  // corta si vienen frases extra luego de la zona
-  text = text.replace(/\s*(Entiendo|La\s+entrega|Compra\s+m[ií]nima).*$/i,'').trim();
-
-  // separadores: guion, en-dash, em-dash o slash
-  const parts = text.split(/\s*[-–—/]\s*/);
-  const depRaw  = (parts[0]||'').toLowerCase().trim();
-  let zoneRaw = (parts[1]||'').toLowerCase().trim();
-
-  // limpia posibles colas raras
-  zoneRaw = zoneRaw.replace(/[.,;].*$/,'').trim();
-
-  const dep  = title(depRaw);
-  const zone = zoneRaw ? title(zoneRaw) : null;
-  return { dep: dep || null, zone: zone || null };
-}
-
-// ---- NUEVO: Lead Messenger más tolerante (viñetas / saltos de línea) ----
 function parseMessengerLead(text){
   const t = String(text || '');
   if(!/\b(v[ií]a|via)\s*messenger\b/i.test(t)) return null;
-
-  const name  = (()=>{ const m=t.match(/Hola,\s*soy\s*([^(•\n\r]+?)(?=\s*\(|\s*\.|\s*Me|$)/i); return m?m[1].trim():null; })();
-
-  const linePick = (labelRe) => {
-    const re = new RegExp(`(?:^|\\n|•\\s*)${labelRe}:\\s*([^\\n\\r•]+)`, 'i');
-    const m = t.match(re); return m ? m[1].trim() : null;
-  };
-  const prod  = linePick('Producto');
-  const qty   = linePick('Cantidad');
-  const crops = linePick('Cultivos?');
-  // corta al fin de línea o viñeta; evita arrastrar “Entiendo…”
-  let dptoZ = linePick('Departamento(?:\\/Zona)?');
-  if(dptoZ) dptoZ = dptoZ.replace(/\s*(Entiendo|La\s+entrega|Compra\s+m[ií]nima).*$/i,'').trim();
-
+  const pick = (re)=>{ const m=t.match(re); return m? m[1].trim() : null; };
+  const name  = pick(/Hola,\s*soy\s*([^(•\n]+?)(?=\s*\(|\s*\.|\s*Me|$)/i);
+  const prod  = pick(/Producto:\s*([^•\n]+)/i);
+  const qty   = pick(/Cantidad:\s*([^•\n]+)/i);
+  const crops = pick(/Cultivos?:\s*([^•\n]+)/i);
+  const dptoZ = pick(/Departamento(?:\/Zona)?:\s*([^•\n]+)/i);
   return { name, prod, qty, crops, dptoZ };
 }
-
 function productFromReferral(ref){
   try{
     const bits = [ref?.headline, ref?.body, ref?.source_url, ref?.adgroup_name, ref?.campaign_name]
@@ -465,7 +434,7 @@ async function afterSummary(to, variant='cart'){
   if (variant === 'help') {
     await toButtons(to,'¿Necesitas ayuda en algo más?', [
       { title:'Sí, continuar', payload:'QR_SEGUIR' },
-      { title:'No, cotizar',   payload:'QR_FINALIZAR' }
+      { title:'No, cotizar',     payload:'QR_FINALIZAR' }
     ]);
   } else {
     await toButtons(to,'¿Deseas añadir otro producto o finalizamos?', [
@@ -561,19 +530,12 @@ router.post('/wa/webhook', async (req,res)=>{
     const s = S(from);
     const textRaw = (msg.type==='text' ? (msg.text?.body || '').trim() : '');
 
-    // Si está en modo humano, sólo reactivar si dice "Asistente Virtual"
     if (isHuman(from)) {
       if (textRaw && wantsBotBack(textRaw)) {
         humanOff(from);
-        // Reinicia solo lo necesario para que pregunte NOMBRE primero
-        s.stage = 'discovery';
-        s.pending = null;
-        s.lastPrompt = null;
-        s.asked.nombre = false;
-
         const quien = s.profileName ? `, ${s.profileName}` : '';
-        await toText(from, `Listo${quien} 🙌. Reactivé el *asistente automático*. ¿Seguimos?`);
-        await askNombre(from);
+        await toText(from, `Listo${quien} 🙌. Reactivé el *asistente automático*. ¿Seguimos? Puedes decirme el *nombre del producto* o elegir una categoría.`);
+        await askCategory(from);
       }
       res.sendStatus(200);
       return;
@@ -599,17 +561,17 @@ router.post('/wa/webhook', async (req,res)=>{
     }
 
     const isLeadMsg = msg.type==='text' && !!parseMessengerLead(msg.text?.body);
-    if(!s.greeted){
-      if(!isLeadMsg){
-        await toText(from, PLAY?.greeting || '¡Qué gusto saludarte!, Soy el asistente virtual de *New Chem*. Estoy para ayudarte 🙂');
+            if(!s.greeted){
+        if(!isLeadMsg){
+          await toText(from, PLAY?.greeting || '¡Qué gusto saludarte!, Soy el asistente virtual de *New Chem*. Estoy para ayudarte 🙂');
+        }
+        s.greeted = true;
+        if(!isLeadMsg && !s.asked.nombre){
+          await askNombre(from);
+          res.sendStatus(200);  
+          return;              
+        }
       }
-      s.greeted = true;
-      if(!isLeadMsg && !s.asked.nombre){
-        await askNombre(from);
-        res.sendStatus(200);  
-        return;              
-      }
-    }
 
     // INTERACTIVOS
     if(msg.type==='interactive'){
@@ -701,14 +663,9 @@ router.post('/wa/webhook', async (req,res)=>{
         if (lead.name && !s.profileName) s.profileName = title(lead.name);
 
         if (lead.dptoZ){
-          const { dep:depSplit, zone:zoneSplit } = splitDeptAndZone(lead.dptoZ);
-          const dep = detectDepartamento(lead.dptoZ) || depSplit || title((lead.dptoZ.split('/')[0]||''));
+          const dep = detectDepartamento(lead.dptoZ) || title(lead.dptoZ.split('/')[0]||'');
           s.vars.departamento = dep || s.vars.departamento;
-          if(zoneSplit) s.vars.subzona = zoneSplit;
-
-          // Si es SCZ y detectamos subzona estándar, respeta esa
-          const sczSub = detectSubzona(lead.dptoZ);
-          if((/santa\s*cruz/i.test(dep)) && sczSub) s.vars.subzona = sczSub;
+          if((/santa\s*cruz/i.test(lead.dptoZ)) && detectSubzona(lead.dptoZ)) s.vars.subzona = detectSubzona(lead.dptoZ);
         }
         if (lead.crops){
           const raw = lead.crops.split(/[,\s]+y\s+|,\s*|\s+y\s+/i).map(t=>t.trim()).filter(Boolean);
@@ -802,11 +759,6 @@ router.post('/wa/webhook', async (req,res)=>{
       const subOnly  = detectSubzona(text); // solo SCZ
       if(depTyped){ S(from).vars.departamento = depTyped; S(from).vars.subzona=null; } // reset subzona siempre
       if((S(from).vars.departamento==='Santa Cruz' || depTyped==='Santa Cruz') && subOnly){ S(from).vars.subzona = subOnly; }
-      // Si escribe "Departamento – Zona", captura la zona para cualquier dpto
-      if(depTyped){
-        const mZ = text.match(new RegExp(depTyped.replace(/[.*+?^${}()|[\]\\]/g,'\\$&') + '\\s*[-–—/]\\s*([^,;\\n]+)','i'));
-        if(mZ){ S(from).vars.subzona = title(mZ[1].toLowerCase().trim()); }
-      }
 
       // Cultivos por texto libre
       if (S(from).pending==='cultivo' || CROPS_RE.test(text)){
