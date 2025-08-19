@@ -534,8 +534,7 @@ router.post('/wa/webhook', async (req,res)=>{
       if (textRaw && wantsBotBack(textRaw)) {
         humanOff(from);
         const quien = s.profileName ? `, ${s.profileName}` : '';
-        await toText(from, `Listo${quien} 🙌. Reactivé el *asistente automático*. ¿Seguimos? Puedes decirme el *nombre del producto* o elegir una categoría.`);
-        await askCategory(from);
+        await toText(from, `Listo${quien} 🙌. Reactivé el *asistente automático*. ¿En que puedo ayudarte?`);
       }
       res.sendStatus(200);
       return;
