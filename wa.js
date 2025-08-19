@@ -348,7 +348,7 @@ async function askSubzonaLibre(to){
   const s=S(to); if (s.lastPrompt==='subzona_libre') return;
   await markPrompt(s,'subzona_libre'); s.pending='subzona_libre'; s.asked.subzona=true;
   const dep = s.vars.departamento || 'tu departamento';
-  await toText(to, `Perfecto. ¿En qué *zona/barrio/localidad* de *${dep}* te encuentras? (escribe en texto)`);
+  await toText(to, `Perfecto. ¿Para qué *zona* de *${dep}* quisieras?`);
 }
 async function askCultivo(to){
   const s=S(to); if (s.lastPrompt==='cultivo') return;
@@ -392,7 +392,7 @@ async function showProduct(to, prod){
 
   if (shouldShowDetail(s, prod.sku)) {
     const linkFicha = prod.link_ficha || CATALOG_URL;
-    await toText(to, `Aquí tienes la ficha técnica de *${prod.nombre}* 📄\n${linkFicha}`);
+    await toText(to, `Aquí tienes la ficha técnica de *${prod.nombre}* 📄`);
 
     const src = productImageSource(prod);
     if (src) {
@@ -434,7 +434,7 @@ async function afterSummary(to, variant='cart'){
   if (variant === 'help') {
     await toButtons(to,'¿Necesitas ayuda en algo más?', [
       { title:'Sí, continuar', payload:'QR_SEGUIR' },
-      { title:'Finalizar',     payload:'QR_FINALIZAR' }
+      { title:'No, *cotizar*',     payload:'QR_FINALIZAR' }
     ]);
   } else {
     await toButtons(to,'¿Deseas añadir otro producto o finalizamos?', [
