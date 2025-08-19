@@ -434,7 +434,7 @@ async function afterSummary(to, variant='cart'){
   if (variant === 'help') {
     await toButtons(to,'¿Necesitas ayuda en algo más?', [
       { title:'Sí, continuar', payload:'QR_SEGUIR' },
-      { title:'No, *cotizar*',     payload:'QR_FINALIZAR' }
+      { title:'No, cotizar',     payload:'QR_FINALIZAR' }
     ]);
   } else {
     await toButtons(to,'¿Deseas añadir otro producto o finalizamos?', [
