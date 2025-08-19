@@ -177,8 +177,8 @@ const CROPS_RE = /\b(soya|soja|ma[ií]z|trigo|girasol|arroz|ca[ñn]a|sorgo|papa|
 function splitDeptAndZone(dptoZ=''){
   const text = String(dptoZ).trim();
   if(!text) return { dep:null, zone:null };
-  // Prioriza separadores en-dash/em-dash/hyphen y slash
-  const parts = text.split(/\s*[–—-\/]\s*/);
+  // separadores: guion, en-dash, em-dash o slash
+  const parts = text.split(/\s*[-–—\/]\s*/);   // <— guion al inicio del grupo
   if(parts.length >= 2){
     const dep  = title((parts[0]||'').toLowerCase().trim());
     const zone = title((parts[1]||'').toLowerCase().trim());
@@ -790,7 +790,7 @@ router.post('/wa/webhook', async (req,res)=>{
       if((S(from).vars.departamento==='Santa Cruz' || depTyped==='Santa Cruz') && subOnly){ S(from).vars.subzona = subOnly; }
       // NUEVO: si el usuario escribe "Departamento – Zona" para cualquier dpto, toma la zona
       if(depTyped){
-        const mZ = text.match(new RegExp(depTyped.replace(/[.*+?^${}()|[\]\\]/g,'\\$&') + '\\s*[–—-/]\\s*([^,;\\n]+)','i'));
+        const mZ = text.match(new RegExp(depTyped.replace(/[.*+?^${}()|[\]\\]/g,'\\$&') + '\\s*[-–—/]\\s*([^,;\\n]+)','i')); // <— guion al inicio
         if(mZ){ S(from).vars.subzona = title(mZ[1].toLowerCase().trim()); }
       }
 
