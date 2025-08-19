@@ -343,7 +343,7 @@ async function askSubzona(to){
 async function askCultivo(to){
   const s=S(to); if (s.lastPrompt==='cultivo') return;
   await markPrompt(s,'cultivo'); s.pending='cultivo'; s.asked.cultivo=true;
-  await toText(to,'Perfecto 🙌. Para darte una recomendación precisa, cuéntame por favor qué *cultivos* manejas (por ejemplo: soya).');
+  await toText(to,'¿Para qué *cultivo* necesitas el producto? (por ejemplo: soya).');
 }
 async function askEtapaCultivo(to){
   const s=S(to); if (s.lastPrompt==='etapa_cultivo') return;
@@ -353,7 +353,7 @@ async function askEtapaCultivo(to){
 async function askCategory(to){
   const s=S(to); if (s.lastPrompt==='categoria') return;
   s.stage='product'; await markPrompt(s,'categoria'); s.pending='categoria'; s.asked.categoria=true;
-  await toButtons(to,'¿Qué tipo de producto te interesa? Te puedo guiar 👇', CAT_QR.map(c=>({ title:c.title, payload:c.payload })));
+  await toButtons(to,'¿Qué tipo de producto necesitas?', CAT_QR.map(c=>({ title:c.title, payload:c.payload })));
 }
 
 // ===== Listado por categoría (paginado) =====
@@ -426,7 +426,7 @@ async function afterSummary(to, variant='cart'){
   if (variant === 'help') {
     await toButtons(to,'¿Necesitas ayuda en algo más?', [
       { title:'Sí, continuar', payload:'QR_SEGUIR' },
-      { title:'Cotizar',     payload:'QR_FINALIZAR' }
+      { title:'No, cotizar',     payload:'QR_FINALIZAR' }
     ]);
   } else {
     await toButtons(to,'¿Deseas añadir otro producto o finalizamos?', [
