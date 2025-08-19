@@ -1,4 +1,4 @@
-// index.js (Messenger Router) — flujo simple: nombre → departamento → zona → WhatsApp
+// index.js (Messenger Router) — flujo enriquecido: nombre → departamento → zona → WhatsApp
 import 'dotenv/config';
 import express from 'express';
 import fs from 'fs';
@@ -13,17 +13,13 @@ const CATALOG_URL = process.env.CATALOG_URL || 'https://tinyurl.com/PORTAFOLIO-N
 const WA_SELLER_NUMBER = (process.env.WA_SELLER_NUMBER || '').replace(/\D/g,'');
 const STORE_LAT = process.env.STORE_LAT || '-17.7580406';
 const STORE_LNG = process.env.STORE_LNG || '-63.1532503';
-const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || '').replace(/\/+$/,'');
 
 // ===== DATA =====
 function loadJSON(p){ try { return JSON.parse(fs.readFileSync(p,'utf8')); } catch { return {}; } }
 let FAQS = loadJSON('./knowledge/faqs.json');
 
 // ===== CONSTANTES =====
-const DEPARTAMENTOS = [
-  'Santa Cruz','Cochabamba','La Paz','Chuquisaca','Tarija',
-  'Oruro','Potosí','Beni','Pando'
-];
+const DEPARTAMENTOS = ['Santa Cruz','Cochabamba','La Paz','Chuquisaca','Tarija','Oruro','Potosí','Beni','Pando'];
 const SUBZONAS_SCZ  = ['Norte','Este','Sur','Valles','Chiquitania'];
 
 // ===== SESIONES =====
@@ -31,12 +27,10 @@ const sessions = new Map();
 function getSession(psid){
   if(!sessions.has(psid)){
     sessions.set(psid,{
-      pending: null, // 'nombre' | 'departamento' | 'subzona' | 'subzona_free'
-      vars: {
-        departamento:null, subzona:null,
-        hectareas:null, phone:null
-      },
+      pending: null,                  // 'nombre' | 'departamento' | 'subzona' | 'subzona_free'
+      vars: { departamento:null, subzona:null, hectareas:null, phone:null },
       profileName: null,
+      flags: { greeted:false, finalShown:false, finalShownAt:0 },
       memory: [],
       lastPrompt: null
     });
@@ -54,7 +48,6 @@ function remember(psid, role, content){
 const norm  = (t='') => t.toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu,'');
 const title = s => s.replace(/\w\S*/g, w => w[0].toUpperCase()+w.slice(1).toLowerCase());
 const clamp = (t, n=20) => (t.length<=n? t : t.slice(0,n-1)+'…');
-
 const linkMaps  = () => `https://www.google.com/maps?q=${encodeURIComponent(`${STORE_LAT},${STORE_LNG}`)}`;
 
 function canonicalizeDepartamento(raw=''){
@@ -70,7 +63,6 @@ function canonicalizeDepartamento(raw=''){
   if (t.includes('pando')) return 'Pando';
   return title(raw.trim());
 }
-
 function detectDepartamento(text){
   const t = norm(text);
   for (const d of DEPARTAMENTOS) if (t.includes(norm(d))) return d;
@@ -81,7 +73,6 @@ function detectSubzonaSCZ(text){
   for (const z of SUBZONAS_SCZ) if (t.includes(norm(z))) return z;
   return null;
 }
-
 function parseHectareas(text){
   const m = String(text).match(/(\d{1,6}(?:[.,]\d{1,2})?)\s*(ha|hect[aá]reas?)/i);
   return m ? m[1].replace(',','.') : null;
@@ -91,12 +82,13 @@ function parsePhone(text){
   return m ? m[1].replace(/[^\d+]/g,'') : null;
 }
 
-// Intenciones “globales”
+// Intenciones globales
 const wantsCatalog  = t => /cat[aá]logo|portafolio|lista de precios/i.test(t) || /portafolio[- _]?newchem/i.test(norm(t));
 const wantsLocation = t => /(ubicaci[oó]n|direcci[oó]n|mapa|d[oó]nde est[aá]n|donde estan)/i.test(t);
 const wantsClose    = t => /(no gracias|gracias|eso es todo|listo|nada m[aá]s|ok gracias|est[aá] bien|finalizar)/i.test(norm(t));
 const asksPrice     = t => /(precio|cu[aá]nto vale|cu[aá]nto cuesta|cotizar|costo|proforma|cotizaci[oó]n)/i.test(t);
 const wantsAgent    = t => /asesor|humano|ejecutivo|vendedor|representante|agente|contact(a|o|arme)|whats?app|wasap|wsp|wpp|n[uú]mero|telefono|tel[eé]fono|celular/i.test(norm(t));
+const isGreeting    = t => /(hola|buen[oa]s (d[ií]as|tardes|noches)|hey|hello)/i.test(t);
 
 // ===== FB SENDERS =====
 async function httpFetchAny(...args){ const f=globalThis.fetch||(await import('node-fetch')).default; return f(...args); }
@@ -172,7 +164,7 @@ async function askSubzonaLibre(psid){
   await sendText(psid, `Perfecto. ¿En qué *zona / municipio* de *${s.vars.departamento}* te encuentras? ✍️`);
 }
 
-// ===== RESUMEN / WHATSAPP =====
+// ===== RESUMEN / WHATSAPP / AYUDA =====
 function summaryTextForFinal(s){
   const nombre = s.profileName || 'Cliente';
   const dep = s.vars.departamento || 'ND';
@@ -204,6 +196,9 @@ function whatsappLinkFromSession(s){
 }
 async function finishAndWhatsApp(psid){
   const s=getSession(psid);
+  // Evitar duplicados si ya se envió hace poco
+  if (s.flags.finalShown && Date.now()-s.flags.finalShownAt < 60000) return;
+  s.flags.finalShown = true; s.flags.finalShownAt = Date.now();
   await sendText(psid, summaryTextForFinal(s));
   const wa = whatsappLinkFromSession(s);
   if (wa){
@@ -213,6 +208,20 @@ async function finishAndWhatsApp(psid){
   }else{
     await sendText(psid, 'Comparte un número de contacto y te escribimos por WhatsApp.');
   }
+  // Menú para seguir o cerrar
+  await sendQR(psid, '¿Deseas *continuar aquí* o *finalizar*?', [
+    { title:'Continuar', payload:'QR_CONTINUAR' },
+    { title:'Finalizar', payload:'QR_FINALIZAR' }
+  ]);
+}
+async function showHelp(psid){
+  await sendQR(psid, '¿En qué más te puedo ayudar? Puedo:', [
+    { title:'Catálogo',  payload:'OPEN_CATALOG'  },
+    { title:'Ubicación', payload:'OPEN_LOCATION' },
+    { title:'Horario',   payload:'OPEN_HORARIOS' },
+    { title:'Hablar con asesor', payload:'OPEN_WHATSAPP' },
+    { title:'Finalizar', payload:'QR_FINALIZAR' }
+  ]);
 }
 
 // ===== Orquestador =====
@@ -243,10 +252,10 @@ router.post('/webhook', async (req,res)=>{
         if(ev.message?.is_echo) continue;
 
         const s = getSession(psid);
-        if(!s.profileName) s.profileName = null; // pediremos nombre
 
         // GET_STARTED
         if(ev.postback?.payload === 'GET_STARTED'){
+          s.flags.greeted = true;
           await sendText(psid, '👋 ¡Hola! Bienvenido(a) a New Chem.\nTenemos agroquímicos al mejor precio y calidad para tu campaña. 🌱');
           await askName(psid);
           continue;
@@ -262,6 +271,31 @@ router.post('/webhook', async (req,res)=>{
             clearSession(psid);
             continue;
           }
+          if(qr==='QR_CONTINUAR'){ await showHelp(psid); continue; }
+
+          if(qr==='OPEN_CATALOG'){
+            await sendButtons(psid, 'Abrir catálogo completo', [{type:'web_url', url: CATALOG_URL, title:'Ver catálogo'}]);
+            await showHelp(psid);
+            continue;
+          }
+          if(qr==='OPEN_LOCATION'){
+            await sendButtons(psid, 'Nuestra ubicación en Google Maps 👇', [{type:'web_url', url: linkMaps(), title:'Ver ubicación'}]);
+            await showHelp(psid);
+            continue;
+          }
+          if(qr==='OPEN_HORARIOS'){
+            await sendText(psid, `Nuestro horario: ${FAQS?.horarios || 'Lun–Vie 8:00–17:00'} 🙂`);
+            await showHelp(psid);
+            continue;
+          }
+          if(qr==='OPEN_WHATSAPP'){
+            const wa = whatsappLinkFromSession(s);
+            if (wa) await sendButtons(psid,'Te atiende un asesor por WhatsApp 👇',[{type:'web_url', url: wa, title:'📲 Abrir WhatsApp'}]);
+            else await sendText(psid,'Compártenos un número de contacto y seguimos por WhatsApp.');
+            await showHelp(psid);
+            continue;
+          }
+
           if(/^DPTO_/.test(qr)){
             const depRaw = qr.replace('DPTO_','').replace(/_/g,' ');
             const dep = canonicalizeDepartamento(depRaw);
@@ -277,18 +311,28 @@ router.post('/webhook', async (req,res)=>{
             await nextStep(psid);
             continue;
           }
-          // convertir otros QR a texto plano (por si los agregas luego)
+
           text = qr.replace(/^QR_/,'').replace(/_/g,' ').trim() || text;
         }
+
         if(!text) continue;
         remember(psid,'user',text);
 
-        // === CAPTURA PASIVA EXTRA ===
+        // Saludo si el usuario escribió sin tocar “Empezar”
+        if(!s.flags.greeted && isGreeting(text)){
+          s.flags.greeted = true;
+          await sendText(psid, '👋 ¡Hola! Bienvenido(a) a New Chem.\nTenemos agroquímicos al mejor precio y calidad para tu campaña. 🌱');
+          await askName(psid);
+          continue;
+        }
+
+        // Captura pasiva
         const ha   = parseHectareas(text); if(ha) s.vars.hectareas = ha;
         const phone= parsePhone(text);     if(phone) s.vars.phone = phone;
 
-        // === CAPTURA DEL NOMBRE ===
-        if(s.pending==='nombre'){
+        // Captura del NOMBRE
+        if(s.pending==='nombre' || (!s.profileName && !wantsCatalog(text) && !wantsLocation(text))){
+          if(s.pending!=='nombre'){ s.pending='nombre'; }
           const cleaned = title(text.replace(/\s+/g,' ').trim());
           if (cleaned.length >= 2){
             s.profileName = cleaned;
@@ -300,13 +344,15 @@ router.post('/webhook', async (req,res)=>{
           continue;
         }
 
-        // INTENCIONES GLOBALES (responden en cualquier etapa)
+        // Intenciones globales (responden siempre)
         if(wantsLocation(text)){
           await sendButtons(psid, 'Nuestra ubicación en Google Maps 👇', [{type:'web_url', url: linkMaps(), title:'Ver ubicación'}]);
+          await showHelp(psid);
           continue;
         }
         if(wantsCatalog(text)){
           await sendButtons(psid, 'Abrir catálogo completo', [{type:'web_url', url: CATALOG_URL, title:'Ver catálogo'}]);
+          await showHelp(psid);
           continue;
         }
         if(asksPrice(text)){
@@ -316,11 +362,9 @@ router.post('/webhook', async (req,res)=>{
         }
         if(wantsAgent(text)){
           const wa = whatsappLinkFromSession(s);
-          if (wa){
-            await sendButtons(psid, 'Abramos WhatsApp para atenderte directamente:', [{type:'web_url', url: wa, title:'📲 Continuar en WhatsApp'}]);
-          }else{
-            await sendText(psid, 'Compártenos un número de contacto y seguimos por WhatsApp.');
-          }
+          if (wa) await sendButtons(psid, 'Abramos WhatsApp para atenderte directamente:', [{type:'web_url', url: wa, title:'📲 Continuar en WhatsApp'}]);
+          else await sendText(psid, 'Compártenos un número de contacto y seguimos por WhatsApp.');
+          await showHelp(psid);
           continue;
         }
         if(wantsClose(text)){
@@ -329,7 +373,7 @@ router.post('/webhook', async (req,res)=>{
           continue;
         }
 
-        // Captura de departamento por texto
+        // Departamento por texto
         if(!s.vars.departamento){
           const depTyped = detectDepartamento(text);
           if(depTyped){
@@ -338,21 +382,22 @@ router.post('/webhook', async (req,res)=>{
             continue;
           }
         }
-
-        // Captura de subzona:
+        // Subzona libre (no SCZ)
         if(s.pending==='subzona_free' && !s.vars.subzona){
           const z = title(text.trim());
           if (z){ s.vars.subzona = z; s.pending=null; await nextStep(psid); }
           else { await sendText(psid,'¿Podrías escribir el *nombre de tu zona o municipio*?'); }
           continue;
         }
+        // Subzona SCZ por texto
         if(s.vars.departamento==='Santa Cruz' && !s.vars.subzona){
           const z = detectSubzonaSCZ(text);
           if(z){ s.vars.subzona = z; await nextStep(psid); continue; }
         }
 
-        // Si nada de lo anterior aplica, seguimos el flujo normal
-        await nextStep(psid);
+        // Si nada de lo anterior aplica, ofrece ayuda amable
+        await sendText(psid, 'Puedo ayudarte con *cotizaciones, catálogo, horarios o ubicación*.');
+        await showHelp(psid);
       }
     }
 
