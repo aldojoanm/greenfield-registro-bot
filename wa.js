@@ -449,6 +449,8 @@ async function nextStep(to){
   const s=S(to);
   const stale = (key)=> s.lastPrompt===key && (Date.now()-s.lastPromptTs>25000);
 
+  if (s.pending && !stale(s.pending)) return;
+
   // (0) Nombre primero (no-Messenger): siempre pídelo la primera vez
   if(s.meta.origin!=='messenger' && !s.asked.nombre){
     if(stale('nombre') || s.lastPrompt!=='nombre') return askNombre(to);
@@ -559,15 +561,17 @@ router.post('/wa/webhook', async (req,res)=>{
     }
 
     const isLeadMsg = msg.type==='text' && !!parseMessengerLead(msg.text?.body);
-      if(!s.greeted){
+            if(!s.greeted){
         if(!isLeadMsg){
           await toText(from, PLAY?.greeting || '¡Qué gusto saludarte!, Soy el asistente virtual de *New Chem*. Estoy para ayudarte 🙂');
         }
         s.greeted = true;
-        // Siempre pedir nombre completo en primera interacción (si no es Messenger)
-        if(!isLeadMsg && !s.asked.nombre){ await askNombre(from); }
+        if(!isLeadMsg && !s.asked.nombre){
+          await askNombre(from);
+          res.sendStatus(200);  
+          return;              
+        }
       }
-
 
     // INTERACTIVOS
     if(msg.type==='interactive'){
