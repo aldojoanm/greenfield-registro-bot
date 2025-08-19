@@ -242,7 +242,7 @@ function summaryText(s){
     `* Etapa de cultivo: ${etapa}`,
     ...linesProductos,
     '*Compra mínima: US$ 3.000 (puedes combinar productos).',
-    '*La entrega de tu pedido se realiza en nuestro almacén*. Con gusto podemos ayudarte a coordinar la logística del transporte si lo necesitas, pero ten en cuenta que este servicio no está incluido en el precio final.'
+    '*La entrega de tu pedido se realiza en nuestro almacén*.'
   ].join('\n');
 }
 
@@ -353,12 +353,12 @@ async function askSubzonaLibre(to){
 async function askCultivo(to){
   const s=S(to); if (s.lastPrompt==='cultivo') return;
   await markPrompt(s,'cultivo'); s.pending='cultivo'; s.asked.cultivo=true;
-  await toText(to,'Perfecto 🙌. Para darte una recomendación precisa, cuéntame por favor qué *cultivos* manejas (por ejemplo: soya).');
+  await toText(to,'Perfecto 🙌. ¿Para qué *cultivo* necesitas el producto?  (por ejemplo: soya).');
 }
 async function askEtapaCultivo(to){
   const s=S(to); if (s.lastPrompt==='etapa_cultivo') return;
   await markPrompt(s,'etapa_cultivo'); s.pending='etapa_cultivo';
-  await toText(to,'¿En qué *etapa* se encuentra tu cultivo? (siembra, pre-emergencia, floración, llenado, etc.)');
+  await toText(to,'¿En qué *etapa* se encuentra tu cultivo?');
 }
 async function askCategory(to){
   const s=S(to); if (s.lastPrompt==='categoria') return;
@@ -433,8 +433,8 @@ async function afterSummary(to, variant='cart'){
 
   if (variant === 'help') {
     await toButtons(to,'¿Necesitas ayuda en algo más?', [
-      { title:'Sí, continuar', payload:'QR_SEGUIR' },
-      { title:'No, cotizar',     payload:'QR_FINALIZAR' }
+      { title:'Añadir producto', payload:'QR_SEGUIR' },
+      { title:'Cotizar',     payload:'QR_FINALIZAR' }
     ]);
   } else {
     await toButtons(to,'¿Deseas añadir otro producto o finalizamos?', [
@@ -579,7 +579,7 @@ router.post('/wa/webhook', async (req,res)=>{
       const id = br?.id || lr?.id;
 
       if(id==='QR_FINALIZAR'){
-        await toText(from,'¡Gracias por escribirnos! Nuestro equipo comercial te enviará la cotización en breve. Si requieres más información, estamos a tu disposición.');
+        await toText(from,'¡Gracias por escribirnos! Nuestro encargado de negocios te enviará la cotización en breve. Si requieres más información, estamos a tu disposición.');
         await toText(from,'Para volver a activar el asistente, por favor, escribe *Asistente Virtual*.');
         humanOn(from, 4);
         clearS(from);
