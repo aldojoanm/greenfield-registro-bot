@@ -449,29 +449,19 @@ async function nextStep(to){
   const s=S(to);
   const stale = (key)=> s.lastPrompt===key && (Date.now()-s.lastPromptTs>25000);
 
-  // 0) Nombre (solo si no viene de Messenger)
-  if(!s.profileName && s.meta.origin!=='messenger'){
+  // (0) Nombre primero (no-Messenger): siempre pídelo la primera vez
+  if(s.meta.origin!=='messenger' && !s.asked.nombre){
     if(stale('nombre') || s.lastPrompt!=='nombre') return askNombre(to);
     return;
   }
 
-  // 1) Categoría / producto
-  if(s.vars.last_product && !s.vars.category){
-    const p=(CATALOG||[]).find(pp=>norm(pp.nombre||'')===norm(s.vars.last_product));
-    const c=normalizeCatLabel(p?.categoria||''); if(c) s.vars.category=c;
-  }
-  if(!s.vars.last_product && !s.vars.category){
-    if(stale('categoria') || s.lastPrompt!=='categoria') return askCategory(to);
-    return;
-  }
-
-  // 2) Departamento
+  // (1) Departamento
   if(!s.vars.departamento){
     if(stale('departamento') || s.lastPrompt!=='departamento') return askDepartamento(to);
     return;
   }
 
-  // 3) Subzona para TODOS los departamentos
+  // (2) Subzona (SCZ con lista; otros departamentos en texto)
   if(!s.vars.subzona){
     if(s.vars.departamento==='Santa Cruz'){
       if(stale('subzona') || s.lastPrompt!=='subzona') return askSubzonaSCZ(to);
@@ -481,15 +471,32 @@ async function nextStep(to){
     return;
   }
 
-  // 4) Cultivo + etapa
+  // (3) Cultivo
   if(!s.vars.cultivos || s.vars.cultivos.length===0){
     if(stale('cultivo') || s.lastPrompt!=='cultivo') return askCultivo(to);
     return;
   }
 
+  // (4) Etapa del cultivo (si aún no la tenemos)
+  if(!s.vars.cultivo_etapa){
+    if(stale('etapa_cultivo') || s.lastPrompt!=='etapa_cultivo') return askEtapaCultivo(to);
+    return;
+  }
+
+  // (5) Categoría / producto
+  if(s.vars.last_product && !s.vars.category){
+    const p=(CATALOG||[]).find(pp=>norm(pp.nombre||'')===norm(s.vars.last_product));
+    const c=normalizeCatLabel(p?.categoria||''); if(c) s.vars.category=c;
+  }
+  if(!s.vars.last_product && !s.vars.category){
+    if(stale('categoria') || s.lastPrompt!=='categoria') return askCategory(to);
+    return;
+  }
+
+  // (6) Listado por categoría si aún no hay producto elegido
   if(!s.vars.last_product) return listByCategory(to);
 
-  // 5) Cantidad
+  // (7) Cantidad
   if(!s.vars.cantidad && !s.vars.hectareas){
     if (!s.asked.cantidad){
       s.pending='cantidad'; await markPrompt(s,'cantidad'); s.asked.cantidad=true;
@@ -552,14 +559,15 @@ router.post('/wa/webhook', async (req,res)=>{
     }
 
     const isLeadMsg = msg.type==='text' && !!parseMessengerLead(msg.text?.body);
-    if(!s.greeted){
-      if(!isLeadMsg){
-        await toText(from, PLAY?.greeting || '¡Qué gusto saludarte!, Soy el asistente virtual de *New Chem*. Dime el nombre del producto, tus cultivos, o elige una categoría y te acompaño paso a paso.');
+      if(!s.greeted){
+        if(!isLeadMsg){
+          await toText(from, PLAY?.greeting || '¡Qué gusto saludarte!, Soy el asistente virtual de *New Chem*. Estoy para ayudarte 🙂');
+        }
+        s.greeted = true;
+        // Siempre pedir nombre completo en primera interacción (si no es Messenger)
+        if(!isLeadMsg && !s.asked.nombre){ await askNombre(from); }
       }
-      s.greeted = true;
-      // Si no viene de Messenger y no hay nombre de perfil, pedir nombre
-      if(!isLeadMsg && !s.profileName){ await askNombre(from); }
-    }
+
 
     // INTERACTIVOS
     if(msg.type==='interactive'){
