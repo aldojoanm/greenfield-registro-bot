@@ -1,4 +1,4 @@
-// index.js (Messenger Router) — aperturas más listas, captura de “producto” aunque no esté en el catálogo, antispam de ayuda, y respuesta de envíos.
+// index.js (Messenger Router) — aperturas listas + captura de nombre con prioridad + filtro de muletillas + envíos
 import 'dotenv/config';
 import express from 'express';
 import fs from 'fs';
@@ -102,6 +102,12 @@ const isGreeting    = t => /(hola|buen[oa]s (d[ií]as|tardes|noches)|hey|hello)/
 const asksProducts  = t => /(qu[eé] productos tienen|que venden|productos disponibles|l[ií]nea de productos)/i.test(t);
 const asksShipping  = t => /(env[ií]os?|env[ií]an|hacen env[ií]os|delivery|entrega|env[ií]an hasta|mandan|env[ií]o a)/i.test(norm(t));
 
+// ===== Muletillas / acks para no confundir con producto
+function isAckOrFiller(text){
+  const t = norm(text).trim();
+  return /^(ok(ay|ey)?\.?|oki|okey|dale|listo|perfecto|gracias( muchas)?|si|sí|ya|de acuerdo|entendido|claro|vale|mmmm*|aj+a|bueno|que datos|qué datos)$/.test(t);
+}
+
 // Reconocer producto (catálogo) + aceptar libre si no está
 function findProduct(text){
   const q = norm(text).replace(/[^a-z0-9\s.%/-]/g,' ').replace(/\s+/g,' ').trim();
@@ -119,6 +125,7 @@ function findProduct(text){
 }
 const cleanProductText = t => title(String(t).replace(/[^a-zA-Z0-9áéíóúñü.%/\-\s]/g,'').replace(/\s+/g,' ').trim());
 function looksLikeProductName(text){
+  if (isAckOrFiller(text)) return false;
   const t = norm(text);
   if (!t || t.length < 3 || t.length > 50) return false;
   if (wantsCatalog(t) || wantsLocation(t) || isGreeting(t) || asksShipping(t) || wantsAgent(t) || wantsClose(t)) return false;
@@ -280,6 +287,10 @@ router.get('/webhook',(req,res)=>{
 // ===== Aperturas inteligentes (antes de pedir nombre) =====
 async function handleOpeningIntent(psid, text){
   const s = getSession(psid);
+
+  // si estamos pidiendo NOMBRE, no detectar producto todavía
+  if (s.pending === 'nombre') return false;
+
   const prod = findProduct(text);
   if (prod){
     s.vars.productIntent = prod.nombre;
@@ -324,7 +335,7 @@ async function handleOpeningIntent(psid, text){
     return true;
   }
 
-  // Si parece un nombre de producto aunque no esté en el catálogo
+  // Si parece un nombre de producto aunque no esté en el catálogo (y no es muletilla)
   if (looksLikeProductName(text)){
     s.vars.productIntent = cleanProductText(text);
     await sendText(psid, `Perfecto, tomo *${s.vars.productIntent}* como tu producto de interés. Te pido unos datos rápidos para cotizar.`);
@@ -412,28 +423,47 @@ router.post('/webhook', async (req,res)=>{
         if(!s.flags.greeted && isGreeting(text)){
           s.flags.greeted = true;
           await sendText(psid, '👋 ¡Hola! Bienvenido(a) a New Chem.\nTenemos agroquímicos al mejor precio y calidad para tu campaña. 🌱');
-          const handled = await handleOpeningIntent(psid, text);
-          if(!handled) await askName(psid);
+          // nombre tiene prioridad
+          await askName(psid);
           continue;
         }
 
-        // === PRODUCTO desde catálogo / libre (captura antes del nombre)
+        // ======== 1) CAPTURA DE NOMBRE — PRIORIDAD TOTAL ========
+        if (s.pending === 'nombre'){
+          const cleaned = title(text.replace(/\s+/g,' ').trim());
+          if (cleaned.length >= 2){
+            s.profileName = cleaned; s.pending=null;
+            await askDepartamento(psid);
+          }else{
+            await sendText(psid,'¿Me repites tu *nombre completo* por favor? ✍️');
+          }
+          continue;
+        }
+
+        // ======== 2) PRODUCTO desde catálogo (si se pidió) ========
         if(s.pending==='prod_from_catalog'){
           const hit = findProduct(text);
           if (hit){
             s.vars.productIntent = hit.nombre; s.pending=null;
-          }else{
+          }else if (!isAckOrFiller(text)){
             s.vars.productIntent = cleanProductText(text); s.pending=null;
+          }else{
+            // Muletilla; mantenemos la pregunta
+            await sendText(psid,'¿Cuál es el *nombre del producto* que te interesó del catálogo?');
+            continue;
           }
           if(!s.profileName) await askName(psid);
           else await nextStep(psid);
           continue;
         }
 
-        // === APERTURA INTELIGENTE cuando aún no tenemos nombre
+        // ======== 3) APERTURA INTELIGENTE — SOLO si aún no hay nombre ========
         if(!s.profileName){
           const handled = await handleOpeningIntent(psid, text);
           if(handled) continue;
+          // si no se manejó, pedimos nombre
+          await askName(psid);
+          continue;
         }
 
         // Captura pasiva
@@ -448,19 +478,6 @@ router.post('/webhook', async (req,res)=>{
             'pero este servicio **no está incluido** en el precio. 🙂'
           );
           await nextStep(psid);
-          continue;
-        }
-
-        // === CAPTURA DE NOMBRE ===
-        if(s.pending==='nombre' || (!s.profileName && !wantsCatalog(text) && !wantsLocation(text))){
-          if(s.pending!=='nombre') s.pending='nombre';
-          const cleaned = title(text.replace(/\s+/g,' ').trim());
-          if (cleaned.length >= 2){
-            s.profileName = cleaned; s.pending=null;
-            await askDepartamento(psid);
-          }else{
-            await sendText(psid,'¿Me repites tu *nombre completo* por favor? ✍️');
-          }
           continue;
         }
 
@@ -493,9 +510,9 @@ router.post('/webhook', async (req,res)=>{
           continue;
         }
 
-        // === Detección tardía de “nombre de producto” en cualquier momento
-        const lateHit = findProduct(text);
-        if (lateHit || looksLikeProductName(text)){
+        // === Detección tardía de “nombre de producto” (evita muletillas)
+        const lateHit = isAckOrFiller(text) ? null : findProduct(text);
+        if (lateHit || (!isAckOrFiller(text) && looksLikeProductName(text))){
           s.vars.productIntent = lateHit ? lateHit.nombre : cleanProductText(text);
           await nextStep(psid);
           continue;
@@ -504,7 +521,7 @@ router.post('/webhook', async (req,res)=>{
         // Intenciones globales (responden siempre)
         if(wantsLocation(text)){ await sendButtons(psid, 'Nuestra ubicación en Google Maps 👇', [{type:'web_url', url: linkMaps(), title:'Ver ubicación'}]); await showHelp(psid); continue; }
         if(wantsCatalog(text)){  await sendButtons(psid, 'Abrir catálogo completo', [{type:'web_url', url: CATALOG_URL, title:'Ver catálogo'}]); await sendText(psid,'¿Qué *producto* te interesó del catálogo?'); s.pending='prod_from_catalog'; await showHelp(psid); continue; }
-        if(asksPrice(text)){     const hit2 = findProduct(text); if (hit2) s.vars.productIntent = hit2.nombre; else if (looksLikeProductName(text)) s.vars.productIntent = cleanProductText(text); await sendText(psid, 'Con gusto te preparamos una *cotización*. Primero confirmemos tu ubicación para asignarte el asesor correcto.'); await nextStep(psid); continue; }
+        if(asksPrice(text)){     const hit2 = findProduct(text); if (hit2) s.vars.productIntent = hit2.nombre; else if (!isAckOrFiller(text) && looksLikeProductName(text)) s.vars.productIntent = cleanProductText(text); await sendText(psid, 'Con gusto te preparamos una *cotización*. Primero confirmemos tu ubicación para asignarte el asesor correcto.'); await nextStep(psid); continue; }
         if(wantsAgent(text)){    const wa = whatsappLinkFromSession(s); if (wa) await sendButtons(psid,'Te atiende un asesor por WhatsApp 👇',[{type:'web_url', url: wa, title:'📲 Abrir WhatsApp'}]); else await sendText(psid,'Compártenos un número de contacto y seguimos por WhatsApp.'); await showHelp(psid); continue; }
         if(wantsClose(text)){    await sendText(psid, '¡Gracias por escribirnos! Si más adelante te surge algo, aquí estoy para ayudarte. 👋'); clearSession(psid); continue; }
 
