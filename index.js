@@ -1,4 +1,4 @@
-// index.js (Messenger Router) — flujo robusto con aperturas de vendedor + producto desde catálogo + política de envíos
+// index.js (Messenger Router) — aperturas más listas, captura de “producto” aunque no esté en el catálogo, antispam de ayuda, y respuesta de envíos.
 import 'dotenv/config';
 import express from 'express';
 import fs from 'fs';
@@ -16,8 +16,9 @@ const STORE_LNG = process.env.STORE_LNG || '-63.1532503';
 
 // ===== DATA =====
 function loadJSON(p){ try { return JSON.parse(fs.readFileSync(p,'utf8')); } catch { return {}; } }
-let FAQS = loadJSON('./knowledge/faqs.json');
-let CATALOG = loadJSON('./knowledge/catalog.json'); // para reconocer productos
+let FAQS    = loadJSON('./knowledge/faqs.json');
+let CATALOG = loadJSON('./knowledge/catalog.json');
+if (!Array.isArray(CATALOG)) CATALOG = [];  // seguridad
 
 // ===== CONSTANTES =====
 const DEPARTAMENTOS = ['Santa Cruz','Cochabamba','La Paz','Chuquisaca','Tarija','Oruro','Potosí','Beni','Pando'];
@@ -45,11 +46,11 @@ function getSession(psid){
       vars: {
         departamento:null, subzona:null,
         hectareas:null, phone:null,
-        productIntent:null, // << producto de interés
+        productIntent:null, // producto de interés (texto libre o del catálogo)
         intent:null
       },
       profileName: null,
-      flags: { greeted:false, finalShown:false, finalShownAt:0 },
+      flags: { greeted:false, finalShown:false, finalShownAt:0, lastHelpAt:0 },
       memory: [],
       lastPrompt: null
     });
@@ -101,14 +102,13 @@ const isGreeting    = t => /(hola|buen[oa]s (d[ií]as|tardes|noches)|hey|hello)/
 const asksProducts  = t => /(qu[eé] productos tienen|que venden|productos disponibles|l[ií]nea de productos)/i.test(t);
 const asksShipping  = t => /(env[ií]os?|env[ií]an|hacen env[ií]os|delivery|entrega|env[ií]an hasta|mandan|env[ií]o a)/i.test(norm(t));
 
-// Reconocer producto (catálogo)
+// Reconocer producto (catálogo) + aceptar libre si no está
 function findProduct(text){
-  const q = norm(text).replace(/[^a-z0-9\s]/g,' ').replace(/\s+/g,' ').trim();
-  if(!CATALOG || !Array.isArray(CATALOG)) return null;
+  const q = norm(text).replace(/[^a-z0-9\s.%/-]/g,' ').replace(/\s+/g,' ').trim();
   let best=null, bestScore=0;
   for(const p of CATALOG){
     const name = norm(p.nombre||'').trim(); if(!name) continue;
-    if(q.includes(name)) return p; // contains
+    if (q.includes(name)) return p; // contains
     const qTok = new Set(q.split(' '));
     const nTok = new Set(name.split(' '));
     const inter = [...qTok].filter(x=>nTok.has(x)).length;
@@ -116,6 +116,13 @@ function findProduct(text){
     if(score>bestScore){ best=p; bestScore=score; }
   }
   return bestScore>=0.6 ? best : null;
+}
+const cleanProductText = t => title(String(t).replace(/[^a-zA-Z0-9áéíóúñü.%/\-\s]/g,'').replace(/\s+/g,' ').trim());
+function looksLikeProductName(text){
+  const t = norm(text);
+  if (!t || t.length < 3 || t.length > 50) return false;
+  if (wantsCatalog(t) || wantsLocation(t) || isGreeting(t) || asksShipping(t) || wantsAgent(t) || wantsClose(t)) return false;
+  return /[a-z]/i.test(text); // tiene letras
 }
 
 // ===== FB SENDERS =====
@@ -230,16 +237,20 @@ async function finishAndWhatsApp(psid){
   await sendText(psid, summaryTextForFinal(s));
   const wa = whatsappLinkFromSession(s);
   if (wa){
-    await sendButtons(psid, 'WhatsApp', [{ type:'web_url', url: wa, title:'WhatsApp' }]);
+    await sendButtons(psid, ' ', [{ type:'web_url', url: wa, title:'Enviar a WhatsApp' }]);
   }else{
     await sendText(psid, 'Comparte un número de contacto y te escribimos por WhatsApp.');
   }
-  await sendQR(psid, '¿Necesitas ayuda en algo mas?', [
-    { title:'Si, tengo otra duda', payload:'QR_CONTINUAR' },
+  await sendQR(psid, '¿Necesitas ayuda en algo más?', [
+    { title:'Sí, tengo otra duda', payload:'QR_CONTINUAR' },
     { title:'Finalizar', payload:'QR_FINALIZAR' }
   ]);
 }
 async function showHelp(psid){
+  const s=getSession(psid);
+  const now = Date.now();
+  if (now - (s.flags.lastHelpAt||0) < 20000) return; // antispam ayuda (20s)
+  s.flags.lastHelpAt = now;
   await sendQR(psid, '¿En qué más te puedo ayudar?', [
     { title:'Catálogo',  payload:'OPEN_CATALOG'  },
     { title:'Ubicación', payload:'OPEN_LOCATION' },
@@ -282,11 +293,11 @@ async function handleOpeningIntent(psid, text){
   }
 
   if (asksPrice(text)){
+    const hit = findProduct(text);
+    if (hit) s.vars.productIntent = hit.nombre;
+    else if (looksLikeProductName(text)) s.vars.productIntent = cleanProductText(text);
     s.vars.intent = 'quote';
-    await sendText(psid,
-      '¡Con gusto te preparo una **cotización personalizada**! ' +
-      'Me podrías ayudar con algunos datos para asignarte el asesor correcto.'
-    );
+    await sendText(psid, '¡Con gusto te preparo una **cotización personalizada**! Primero te ubico con unos datos rápidos.');
     await askName(psid);
     return true;
   }
@@ -309,6 +320,14 @@ async function handleOpeningIntent(psid, text){
     ]);
     await sendText(psid, '¿Qué *producto* te interesó del catálogo? Si me dices el nombre, te ayudo con precio y disponibilidad. 🙂');
     getSession(psid).pending = 'prod_from_catalog';
+    await askName(psid);
+    return true;
+  }
+
+  // Si parece un nombre de producto aunque no esté en el catálogo
+  if (looksLikeProductName(text)){
+    s.vars.productIntent = cleanProductText(text);
+    await sendText(psid, `Perfecto, tomo *${s.vars.productIntent}* como tu producto de interés. Te pido unos datos rápidos para cotizar.`);
     await askName(psid);
     return true;
   }
@@ -350,7 +369,7 @@ router.post('/webhook', async (req,res)=>{
 
           if(qr==='OPEN_CATALOG'){
             await sendButtons(psid, 'Abrir catálogo completo', [{type:'web_url', url: CATALOG_URL, title:'Ver catálogo'}]);
-            await sendText(psid, '¿Qué *producto* del catálogo te interesó? Escríbeme el nombre y te apoyo con precio/disponibilidad. 🙂');
+            await sendText(psid, '¿Qué *producto* del catálogo te interesó? Escríbeme el nombre para poder cotizar. 🙂');
             s.pending = 'prod_from_catalog';
             await showHelp(psid); continue;
           }
@@ -398,22 +417,20 @@ router.post('/webhook', async (req,res)=>{
           continue;
         }
 
-        // === PRODUCTO desde catálogo (captura antes del nombre)
+        // === PRODUCTO desde catálogo / libre (captura antes del nombre)
         if(s.pending==='prod_from_catalog'){
-          const prod = findProduct(text);
-          if (prod){
-            s.vars.productIntent = prod.nombre;
-            s.pending=null;
-            if(!s.profileName) await askName(psid);
-            else await nextStep(psid);
-            continue;
+          const hit = findProduct(text);
+          if (hit){
+            s.vars.productIntent = hit.nombre; s.pending=null;
           }else{
-            await sendText(psid,'No identifiqué el producto. ¿Podrías escribir el *nombre exacto* tal como aparece en el catálogo?');
-            continue;
+            s.vars.productIntent = cleanProductText(text); s.pending=null;
           }
+          if(!s.profileName) await askName(psid);
+          else await nextStep(psid);
+          continue;
         }
 
-        // === APERTURA INTELIGENTE cuando aún no tenemos nombre ===
+        // === APERTURA INTELIGENTE cuando aún no tenemos nombre
         if(!s.profileName){
           const handled = await handleOpeningIntent(psid, text);
           if(handled) continue;
@@ -476,25 +493,27 @@ router.post('/webhook', async (req,res)=>{
           continue;
         }
 
-        // Intenciones globales (responden siempre)
-        if(wantsLocation(text)){ await sendButtons(psid, 'Nuestra ubicación en Google Maps 👇', [{type:'web_url', url: linkMaps(), title:'Ver ubicación'}]); await showHelp(psid); continue; }
-        if(wantsCatalog(text)){  await sendButtons(psid, 'Abrir catálogo completo', [{type:'web_url', url: CATALOG_URL, title:'Ver catálogo'}]); await sendText(psid,'¿Qué *producto* te interesó del catálogo?'); s.pending='prod_from_catalog'; await showHelp(psid); continue; }
-        if(asksPrice(text)){     // además podríamos atrapar nombre de producto aquí
-          const prodHit = findProduct(text);
-          if (prodHit) s.vars.productIntent = prodHit.nombre;
-          await sendText(psid, 'Con gusto te preparamos una *cotización*. Primero confirmemos tu ubicación para asignarte el asesor correcto.');
+        // === Detección tardía de “nombre de producto” en cualquier momento
+        const lateHit = findProduct(text);
+        if (lateHit || looksLikeProductName(text)){
+          s.vars.productIntent = lateHit ? lateHit.nombre : cleanProductText(text);
           await nextStep(psid);
           continue;
         }
+
+        // Intenciones globales (responden siempre)
+        if(wantsLocation(text)){ await sendButtons(psid, 'Nuestra ubicación en Google Maps 👇', [{type:'web_url', url: linkMaps(), title:'Ver ubicación'}]); await showHelp(psid); continue; }
+        if(wantsCatalog(text)){  await sendButtons(psid, 'Abrir catálogo completo', [{type:'web_url', url: CATALOG_URL, title:'Ver catálogo'}]); await sendText(psid,'¿Qué *producto* te interesó del catálogo?'); s.pending='prod_from_catalog'; await showHelp(psid); continue; }
+        if(asksPrice(text)){     const hit2 = findProduct(text); if (hit2) s.vars.productIntent = hit2.nombre; else if (looksLikeProductName(text)) s.vars.productIntent = cleanProductText(text); await sendText(psid, 'Con gusto te preparamos una *cotización*. Primero confirmemos tu ubicación para asignarte el asesor correcto.'); await nextStep(psid); continue; }
         if(wantsAgent(text)){    const wa = whatsappLinkFromSession(s); if (wa) await sendButtons(psid,'Te atiende un asesor por WhatsApp 👇',[{type:'web_url', url: wa, title:'📲 Abrir WhatsApp'}]); else await sendText(psid,'Compártenos un número de contacto y seguimos por WhatsApp.'); await showHelp(psid); continue; }
         if(wantsClose(text)){    await sendText(psid, '¡Gracias por escribirnos! Si más adelante te surge algo, aquí estoy para ayudarte. 👋'); clearSession(psid); continue; }
 
-        // Si hay etapa pendiente, re-pregunta en vez de quedarse callado
+        // Si hay etapa pendiente, re-pregunta (no quedarse callado)
         if(s.pending==='departamento'){ await askDepartamento(psid); continue; }
         if(s.pending==='subzona'){ await askSubzonaSCZ(psid); continue; }
         if(s.pending==='subzona_free'){ await askSubzonaLibre(psid); continue; }
 
-        // Si nada aplica, ofrece ayuda amable
+        // Ayuda amable (con antispam)
         await sendText(psid, 'Puedo ayudarte con *cotizaciones, catálogo, horarios, ubicación y envíos*.');
         await showHelp(psid);
       }
