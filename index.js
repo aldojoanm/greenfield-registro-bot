@@ -230,7 +230,7 @@ async function finishAndWhatsApp(psid){
   await sendText(psid, summaryTextForFinal(s));
   const wa = whatsappLinkFromSession(s);
   if (wa){
-    await sendButtons(psid, '', [{ type:'web_url', url: wa, title:'Enviar a Whatsapp' }]);
+    await sendButtons(psid, 'Enviar cotización', [{ type:'web_url', url: wa, title:'Enviar a Whatsapp' }]);
   }else{
     await sendText(psid, 'Comparte un número de contacto y te escribimos por WhatsApp.');
   }
@@ -350,7 +350,7 @@ router.post('/webhook', async (req,res)=>{
 
           if(qr==='OPEN_CATALOG'){
             await sendButtons(psid, 'Abrir catálogo completo', [{type:'web_url', url: CATALOG_URL, title:'Ver catálogo'}]);
-            await sendText(psid, '¿Qué *producto* del catálogo te interesó? Escríbeme el nombre para poder realizarte una cotización');
+            await sendText(psid, '¿Te interesó algún producto del catálogo?');
             s.pending = 'prod_from_catalog';
             await showHelp(psid); continue;
           }
@@ -428,7 +428,7 @@ router.post('/webhook', async (req,res)=>{
           await sendText(psid,
             'Realizamos la **entrega en nuestro almacén de Santa Cruz de la Sierra**. ' +
             'Si lo necesitas, **podemos ayudarte a coordinar la logística del transporte** hasta tu zona, ' +
-            'pero este servicio **no está incluido** en el precio. 🙂'
+            'pero este servicio no viene incluido 🙂'
           );
           await nextStep(psid);
           continue;
