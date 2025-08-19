@@ -1,4 +1,4 @@
-// index.js (Messenger Router) — flujo enriquecido: nombre → departamento → zona → WhatsApp
+// index.js (Messenger Router) — flujo robusto: nombre → departamento → zona → WhatsApp
 import 'dotenv/config';
 import express from 'express';
 import fs from 'fs';
@@ -21,6 +21,19 @@ let FAQS = loadJSON('./knowledge/faqs.json');
 // ===== CONSTANTES =====
 const DEPARTAMENTOS = ['Santa Cruz','Cochabamba','La Paz','Chuquisaca','Tarija','Oruro','Potosí','Beni','Pando'];
 const SUBZONAS_SCZ  = ['Norte','Este','Sur','Valles','Chiquitania'];
+
+// sinónimos para texto libre
+const DPTO_SYNONYMS = {
+  'Santa Cruz' : ['scz','sta cruz','santa cruz de la sierra','santa-cruz','santacruz'],
+  'Cochabamba' : ['cbba','cbb','cba'],
+  'La Paz'     : ['lp','lapaz','la-paz','el alto','alto'],
+  'Chuquisaca' : ['sucre'],
+  'Tarija'     : ['tja'],
+  'Oruro'      : [],
+  'Potosí'     : ['potosi','ptsi'],
+  'Beni'       : [],
+  'Pando'      : []
+};
 
 // ===== SESIONES =====
 const sessions = new Map();
@@ -52,20 +65,12 @@ const linkMaps  = () => `https://www.google.com/maps?q=${encodeURIComponent(`${S
 
 function canonicalizeDepartamento(raw=''){
   const t = norm(raw);
-  if (t.includes('santa cruz')) return 'Santa Cruz';
-  if (t.includes('cochabamba')) return 'Cochabamba';
-  if (t.includes('la paz')) return 'La Paz';
-  if (t.includes('chuquisaca')) return 'Chuquisaca';
-  if (t.includes('tarija')) return 'Tarija';
-  if (t.includes('oruro')) return 'Oruro';
-  if (t.includes('potosi')) return 'Potosí';
-  if (t.includes('beni')) return 'Beni';
-  if (t.includes('pando')) return 'Pando';
-  return title(raw.trim());
-}
-function detectDepartamento(text){
-  const t = norm(text);
-  for (const d of DEPARTAMENTOS) if (t.includes(norm(d))) return d;
+  // coincidencia exacta
+  for(const d of DEPARTAMENTOS) if (t.includes(norm(d))) return d;
+  // sinónimos
+  for(const [name, arr] of Object.entries(DPTO_SYNONYMS)){
+    if (arr.some(alias => t.includes(norm(alias)))) return name;
+  }
   return null;
 }
 function detectSubzonaSCZ(text){
@@ -196,19 +201,15 @@ function whatsappLinkFromSession(s){
 }
 async function finishAndWhatsApp(psid){
   const s=getSession(psid);
-  // Evitar duplicados si ya se envió hace poco
-  if (s.flags.finalShown && Date.now()-s.flags.finalShownAt < 60000) return;
+  if (s.flags.finalShown && Date.now()-s.flags.finalShownAt < 60000) return; // anti-duplicados
   s.flags.finalShown = true; s.flags.finalShownAt = Date.now();
   await sendText(psid, summaryTextForFinal(s));
   const wa = whatsappLinkFromSession(s);
   if (wa){
-    await sendButtons(psid, '📲 Continuar en WhatsApp', [
-      { type:'web_url', url: wa, title:'📲 Continuar en WhatsApp' }
-    ]);
+    await sendButtons(psid, '📲 Continuar en WhatsApp', [{ type:'web_url', url: wa, title:'📲 Continuar en WhatsApp' }]);
   }else{
     await sendText(psid, 'Comparte un número de contacto y te escribimos por WhatsApp.');
   }
-  // Menú para seguir o cerrar
   await sendQR(psid, '¿Deseas *continuar aquí* o *finalizar*?', [
     { title:'Continuar', payload:'QR_CONTINUAR' },
     { title:'Finalizar', payload:'QR_FINALIZAR' }
@@ -275,25 +276,21 @@ router.post('/webhook', async (req,res)=>{
 
           if(qr==='OPEN_CATALOG'){
             await sendButtons(psid, 'Abrir catálogo completo', [{type:'web_url', url: CATALOG_URL, title:'Ver catálogo'}]);
-            await showHelp(psid);
-            continue;
+            await showHelp(psid); continue;
           }
           if(qr==='OPEN_LOCATION'){
             await sendButtons(psid, 'Nuestra ubicación en Google Maps 👇', [{type:'web_url', url: linkMaps(), title:'Ver ubicación'}]);
-            await showHelp(psid);
-            continue;
+            await showHelp(psid); continue;
           }
           if(qr==='OPEN_HORARIOS'){
             await sendText(psid, `Nuestro horario: ${FAQS?.horarios || 'Lun–Vie 8:00–17:00'} 🙂`);
-            await showHelp(psid);
-            continue;
+            await showHelp(psid); continue;
           }
           if(qr==='OPEN_WHATSAPP'){
             const wa = whatsappLinkFromSession(s);
             if (wa) await sendButtons(psid,'Te atiende un asesor por WhatsApp 👇',[{type:'web_url', url: wa, title:'📲 Abrir WhatsApp'}]);
             else await sendText(psid,'Compártenos un número de contacto y seguimos por WhatsApp.');
-            await showHelp(psid);
-            continue;
+            await showHelp(psid); continue;
           }
 
           if(/^DPTO_/.test(qr)){
@@ -307,9 +304,7 @@ router.post('/webhook', async (req,res)=>{
             const z = qr.replace('SUBZ_','').toLowerCase();
             const mapa = { norte:'Norte', este:'Este', sur:'Sur', valles:'Valles', chiquitania:'Chiquitania' };
             if (s.vars.departamento==='Santa Cruz') s.vars.subzona = mapa[z] || null;
-            s.pending=null;
-            await nextStep(psid);
-            continue;
+            s.pending=null; await nextStep(psid); continue;
           }
 
           text = qr.replace(/^QR_/,'').replace(/_/g,' ').trim() || text;
@@ -322,21 +317,19 @@ router.post('/webhook', async (req,res)=>{
         if(!s.flags.greeted && isGreeting(text)){
           s.flags.greeted = true;
           await sendText(psid, '👋 ¡Hola! Bienvenido(a) a New Chem.\nTenemos agroquímicos al mejor precio y calidad para tu campaña. 🌱');
-          await askName(psid);
-          continue;
+          await askName(psid); continue;
         }
 
         // Captura pasiva
         const ha   = parseHectareas(text); if(ha) s.vars.hectareas = ha;
         const phone= parsePhone(text);     if(phone) s.vars.phone = phone;
 
-        // Captura del NOMBRE
+        // === CAPTURA DE NOMBRE ===
         if(s.pending==='nombre' || (!s.profileName && !wantsCatalog(text) && !wantsLocation(text))){
-          if(s.pending!=='nombre'){ s.pending='nombre'; }
+          if(s.pending!=='nombre') s.pending='nombre';
           const cleaned = title(text.replace(/\s+/g,' ').trim());
           if (cleaned.length >= 2){
-            s.profileName = cleaned;
-            s.pending=null;
+            s.profileName = cleaned; s.pending=null;
             await askDepartamento(psid);
           }else{
             await sendText(psid,'¿Me repites tu *nombre completo* por favor? ✍️');
@@ -344,58 +337,48 @@ router.post('/webhook', async (req,res)=>{
           continue;
         }
 
-        // Intenciones globales (responden siempre)
-        if(wantsLocation(text)){
-          await sendButtons(psid, 'Nuestra ubicación en Google Maps 👇', [{type:'web_url', url: linkMaps(), title:'Ver ubicación'}]);
-          await showHelp(psid);
-          continue;
-        }
-        if(wantsCatalog(text)){
-          await sendButtons(psid, 'Abrir catálogo completo', [{type:'web_url', url: CATALOG_URL, title:'Ver catálogo'}]);
-          await showHelp(psid);
-          continue;
-        }
-        if(asksPrice(text)){
-          await sendText(psid, 'Con gusto te preparamos una *cotización*. Primero confirmemos tu ubicación para asignarte el asesor correcto.');
-          await nextStep(psid);
-          continue;
-        }
-        if(wantsAgent(text)){
-          const wa = whatsappLinkFromSession(s);
-          if (wa) await sendButtons(psid, 'Abramos WhatsApp para atenderte directamente:', [{type:'web_url', url: wa, title:'📲 Continuar en WhatsApp'}]);
-          else await sendText(psid, 'Compártenos un número de contacto y seguimos por WhatsApp.');
-          await showHelp(psid);
-          continue;
-        }
-        if(wantsClose(text)){
-          await sendText(psid, '¡Gracias por escribirnos! Si más adelante te surge algo, aquí estoy para ayudarte. 👋');
-          clearSession(psid);
-          continue;
-        }
-
-        // Departamento por texto
-        if(!s.vars.departamento){
-          const depTyped = detectDepartamento(text);
+        // === DEPARTAMENTO: aceptar texto aunque esté esperando QR ===
+        if(!s.vars.departamento || s.pending==='departamento'){
+          const depTyped = canonicalizeDepartamento(text);
           if(depTyped){
-            s.vars.departamento = depTyped; s.vars.subzona=null;
+            s.vars.departamento = depTyped; s.vars.subzona=null; s.pending=null;
             if(depTyped==='Santa Cruz') await askSubzonaSCZ(psid); else await askSubzonaLibre(psid);
+            continue;
+          }else if(s.pending==='departamento'){
+            await sendQR(psid,'No logré reconocer el *departamento*. Elige de la lista o escríbelo de nuevo 😊',
+              DEPARTAMENTOS.map(d => ({title:d, payload:`DPTO_${d.toUpperCase().replace(/\s+/g,'_')}`})));
             continue;
           }
         }
-        // Subzona libre (no SCZ)
+
+        // === SUBZONA: Santa Cruz (texto o QR) ===
+        if(s.vars.departamento==='Santa Cruz' && (!s.vars.subzona || s.pending==='subzona')){
+          const z = detectSubzonaSCZ(text);
+          if(z){ s.vars.subzona = z; s.pending=null; await nextStep(psid); continue; }
+          if(s.pending==='subzona'){ await askSubzonaSCZ(psid); continue; }
+        }
+
+        // === SUBZONA: libre para otros dptos ===
         if(s.pending==='subzona_free' && !s.vars.subzona){
           const z = title(text.trim());
           if (z){ s.vars.subzona = z; s.pending=null; await nextStep(psid); }
           else { await sendText(psid,'¿Podrías escribir el *nombre de tu zona o municipio*?'); }
           continue;
         }
-        // Subzona SCZ por texto
-        if(s.vars.departamento==='Santa Cruz' && !s.vars.subzona){
-          const z = detectSubzonaSCZ(text);
-          if(z){ s.vars.subzona = z; await nextStep(psid); continue; }
-        }
 
-        // Si nada de lo anterior aplica, ofrece ayuda amable
+        // Intenciones globales (responden siempre)
+        if(wantsLocation(text)){ await sendButtons(psid, 'Nuestra ubicación en Google Maps 👇', [{type:'web_url', url: linkMaps(), title:'Ver ubicación'}]); await showHelp(psid); continue; }
+        if(wantsCatalog(text)){  await sendButtons(psid, 'Abrir catálogo completo', [{type:'web_url', url: CATALOG_URL, title:'Ver catálogo'}]); await showHelp(psid); continue; }
+        if(asksPrice(text)){     await sendText(psid, 'Con gusto te preparamos una *cotización*. Primero confirmemos tu ubicación para asignarte el asesor correcto.'); await nextStep(psid); continue; }
+        if(wantsAgent(text)){    const wa = whatsappLinkFromSession(s); if (wa) await sendButtons(psid,'Te atiende un asesor por WhatsApp 👇',[{type:'web_url', url: wa, title:'📲 Abrir WhatsApp'}]); else await sendText(psid,'Compártenos un número de contacto y seguimos por WhatsApp.'); await showHelp(psid); continue; }
+        if(wantsClose(text)){    await sendText(psid, '¡Gracias por escribirnos! Si más adelante te surge algo, aquí estoy para ayudarte. 👋'); clearSession(psid); continue; }
+
+        // Si hay etapa pendiente, re-pregunta en vez de quedarse callado
+        if(s.pending==='departamento'){ await askDepartamento(psid); continue; }
+        if(s.pending==='subzona'){ await askSubzonaSCZ(psid); continue; }
+        if(s.pending==='subzona_free'){ await askSubzonaLibre(psid); continue; }
+
+        // Si nada aplica, ofrece ayuda amable
         await sendText(psid, 'Puedo ayudarte con *cotizaciones, catálogo, horarios o ubicación*.');
         await showHelp(psid);
       }
