@@ -656,11 +656,13 @@ router.post('/wa/webhook', async (req,res)=>{
 
       // Lead de Messenger (salta pedir nombre)
       const lead = parseMessengerLead(text);
-      if (lead){
-        s.meta.origin = 'messenger';
-        s.greeted = true;
-        if (lead.name && !s.profileName) s.profileName = title(lead.name);
-
+        if (lead){
+          s.meta.origin = 'messenger';
+          s.greeted = true;
+          if (lead.name) {
+            s.profileName = title(lead.name);            
+            s.meta.messengerName = s.profileName;        
+       }
         if (lead.dptoZ){
           const dep = detectDepartamento(lead.dptoZ) || title(lead.dptoZ.split('/')[0]||'');
           s.vars.departamento = dep || s.vars.departamento;
