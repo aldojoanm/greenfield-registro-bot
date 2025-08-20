@@ -182,7 +182,8 @@ function parseMessengerLead(text){
   const qty   = pick(/Cantidad:\s*([^•\n]+)/i);
   const crops = pick(/Cultivos?:\s*([^•\n]+)/i);
   const dptoZ = pick(/Departamento(?:\/Zona)?:\s*([^•\n]+)/i);
-  return { name, prod, qty, crops, dptoZ };
+  const zona  = pick(/Zona:\s*([^•\n]+)/i);
+  return { name, prod, qty, crops, dptoZ, zona };
 }
 function productFromReferral(ref){
   try{
@@ -666,7 +667,13 @@ router.post('/wa/webhook', async (req,res)=>{
         if (lead.dptoZ){
           const dep = detectDepartamento(lead.dptoZ) || title(lead.dptoZ.split('/')[0]||'');
           s.vars.departamento = dep || s.vars.departamento;
-          if((/santa\s*cruz/i.test(lead.dptoZ)) && detectSubzona(lead.dptoZ)) s.vars.subzona = detectSubzona(lead.dptoZ);
+          const zonaFromSlash = (lead.dptoZ.split('/')[1]||'').trim();
+          if (!s.vars.subzona && zonaFromSlash) s.vars.subzona = title(zonaFromSlash);
+          if((/santa\s*cruz/i.test(lead.dptoZ)) && detectSubzona(lead.dptoZ))
+            s.vars.subzona = detectSubzona(lead.dptoZ);
+        }
+        if (!s.vars.subzona && lead.zona) {
+          s.vars.subzona = title(lead.zona);
         }
         if (lead.crops){
           const raw = lead.crops.split(/[,\s]+y\s+|,\s*|\s+y\s+/i).map(t=>t.trim()).filter(Boolean);
