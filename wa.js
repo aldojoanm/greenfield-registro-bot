@@ -1,8 +1,7 @@
-// wa.js — WhatsApp (con integración a Google Sheets en “Finalizar”)
 import 'dotenv/config';
 import express from 'express';
 import fs from 'fs';
-import { appendFromSession } from './src/services/sheets.js'; // ← ★ IMPORTA EL MÓDULO DE SHEETS
+import { appendFromSession } from './sheets'; 
 
 const router = express.Router();
 router.use(express.json());
