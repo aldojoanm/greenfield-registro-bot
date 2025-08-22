@@ -1,4 +1,4 @@
-// src/sheets.js  (o src/services/sheets.js si usas carpeta services)
+// src/sheets.js
 import 'dotenv/config';
 import { google } from 'googleapis';
 
@@ -36,15 +36,6 @@ async function getSheets() {
   return _sheets;
 }
 
-// ---------- helpers ----------
-function lineProducto({ nombre, presentacion, cantidad }) {
-  if (!nombre) return '';
-  let s = String(nombre);
-  if (presentacion) s += ` (${presentacion})`;
-  if (cantidad) s += ` — ${cantidad}`;
-  return s;
-}
-
 function buildRowFromSession(s, fromPhone, estado = 'nuevo') {
   const nowISO = new Date().toISOString();
   const fullName = s?.fullName || s?.profileName || '';
@@ -53,32 +44,22 @@ function buildRowFromSession(s, fromPhone, estado = 'nuevo') {
   const hectareas = s?.vars?.hectareas || '';
   const campana = s?.vars?.campana || '';
 
+  // Fuente de items: carrito si existe, si no el “actual”
   const carrito = Array.isArray(s?.vars?.cart) ? s.vars.cart : [];
+  const items = (carrito.length > 0)
+    ? carrito
+    : [{
+        nombre: s?.vars?.last_product || '',
+        presentacion: s?.vars?.last_presentacion || '',
+        cantidad: s?.vars?.cantidad || ''
+      }].filter(it => it.nombre); // solo si hay nombre
 
-  // ① Columna "producto": todas las líneas (una por producto) si hay carrito
-  let productoCell = '';
-  if (carrito.length > 0) {
-    productoCell = carrito
-      .map(it => lineProducto({ nombre: it?.nombre, presentacion: it?.presentacion, cantidad: it?.cantidad }))
-      .filter(Boolean)
-      .join('\n');               // ← salto de línea dentro de la celda
-  } else {
-    // Si no hay carrito, uso el “actual”
-    productoCell = lineProducto({
-      nombre: s?.vars?.last_product,
-      presentacion: s?.vars?.last_presentacion,
-      cantidad: s?.vars?.cantidad
-    });
-  }
+  // Columnas multilinea (una línea por item)
+  const productoCell      = items.map(it => it?.nombre || '').join('\n');
+  const presentacionCell  = items.map(it => it?.presentacion || '').join('\n');
+  const cantidadCell      = items.map(it => it?.cantidad || '').join('\n');
 
-  // ② Para "presentacion" y "cantidad" mostramos el PRIMER item (como referencia rápida)
-  let presentacion = s?.vars?.last_presentacion || '';
-  let cantidad = s?.vars?.cantidad || '';
-  if (carrito.length > 0) {
-    presentacion = carrito[0]?.presentacion || presentacion;
-    cantidad = carrito[0]?.cantidad || cantidad;
-  }
-
+  // JSON solo si hay carrito real
   const carrito_json = carrito.length ? JSON.stringify(carrito) : '';
 
   // ID simple para trazabilidad
@@ -92,10 +73,10 @@ function buildRowFromSession(s, fromPhone, estado = 'nuevo') {
     cultivo,                  // cultivo
     String(hectareas || ''),  // hectareas
     campana,                  // campaña
-    productoCell,             // producto  ← ahora multilinea si hay varios
-    presentacion,             // presentacion (del 1er item)
-    cantidad,                 // cantidad (del 1er item)
-    carrito_json,             // carrito_json (todo el detalle)
+    productoCell,             // producto (solo nombres, multilinea)
+    presentacionCell,         // presentacion (multilinea)
+    cantidadCell,             // cantidad (multilinea)
+    carrito_json,             // carrito_json
     estado,                   // estado
     cotizacion_id             // cotizacion_id
   ];
@@ -115,7 +96,7 @@ export async function appendFromSession(s, fromPhone, estado = 'nuevo') {
   await sheets.spreadsheets.values.append({
     spreadsheetId,
     range: `${tab}!A1`,
-    valueInputOption: 'RAW',          // '\n' se conserva tal cual en la celda
+    valueInputOption: 'RAW',      // conserva los '\n' como saltos de línea en la celda
     insertDataOption: 'INSERT_ROWS',
     requestBody: { values },
   });
