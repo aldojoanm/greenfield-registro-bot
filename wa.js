@@ -197,7 +197,7 @@ const wantsBuy      = t => /(comprar|cerrar pedido|prepara pedido|proforma)/i.te
 const asksPrice     = t => /(precio|cu[aá]nto vale|cu[aá]nto cuesta|cotizar|costo)/i.test(t);
 const wantsAgentPlus = t => /asesor(a)?|agente|ejecutiv[oa]|vendedor(a)?|representante|soporte|hablar con (alguien|una persona|humano)|persona real|humano|contact(a|o|arme|en)|que me (llamen|llamen)|llamada|ll[aá]mame|me pueden (contactar|llamar)|comercial/i.test(norm(t));
 const wantsAnother  = t => /(otro|agregar|añadir|sumar|incluir).*(producto|art[ií]culo|item)|cotizar otro/i.test(norm(t));
-const wantsBotBack = t => /([Aa]sistente [Nn]ew [Ch]em)/i.test(t);
+const wantsBotBack = t => /([Aa]sistente [Nn]ew [Cc]hem)/i.test(t);
 
 // ===== REFERAL FB / LEAD =====
 function parseMessengerLead(text){
@@ -475,7 +475,7 @@ async function showProduct(to, prod){
 
   if (shouldShowDetail(s, prod.sku)) {
     const linkFicha = prod.link_ficha || CATALOG_URL;
-    await toText(to, `Aquí tienes la ficha técnica de *${prod.nombre}* 📄\n${linkFicha}`);
+    await toText(to, `Aquí tienes la ficha técnica de *${prod.nombre}* 📄`);
 
     const src = productImageSource(prod);
     if (src) {
