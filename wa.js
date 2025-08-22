@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
 import fs from 'fs';
-import { appendFromSession } from './sheets'; 
+import { appendFromSession } from './sheets.js'; 
 
 const router = express.Router();
 router.use(express.json());
