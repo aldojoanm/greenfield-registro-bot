@@ -1,4 +1,4 @@
-// wa.js — WhatsApp  
+// wa.js — WhatsApp  (con ingrediente activo en listas y detalle)
 import 'dotenv/config';
 import express from 'express';
 import fs from 'fs';
@@ -31,6 +31,10 @@ const CAT_QR = [
   { title: 'Fungicida',   payload: 'CAT_FUNGICIDA' }
 ];
 const linkMaps  = () => `https://www.google.com/maps?q=${encodeURIComponent(`${STORE_LAT},${STORE_LNG}`)}`;
+
+// Límites visuales de WhatsApp List
+const LIST_TITLE_MAX = 24;
+const LIST_DESC_MAX  = 72;
 
 // ===== MODO HUMANO (mute 4h) =====
 const humanSilence = new Map(); 
@@ -72,7 +76,8 @@ function clearS(id){ sessions.delete(id); }
 // ===== HELPERS =====
 const norm  = (t='') => t.toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu,'');
 const title = s => s.replace(/\w\S*/g, w => w[0].toUpperCase()+w.slice(1).toLowerCase());
-const clamp = (t, n=20) => (t.length<=n? t : t.slice(0,n-1)+'…');
+const clamp = (t, n=20) => (String(t).length<=n? String(t) : String(t).slice(0,n-1)+'…');
+const clampN = (t, n) => clamp(t, n);
 const upperNoDia = (t='') => t.normalize('NFD').replace(/\p{Diacritic}/gu,'').toUpperCase();
 
 function remember(id, role, content){
@@ -169,7 +174,7 @@ const wantsBuy      = t => /(comprar|cerrar pedido|prepara pedido|proforma)/i.te
 const asksPrice     = t => /(precio|cu[aá]nto vale|cu[aá]nto cuesta|cotizar|costo)/i.test(t);
 const wantsAgentPlus = t => /asesor(a)?|agente|ejecutiv[oa]|vendedor(a)?|representante|soporte|hablar con (alguien|una persona|humano)|persona real|humano|contact(a|o|arme|en)|que me (llamen|llamen)|llamada|ll[aá]mame|me pueden (contactar|llamar)|comercial/i.test(norm(t));
 const wantsAnother  = t => /(otro|agregar|añadir|sumar|incluir).*(producto|art[ií]culo|item)|cotizar otro/i.test(norm(t));
-const wantsBotBack = t => /([Aa]sistente [Vv]irtual)/i.test(t);
+const wantsBotBack = t => /([Aa]sistente [Nn]ew [Ch]em)/i.test(t);
 
 const CROPS_RE = /\b(soya|soja|ma[ií]z|trigo|girasol|arroz|ca[ñn]a|sorgo|papa|tomate|cebolla|pimiento|chile|man[ií]|fr(i|e)jol|quinua|yuca|citrus|naranja|lim[oó]n|mandarina|uva|pl[aá]tano|banano|palta|aguacate|hortalizas?)\b/i;
 
@@ -292,11 +297,17 @@ const toButtons = (to, body, buttons=[]) => waSendQ(to,{
     action:{ buttons: buttons.slice(0,3).map(b=>({ type:'reply', reply:{ id:b.payload || b.id, title: clamp(b.title) }})) }
   }
 });
+// Mejorado: soporta description por fila si se provee
 const toList = (to, body, title, rows=[]) => waSendQ(to,{
   messaging_product:'whatsapp', to, type:'interactive',
   interactive:{ type:'list', body:{ text:String(body).slice(0,1024) }, action:{
     button: title.slice(0,20),
-    sections:[{ title, rows: rows.slice(0,10).map(r=>({ id:r.payload || r.id, title:clamp(r.title,24) })) }]
+    sections:[{ title, rows: rows.slice(0,10).map(r=>{
+      const id = r.payload || r.id;
+      const t  = clampN(r.title ?? '', LIST_TITLE_MAX);
+      const d  = r.description ? clampN(r.description, LIST_DESC_MAX) : undefined;
+      return d ? { id, title: t, description: d } : { id, title: t };
+    }) }]
   }}
 });
 
@@ -367,6 +378,17 @@ async function askCategory(to){
   await toButtons(to,'¿Qué tipo de producto necesitas?', CAT_QR.map(c=>({ title:c.title, payload:c.payload })));
 }
 
+// ===== Fila de producto con ingrediente activo (para listas)
+function productListRow(p){
+  const nombre = p?.nombre || '';
+  const ia     = p?.ingrediente_activo || p?.formulacion || p?.categoria || '';
+  return {
+    title: nombre,
+    description: ia ? `IA: ${ia}` : undefined,
+    payload: `PROD_${p.sku}`
+  };
+}
+
 // ===== Listado por categoría (paginado) =====
 async function listByCategory(to){
   const s=S(to);
@@ -375,8 +397,10 @@ async function listByCategory(to){
   const offset = s.vars.catOffset || 0;
   const remaining = all.length - offset;
   const show = remaining > 9 ? 9 : remaining;
-  const rows = all.slice(offset, offset+show).map(p=>({ title:p.nombre, payload:`PROD_${p.sku}` }));
+
+  const rows = all.slice(offset, offset+show).map(productListRow);
   if(remaining > show) rows.push({ title:'Ver más…', payload:`CAT_MORE_${offset+show}` });
+
   await toList(to, `${s.vars.category} disponibles`, 'Elegir producto', rows);
   if(offset===0) await toText(to, `Decime cuál te interesa y te paso el detalle. *Compra mínima: US$ 3.000*`);
 }
@@ -393,7 +417,7 @@ async function showProduct(to, prod){
 
   if (shouldShowDetail(s, prod.sku)) {
     const linkFicha = prod.link_ficha || CATALOG_URL;
-    await toText(to, `Aquí tienes la ficha técnica de *${prod.nombre}* 📄`);
+    await toText(to, `Aquí tienes la ficha técnica de *${prod.nombre}* 📄\n${linkFicha}`);
 
     const src = productImageSource(prod);
     if (src) {
@@ -401,7 +425,15 @@ async function showProduct(to, prod){
     } else {
       const plagas=(prod.plaga||[]).slice(0,5).join(', ')||'-';
       const present=(prod.presentaciones||[]).join(', ')||'-';
-      await toText(to,`Sobre *${prod.nombre}* (${prod.categoria}):\n• Formulación / acción: ${prod.formulacion}\n• Dosis de referencia: ${prod.dosis}\n• Espectro objetivo: ${plagas}\n• Presentaciones: ${present}`);
+      const ia = prod.ingrediente_activo || '-';
+      await toText(to,
+        `Sobre *${prod.nombre}* (${prod.categoria}):`+
+        `\n• Ingrediente activo: ${ia}`+
+        `\n• Formulación / acción: ${prod.formulacion}`+
+        `\n• Dosis de referencia: ${prod.dosis}`+
+        `\n• Espectro objetivo: ${plagas}`+
+        `\n• Presentaciones: ${present}`
+      );
     }
     markDetailShown(s, prod.sku);
   }
@@ -561,17 +593,17 @@ router.post('/wa/webhook', async (req,res)=>{
     }
 
     const isLeadMsg = msg.type==='text' && !!parseMessengerLead(msg.text?.body);
-            if(!s.greeted){
-        if(!isLeadMsg){
-          await toText(from, PLAY?.greeting || '¡Qué gusto saludarte!, Soy el asistente virtual de *New Chem*. Estoy para ayudarte 🙂');
-        }
-        s.greeted = true;
-        if(!isLeadMsg && !s.asked.nombre){
-          await askNombre(from);
-          res.sendStatus(200);  
-          return;              
-        }
+    if(!s.greeted){
+      if(!isLeadMsg){
+        await toText(from, PLAY?.greeting || '¡Qué gusto saludarte!, Soy el asistente virtual de *New Chem*. Estoy para ayudarte 🙂');
       }
+      s.greeted = true;
+      if(!isLeadMsg && !s.asked.nombre){
+        await askNombre(from);
+        res.sendStatus(200);  
+        return;              
+      }
+    }
 
     // INTERACTIVOS
     if(msg.type==='interactive'){
@@ -581,7 +613,7 @@ router.post('/wa/webhook', async (req,res)=>{
 
       if(id==='QR_FINALIZAR'){
         await toText(from,'¡Gracias por escribirnos! Nuestro encargado de negocios te enviará la cotización en breve. Si requieres más información, estamos a tu disposición.');
-        await toText(from,'Para volver a activar el asistente, por favor, escribe *Asistente Virtual*.');
+        await toText(from,'Para volver a activar el asistente, por favor, escribe *Asistente New Chem*.');
         humanOn(from, 4);
         clearS(from);
         res.sendStatus(200); return;
@@ -657,13 +689,13 @@ router.post('/wa/webhook', async (req,res)=>{
 
       // Lead de Messenger (salta pedir nombre)
       const lead = parseMessengerLead(text);
-        if (lead){
-          s.meta.origin = 'messenger';
-          s.greeted = true;
-          if (lead.name) {
-            s.profileName = title(lead.name);            
-            s.meta.messengerName = s.profileName;        
-       }
+      if (lead){
+        s.meta.origin = 'messenger';
+        s.greeted = true;
+        if (lead.name) {
+          s.profileName = title(lead.name);            
+          s.meta.messengerName = s.profileName;        
+        }
         if (lead.dptoZ){
           const dep = detectDepartamento(lead.dptoZ) || title(lead.dptoZ.split('/')[0]||'');
           s.vars.departamento = dep || s.vars.departamento;
@@ -802,7 +834,13 @@ router.post('/wa/webhook', async (req,res)=>{
       if (S(from).stage==='product' && !prodExact && !S(from).vars.last_product
           && !['nombre','departamento','subzona','subzona_libre','cultivo','categoria','cantidad','product_name','etapa_cultivo'].includes(S(from).pending||'') ) {
         const cand = fuzzyCandidate(text);
-        if (cand) { await toButtons(from, `¿Te referías a *${cand.prod.nombre}*?`, [{ title:`Sí, ${cand.prod.nombre}`, payload:`PROD_${cand.prod.sku}` },{ title:'No, ver categorías', payload:'CAT_HERBICIDA' }]); res.sendStatus(200); return; }
+        if (cand) {
+          await toButtons(from, `¿Te referías a *${cand.prod.nombre}*?`, [
+            { title:`Sí, ${cand.prod.nombre}`, payload:`PROD_${cand.prod.sku}` },
+            { title:'No, ver categorías', payload:'CAT_HERBICIDA' }
+          ]);
+          res.sendStatus(200); return;
+        }
       }
 
       if (S(from).vars.last_product && S(from).vars.departamento && S(from).vars.subzona){

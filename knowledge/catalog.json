@@ -2,6 +2,7 @@
   {
     "sku": "SEAL-20L",
     "nombre": "SEAL",
+    "ingrediente_activo": "Atrazine",
     "categoria": "Herbicida",
     "cultivo": ["Maíz", "Sorgo"],
     "plaga": ["Verdolaga", "Quinuilla", "Malva taporita", "Chiori"],
@@ -14,6 +15,7 @@
   {
     "sku": "SINERGY-10-20L",
     "nombre": "SINERGY",
+    "ingrediente_activo": "Clethodim",
     "categoria": "Herbicida",
     "cultivo": ["Soya"],
     "plaga": ["Rogelia", "Orizahá", "Cadillo", "Pata de gallina", "Pata de gallo"],
@@ -26,6 +28,7 @@
   {
     "sku": "DRIER-20-200L",
     "nombre": "DRIER",
+    "ingrediente_activo": "Paraquat dichloride",
     "categoria": "Herbicida",
     "cultivo": ["Barbecho químico"],
     "plaga": ["Chiori"],
@@ -38,6 +41,7 @@
   {
     "sku": "GLISATO-20-200L",
     "nombre": "GLISATO",
+    "ingrediente_activo": "Glifosato",
     "categoria": "Herbicida",
     "cultivo": ["Barbecho químico"],
     "plaga": ["Rogelia", "Torito", "Verdolaga camba", "Emilia", "Leche leche", "Sanana", "Chiori", "Malva taporita", "Chupurujume", "Maicillo"],
@@ -50,6 +54,7 @@
   {
     "sku": "NICOXAM-10L",
     "nombre": "NICOXAM",
+    "ingrediente_activo": "Thiametoxan",
     "categoria": "Insecticida-Acaricida",
     "cultivo": ["Soya"],
     "plaga": ["Chinche verde pequeño"],
@@ -62,6 +67,7 @@
   {
     "sku": "TRENCH-10L",
     "nombre": "TRENCH",
+    "ingrediente_activo": "Bifenthrin",
     "categoria": "Insecticida-Acaricida",
     "cultivo": ["Soya"],
     "plaga": ["Chinche café panza verde", "Mosca barrenadora"],
@@ -74,6 +80,7 @@
   {
     "sku": "MEXIN-5-10L",
     "nombre": "MEXIN",
+    "ingrediente_activo": "Abamectin",
     "categoria": "Insecticida-Acaricida",
     "cultivo": ["Soya"],
     "plaga": ["Ácaro"],
@@ -86,6 +93,7 @@
   {
     "sku": "FENPRONIL-1KG",
     "nombre": "FENPRONIL",
+    "ingrediente_activo": "Fipronil",
     "categoria": "Insecticida-Acaricida",
     "cultivo": ["Soya"],
     "plaga": ["Picudo gris pequeño", "Trips"],
@@ -98,6 +106,7 @@
   {
     "sku": "NOATO-1KG",
     "nombre": "NOATO",
+    "ingrediente_activo": "Emamectin Benzoato",
     "categoria": "Insecticida-Acaricida",
     "cultivo": ["Soya"],
     "plaga": ["Pegador de hoja"],
@@ -110,6 +119,7 @@
   {
     "sku": "LAYER-20KG",
     "nombre": "LAYER",
+    "ingrediente_activo": "Mancozeb",
     "categoria": "Fungicida",
     "cultivo": ["Soya"],
     "plaga": ["Roya Asiática"],
