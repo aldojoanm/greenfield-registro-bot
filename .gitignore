@@ -18,3 +18,6 @@ Thumbs.db
 # build
 dist/
 build/
+
+/secrets/
+/*.json
