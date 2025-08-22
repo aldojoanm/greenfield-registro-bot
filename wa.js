@@ -1,4 +1,6 @@
-// wa.js — WhatsApp  (ingrediente activo en listas, detalle, cultivo por opciones, presentaciones y flujo cultivo→hectáreas→campaña)
+// wa.js — WhatsApp  (ingrediente activo en listas, detalle, cultivo por opciones,
+// presentaciones y flujo cultivo→hectáreas→campaña; fixes de intención temprana,
+// producto corto, acaricida, catálogo/ubicación/asesor al inicio y nombre completo)
 import 'dotenv/config';
 import express from 'express';
 import fs from 'fs';
@@ -77,10 +79,12 @@ function S(id){
         cantidad:null, phone:null,
         last_detail_sku:null, last_detail_ts:0,
         candidate_sku:null,
+        candidate_list:[], // ★ para desambiguar por nombre corto
         catOffset:0,
         cart: [] // {sku,nombre,presentacion?,cantidad}
       },
       profileName: null,
+      fullName: null, // ★ preferimos el más largo / completo
       memory: [],
       lastPrompt: null,
       lastPromptTs: 0,
@@ -97,9 +101,18 @@ const title = s => String(s||'').replace(/\w\S*/g, w => w[0].toUpperCase()+w.sli
 const clamp = (t, n=20) => (String(t).length<=n? String(t) : String(t).slice(0,n-1)+'…');
 const clampN = (t, n) => clamp(t, n);
 const upperNoDia = (t='') => t.normalize('NFD').replace(/\p{Diacritic}/gu,'').toUpperCase();
+const plain = (t='') => t.normalize('NFD').replace(/\p{Diacritic}/gu,'').toLowerCase().replace(/[-_]+/g,' ').replace(/\s+/g,' ').trim(); // ★
 
 const b64u = s => Buffer.from(String(s),'utf8').toString('base64').replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
 const ub64u = s => Buffer.from(String(s).replace(/-/g,'+').replace(/_/g,'/'), 'base64').toString('utf8');
+
+const preferLongerName = (oldN, newN)=>{ // ★
+  if(!newN) return oldN||null;
+  if(!oldN) return newN;
+  const ow = String(oldN).trim().split(/\s+/).length;
+  const nw = String(newN).trim().split(/\s+/).length;
+  return (nw>ow || String(newN).length>String(oldN).length) ? newN : oldN;
+};
 
 function remember(id, role, content){
   const s=S(id); s.memory.push({role,content,ts:Date.now()});
@@ -114,15 +127,30 @@ const normalizeCatLabel = (c='')=>{
   if(t.includes('insecticida')||t.includes('acaricida')) return 'Insecticida';
   return null;
 };
+
 function findProduct(text){
   const nt = norm(text);
   return (CATALOG||[]).find(p=>{
-    const n = norm(p.nombre||''); if(nt.includes(n)) return true;
-    return n.split(/\s+/).filter(Boolean).every(tok=>nt.includes(tok));
+    const n = norm(p.nombre||'');
+    if(!n) return false;
+    if(nt.includes(n)) return true;
+    // match por tokens completos
+    const toks = n.split(/\s+/).filter(Boolean);
+    return toks.every(tok=>nt.includes(tok));
   }) || null;
 }
-function levenshtein(a='', b=''){
+
+// ↓↓↓ ★ Reconocimiento por alias / token base / fuzzy / SKU
+function productBaseToken(p){
+  const raw = String(p?.nombre||'').replace(/[®™]/g,'').trim();
+  // tomamos el token antes de números o formulaciones (SL, EC, WG, etc.)
+  const part = raw.split(/[\d(]/)[0].trim();
+  return norm(part).split(/\s+/)[0] || '';
+}
+function fuzzySim(a='', b=''){
+  // Jaro-Winkler Lite por distancia de Levenshtein normalizada
   const m=a.length, n=b.length;
+  if(!m||!n) return 0;
   const dp=Array.from({length:m+1},()=>Array(n+1).fill(0));
   for(let i=0;i<=m;i++) dp[i][0]=i;
   for(let j=0;j<=n;j++) dp[0][j]=j;
@@ -132,21 +160,48 @@ function levenshtein(a='', b=''){
       dp[i][j]=Math.min(dp[i-1][j]+1, dp[i][j-1]+1, dp[i-1][j-1]+cost);
     }
   }
-  return dp[m][n];
+  return 1 - dp[m][n]/Math.max(m,n);
 }
-function fuzzyCandidate(text){
-  const qRaw = norm(text).replace(/[^a-z0-9\s]/g,'').trim();
-  if(!qRaw) return null;
+function findProductSmart(text){
+  const nt = norm(text);
+  const exact = findProduct(text);
+  if(exact) return {prod: exact, multi:false, list:[]};
+
+  // por SKU directo
+  const skuMatch = String(text).match(/\bsku[:#]?\s*([a-z0-9\-]+)\b/i);
+  if(skuMatch){
+    const bySku = (CATALOG||[]).find(p=>String(p.sku).toLowerCase()===skuMatch[1].toLowerCase());
+    if(bySku) return {prod: bySku, multi:false, list:[]};
+  }
+
+  // por alias (alias/aliases en JSON si existe)
+  const candidatesAlias = (CATALOG||[]).filter(p=>{
+    const aliases = ([]).concat(p.alias||[], p.aliases||[]);
+    return aliases.some(a=> nt.includes(norm(a)));
+  });
+  if(candidatesAlias.length===1) return {prod:candidatesAlias[0], multi:false, list:[]};
+  if(candidatesAlias.length>1) return {prod:null, multi:true, list:candidatesAlias};
+
+  // por token base presente (“trench” de “TRENCH 480 SL”)
+  const baseHits = (CATALOG||[]).filter(p=>{
+    const bt = productBaseToken(p);
+    return bt && nt.includes(bt);
+  });
+  if(baseHits.length===1) return {prod:baseHits[0], multi:false, list:[]};
+  if(baseHits.length>1)   return {prod:null, multi:true, list:baseHits};
+
+  // fuzzy over nombres
   let best=null, bestScore=-1;
   for(const p of (CATALOG||[])){
-    const name = norm(p.nombre||'');
-    const dist = levenshtein(qRaw, name);
-    const sim  = 1 - dist/Math.max(qRaw.length, name.length);
-    if (sim > bestScore){ best = p; bestScore = sim; }
+    const n = norm(p.nombre||'');
+    const sim = fuzzySim(nt, n);
+    if(sim>bestScore){ best=p; bestScore=sim; }
   }
-  if (best && bestScore >= 0.75) return { prod: best, score: bestScore };
-  return null;
+  if(best && bestScore>=0.72) return {prod:best, multi:false, list:[]};
+
+  return {prod:null, multi:false, list:[]};
 }
+
 function getProductsByCategory(cat){
   const key = norm(cat||'');
   return (CATALOG||[]).filter(p=>{
@@ -197,7 +252,28 @@ const wantsBuy      = t => /(comprar|cerrar pedido|prepara pedido|proforma)/i.te
 const asksPrice     = t => /(precio|cu[aá]nto vale|cu[aá]nto cuesta|cotizar|costo)/i.test(t);
 const wantsAgentPlus = t => /asesor(a)?|agente|ejecutiv[oa]|vendedor(a)?|representante|soporte|hablar con (alguien|una persona|humano)|persona real|humano|contact(a|o|arme|en)|que me (llamen|llamen)|llamada|ll[aá]mame|me pueden (contactar|llamar)|comercial/i.test(norm(t));
 const wantsAnother  = t => /(otro|agregar|añadir|sumar|incluir).*(producto|art[ií]culo|item)|cotizar otro/i.test(norm(t));
-const wantsBotBack = t => /([Aa]sistente [Nn]ew [Cc]hem)/i.test(t);
+// ★ robusto: acepta “asistente new chem”, “asistente  new-chem”, “asistente nc”, “activar bot”
+const wantsBotBack = (t)=>{
+  const n = plain(t||'');
+  return (
+    /\b(asistente|bot)\b.*\b(new\s*chem|nc)\b/.test(n) ||
+    /\b(activar|reactivar)\b.*\b(asistente|bot)\b/.test(n)
+  );
+};
+
+// ★ cultivo libre desde texto general (“productos para soya”, “para maiz”, etc.)
+function detectCultivoFromText(text){
+  const t = norm(text);
+  // patrón explícito
+  const m = t.match(/productos?\s+(?:para|de)\s+([a-zñáéíóú]+)/i);
+  const c1 = m ? CROP_SYN[m[1]] : null;
+  if(c1) return c1;
+  // búsqueda por inclusión simple
+  for(const k of Object.keys(CROP_SYN)){
+    if(t.includes(k)) return CROP_SYN[k];
+  }
+  return null;
+}
 
 // ===== REFERAL FB / LEAD =====
 function parseMessengerLead(text){
@@ -226,11 +302,12 @@ function productFromReferral(ref){
         byQS = (CATALOG||[]).find(p=>String(p.sku).toLowerCase()===String(sku).toLowerCase());
       }
       if(!byQS && pn){
-        byQS = findProduct(pn) || (fuzzyCandidate(pn)||{}).prod || null;
+        const smart = findProductSmart(pn);
+        byQS = smart.prod || null;
       }
     }catch{}
-    const byText = findProduct(bits) || ((fuzzyCandidate(bits)||{}).prod) || null;
-    return byQS || byText || null;
+    const smartBits = findProductSmart(bits);
+    return smartBits.prod || byQS || null;
   }catch{ return null; }
 }
 
@@ -246,7 +323,7 @@ function inferUnitFromProduct(s){
   return 'Kg';
 }
 function summaryText(s){
-  const nombre = s.profileName || 'Cliente';
+  const nombre = s.fullName || s.profileName || 'Cliente'; // ★
   const dep    = s.vars.departamento || 'ND';
   const zona   = s.vars.subzona || 'ND';
   const cultivo= s.vars.cultivos?.[0] || 'ND';
@@ -468,14 +545,14 @@ async function showProduct(to, prod){
   const s=S(to);
   s.vars.last_product = prod.nombre;
   s.vars.last_sku = prod.sku;
-  s.vars.last_presentacion = null; // reset presentación al cambiar de producto
+  s.vars.last_presentacion = null;
 
   const catNorm = normalizeCatLabel(prod.categoria||'');
   if(catNorm && !s.vars.category) s.vars.category = catNorm;
 
   if (shouldShowDetail(s, prod.sku)) {
     const linkFicha = prod.link_ficha || CATALOG_URL;
-    await toText(to, `Aquí tienes la ficha técnica de *${prod.nombre}* 📄`);
+    await toText(to, `Aquí tienes la ficha técnica de *${prod.nombre}* 📄\n${linkFicha}`); // ★ link visible
 
     const src = productImageSource(prod);
     if (src) {
@@ -487,8 +564,8 @@ async function showProduct(to, prod){
       await toText(to,
         `Sobre *${prod.nombre}* (${prod.categoria}):`+
         `\n• Ingrediente activo: ${ia}`+
-        `\n• Formulación / acción: ${prod.formulacion}`+
-        `\n• Dosis de referencia: ${prod.dosis}`+
+        `\n• Formulación / acción: ${prod.formulacion||'-'}`+
+        `\n• Dosis de referencia: ${prod.dosis||'-'}`+
         `\n• Espectro objetivo: ${plagas}`+
         `\n• Presentaciones: ${present}`
       );
@@ -496,7 +573,6 @@ async function showProduct(to, prod){
     markDetailShown(s, prod.sku);
   }
 
-  // Si solo hay una presentación, la fijamos; si hay varias, preguntamos
   const single = productSinglePres(prod);
   if(single && !s.vars.last_presentacion){
     s.vars.last_presentacion = single;
@@ -531,7 +607,7 @@ async function afterSummary(to, variant='cart'){
   await toText(to, summaryText(s));
 
   if (s.meta?.origin === 'messenger') {
-    const quien = s.profileName ? `, ${s.profileName}` : '';
+    const quien = (s.fullName||s.profileName) ? `, ${s.fullName||s.profileName}` : '';
     await toText(to, `¡Excelente${quien}! Tomo estos datos y preparo tu cotización personalizada. Te la enviamos enseguida por este chat.`);
   }
 
@@ -554,7 +630,7 @@ async function nextStep(to){
   const stale = (key)=> s.lastPrompt===key && (Date.now()-s.lastPromptTs>25000);
   if (s.pending && !stale(s.pending)) return;
 
-  // (0) Nombre
+  // (0) Nombre (solo si no hay lead; no bloquea otras respuestas)
   if(s.meta.origin!=='messenger' && !s.asked.nombre){
     if(stale('nombre') || s.lastPrompt!=='nombre') return askNombre(to);
     return;
@@ -576,7 +652,7 @@ async function nextStep(to){
     return;
   }
 
-  // (3) Cultivo (opciones)
+  // (3) Cultivo
   if(!s.vars.cultivos || s.vars.cultivos.length===0){
     if(stale('cultivo') || s.lastPrompt!=='cultivo') return askCultivo(to);
     return;
@@ -607,7 +683,7 @@ async function nextStep(to){
   // (7) Listado por categoría si aún no hay producto elegido
   if(!s.vars.last_product) return listByCategory(to);
 
-  // (8) Presentación (si hay varias y aún no se eligió)
+  // (8) Presentación
   const prod = (CATALOG||[]).find(p=>p.sku===s.vars.last_sku);
   if(prod && productHasMultiPres(prod) && !s.vars.last_presentacion){
     return askPresentacion(to, prod);
@@ -648,18 +724,25 @@ router.post('/wa/webhook', async (req,res)=>{
     const s = S(from);
     const textRaw = (msg.type==='text' ? (msg.text?.body || '').trim() : '');
 
+    // HUMANO muteado
     if (isHuman(from)) {
       if (textRaw && wantsBotBack(textRaw)) {
         humanOff(from);
-        const quien = s.profileName ? `, ${s.profileName}` : '';
-        await toText(from, `Listo${quien} 🙌. Reactivé el *asistente automático*. ¿En qué puedo ayudarte?`);
+        const quien = s.fullName || s.profileName ? `, ${s.fullName||s.profileName}` : '';
+        await toText(from, `Listo${quien} 🙌. Reactivé el *asistente automático*.`);
+        await nextStep(from); // ★ retoma flujo
       }
       res.sendStatus(200); return;
     }
 
+    // Nombre de contacto WA (solo si no hay otro mejor)
     const contactName = value?.contacts?.[0]?.profile?.name;
-    if(contactName && !s.profileName) s.profileName = contactName;
+    if(contactName){
+      s.profileName = preferLongerName(s.profileName, contactName); // ★
+      s.fullName    = preferLongerName(s.fullName, contactName);    // ★
+    }
 
+    // REFERRAL FB
     const referral = msg?.referral;
     if (referral && !s.meta.referralHandled){
       s.meta.referralHandled = true;
@@ -676,16 +759,12 @@ router.post('/wa/webhook', async (req,res)=>{
       }
     }
 
-    const isLeadMsg = msg.type==='text' && !!parseMessengerLead(msg.text?.body);
+    // ===== SALUDO (no bloquea nada) ★
     if(!s.greeted){
-      if(!isLeadMsg){
-        await toText(from, PLAY?.greeting || '¡Qué gusto saludarte!, Soy el asistente virtual de *New Chem*. Estoy para ayudarte 🙂');
-      }
+      await toText(from, PLAY?.greeting || '¡Qué gusto saludarte!, Soy el asistente virtual de *New Chem*. Estoy para ayudarte 🙂');
       s.greeted = true;
-      if(!isLeadMsg && !s.asked.nombre){
-        await askNombre(from);
-        res.sendStatus(200); return;
-      }
+      if(!s.asked.nombre) await askNombre(from);
+      // NO return; continuamos para atender intenciones del 1er mensaje
     }
 
     // ===== INTERACTIVOS =====
@@ -696,7 +775,7 @@ router.post('/wa/webhook', async (req,res)=>{
 
       if(id==='QR_FINALIZAR'){
         await toText(from,'¡Gracias por escribirnos! Nuestro encargado de negocios te enviará la cotización en breve. Si requieres más información, estamos a tu disposición.');
-        await toText(from,'Para volver a activar el asistente, por favor, escribe *Asistente New Chem*.');
+        await toText(from,'Para volver a activar el asistente, escribe *Asistente New Chem*, *activar asistente* o *activar bot*.'); // ★
         humanOn(from, 4); clearS(from); res.sendStatus(200); return;
       }
       if(id==='QR_SEGUIR'){ await toText(from,'Perfecto, seguimos por aquí 🙌. ¿En qué más te puedo ayudar?'); await askCategory(from); res.sendStatus(200); return; }
@@ -771,9 +850,8 @@ router.post('/wa/webhook', async (req,res)=>{
           s.vars.last_product = prod.nombre; s.vars.last_sku = prod.sku; s.vars.last_presentacion=null;
           const catNorm = normalizeCatLabel(prod.categoria||''); if(catNorm) s.vars.category = catNorm;
           await showProduct(from, prod);
-          // flujo: si hay multi presentación, la pido; si no, pido cantidad
           if(productHasMultiPres(prod)){
-            // no hacer nada, ya se pidió dentro de showProduct
+            // ya se pidió presentación
           } else if (!s.vars.cantidad && !s.asked.cantidad){
             s.pending='cantidad'; s.lastPrompt='cantidad'; s.lastPromptTs=Date.now(); s.asked.cantidad=true;
             await toText(from,'¿Qué *cantidad* necesitas *(L/KG o unidades)* para este producto?');
@@ -782,14 +860,12 @@ router.post('/wa/webhook', async (req,res)=>{
         res.sendStatus(200); return;
       }
       if(/^PRES_/.test(id)){
-        // id = PRES_<sku>__<b64url(presentacion)>
         const m = id.match(/^PRES_(.+?)__(.+)$/);
         if(m){
           const sku = m[1];
           const pres = ub64u(m[2]);
           if(s.vars.last_sku===sku){
             s.vars.last_presentacion = pres;
-            // Luego de elegir presentación, pedimos cantidad si falta
             if(!s.vars.cantidad){
               s.pending='cantidad'; s.lastPrompt='cantidad'; s.lastPromptTs=Date.now(); s.asked.cantidad=true;
               await toText(from,'Perfecto. ¿Qué *cantidad* necesitas *(L/KG o unidades)* para este producto?');
@@ -811,7 +887,11 @@ router.post('/wa/webhook', async (req,res)=>{
       if (lead){
         s.meta.origin = 'messenger';
         s.greeted = true;
-        if (lead.name) s.profileName = title(lead.name);
+        if (lead.name){
+          const full = title(lead.name);
+          s.profileName = preferLongerName(s.profileName, full);
+          s.fullName    = preferLongerName(s.fullName, full); // ★
+        }
         if (lead.dptoZ){
           const dep = detectDepartamento(lead.dptoZ) || title(lead.dptoZ.split('/')[0]||'');
           s.vars.departamento = dep || s.vars.departamento;
@@ -825,59 +905,27 @@ router.post('/wa/webhook', async (req,res)=>{
           const mapped = Array.from(new Set(picks.map(x=>CROP_SYN[x]).filter(Boolean)));
           if (mapped.length) s.vars.cultivos = [mapped[0]];
         }
-        const quien = s.profileName ? ` ${s.profileName}` : '';
+        const quien = (s.fullName||s.profileName) ? ` ${s.fullName||s.profileName}` : '';
         await toText(from, `👋 Hola${quien}, gracias por continuar con *New Chem* vía WhatsApp.\nAquí encontrarás los agroquímicos esenciales para tu cultivo, al mejor precio. 🌱`);
-        await askCultivo(from); res.sendStatus(200); return;
+        await askCultivo(from);
+        res.sendStatus(200); 
+        return;
       }
 
-      // Nombre
-      if (S(from).pending==='nombre'){
-        S(from).profileName = title(text.toLowerCase());
-        S(from).pending=null; S(from).lastPrompt=null;
-        await nextStep(from); res.sendStatus(200); return;
-      }
-
-      // Subzona libre
-      if (S(from).pending==='subzona_libre'){
-        S(from).vars.subzona = title(text.toLowerCase());
-        S(from).pending=null; S(from).lastPrompt=null;
-        await nextStep(from); res.sendStatus(200); return;
-      }
-
-      // Hectáreas
-      if (S(from).pending==='hectareas'){
-        const ha = parseHectareas(text);
-        if(ha){
-          S(from).vars.hectareas = ha;
-          S(from).pending=null; S(from).lastPrompt=null;
-          await nextStep(from);
-          res.sendStatus(200); return;
-        } else {
-          await toText(from,'Por favor ingresa un número válido de *hectáreas* (ej. 50 ha).');
-          res.sendStatus(200); return;
-        }
-      }
-
-      // Campaña libre
-      if (S(from).pending==='campana_text'){
-        S(from).vars.campana = title(text);
-        S(from).pending=null; S(from).lastPrompt=null;
-        await nextStep(from); res.sendStatus(200); return;
-      }
-
-      // ASESOR
+      // ===== INTENCIONES PRIORITARIAS (no se bloquean por pedir nombre) ★
       if (wantsAgentPlus(text)) {
-        const quien = s.profileName ? `, ${s.profileName}` : '';
-        await toText(from, `¡Perfecto${quien}! Ya notifiqué a nuestro equipo. Un **asesor comercial** se pondrá en contacto contigo por este chat en unos minutos para ayudarte con tu consulta y la cotización. Desde ahora **pauso el asistente automático** para que te atienda una persona. 🙌`);
+        const quien = (s.fullName||s.profileName) ? `, ${s.fullName||s.profileName}` : '';
+        await toText(from, `¡Perfecto${quien}! Ya notifiqué a nuestro equipo. Un **asesor comercial** se pondrá en contacto contigo por este chat en unos minutos. Pauso el asistente automático ahora. 🙌`);
         humanOn(from, 4); res.sendStatus(200); return;
       }
-
-      // Globales
-      if(/horario|atienden|abren|cierran/i.test(tnorm)){ await toText(from, `Atendemos ${FAQS?.horarios || 'Lun–Vie 8:00–17:00'} 🙂`); res.sendStatus(200); return; }
-      if(wantsLocation(text)){ await toText(from, `Nuestra ubicación en Google Maps 👇\nVer ubicación: ${linkMaps()}`); await toButtons(from,'¿Hay algo más en lo que pueda ayudarte?',[{title:'Seguir',payload:'QR_SEGUIR'},{title:'Finalizar',payload:'QR_FINALIZAR'}]); res.sendStatus(200); return; }
-      if(wantsCatalog(text)){
+      if (wantsCatalog(text)){
         await toText(from, `Este es nuestro catálogo completo\n${CATALOG_URL}`);
         await toButtons(from,'¿Quieres que te ayude a elegir o añadir un producto ahora?',[{title:'Añadir producto', payload:'ADD_MORE'},{title:'Finalizar', payload:'QR_FINALIZAR'}]);
+        res.sendStatus(200); return;
+      }
+      if (wantsLocation(text)){
+        await toText(from, `Nuestra ubicación en Google Maps 👇\nVer ubicación: ${linkMaps()}`);
+        await toButtons(from,'¿Hay algo más en lo que pueda ayudarte?',[{title:'Seguir',payload:'QR_SEGUIR'},{title:'Finalizar',payload:'QR_FINALIZAR'}]);
         res.sendStatus(200); return;
       }
       if(wantsClose(text)){
@@ -897,53 +945,47 @@ router.post('/wa/webhook', async (req,res)=>{
       }
       if(cant) S(from).vars.cantidad = cant;
 
-      // Producto exacto
-      const prodExact = findProduct(text);
-      if (prodExact){
-        S(from).vars.last_product = prodExact.nombre;
-        S(from).vars.last_sku = prodExact.sku;
-        S(from).vars.last_presentacion = null;
-        const catFromProd = normalizeCatLabel(prodExact.categoria||''); if (catFromProd) S(from).vars.category = catFromProd;
-        S(from).stage='product'; S(from).vars.catOffset=0;
+      // Departamento / Subzona (p.ej. “Santa Cruz Norte”)
+      const depTyped = detectDepartamento(text);
+      const subOnly  = detectSubzona(text);
+      if(depTyped){ S(from).vars.departamento = depTyped; if(!subOnly) S(from).vars.subzona=null; }
+      if((S(from).vars.departamento==='Santa Cruz' || depTyped==='Santa Cruz') && subOnly){ S(from).vars.subzona = subOnly; }
+
+      // Cultivo libre (ej. “productos para soya”)
+      if(!S(from).vars.cultivos?.length){
+        const cfree = detectCultivoFromText(text);
+        if(cfree){ S(from).vars.cultivos=[cfree]; }
       }
 
-      // Categoría por texto
+      // Categoría por texto (y aviso de ácaros)
       const catTyped2 = detectCategory(text);
       if(catTyped2){
         S(from).vars.category=catTyped2; S(from).vars.catOffset=0; S(from).asked.categoria=true; S(from).stage='product';
-        if (mentionsAcaricida(text) && catTyped2==='Insecticida') await toText(from,'Te muestro Insecticidas que cubren ácaros.');
+        if (mentionsAcaricida(text) && catTyped2==='Insecticida') await toText(from,'Perfecto, reviso *Insecticidas* que cubren *ácaros*.');
       }
 
-      // Ubicación
-      const depTyped = detectDepartamento(text);
-      const subOnly  = detectSubzona(text);
-      if(depTyped){ S(from).vars.departamento = depTyped; S(from).vars.subzona=null; }
-      if((S(from).vars.departamento==='Santa Cruz' || depTyped==='Santa Cruz') && subOnly){ S(from).vars.subzona = subOnly; }
-
-      // Cultivo por texto (mapeo a opciones)
-      if (S(from).pending==='cultivo'){
-        const picked = Object.keys(CROP_SYN).find(k=>tnorm.includes(k));
-        if (picked){
-          S(from).vars.cultivos = [CROP_SYN[picked]];
-          S(from).pending=null; S(from).lastPrompt=null;
-          await askHectareas(from);
-          res.sendStatus(200); return;
-        } else {
-          await toText(from, 'Por favor, *elige una opción del listado* para continuar.');
-          await askCultivo(from); res.sendStatus(200); return;
-        }
+      // Producto por nombre corto / fuzzy (“quiero trench”)
+      const smart = findProductSmart(text);
+      if(smart.multi && smart.list.length){
+        S(from).vars.candidate_list = smart.list.map(p=>p.sku);
+        await toList(from, 'Encontré varias opciones, ¿cuál es la que buscas?', 'Elegir producto',
+          smart.list.slice(0,10).map(productListRow)
+        );
+        res.sendStatus(200); return;
+      }
+      if(smart.prod){
+        S(from).vars.last_product = smart.prod.nombre;
+        S(from).vars.last_sku = smart.prod.sku;
+        S(from).vars.last_presentacion = null;
+        const catFromProd = normalizeCatLabel(smart.prod.categoria||''); if (catFromProd) S(from).vars.category = catFromProd;
+        S(from).stage='product'; S(from).vars.catOffset=0;
+        await showProduct(from, smart.prod);
       }
 
-      // Campaña si el usuario escribió directamente "verano"/"invierno"
-      if(!S(from).vars.campana){
-        if(/\bverano\b/i.test(text)) S(from).vars.campana='Verano';
-        else if(/\binvierno\b/i.test(text)) S(from).vars.campana='Invierno';
-      }
-
-      // COTIZACIÓN
+      // Precio (avisar que armamos cotización, pero sin ignorar intención)
       if(asksPrice(text)){
-        if (mentionsAcaricida(text)) await toText(from, 'Te muestro Insecticidas que cubren ácaros.');
-        await toText(from,'Con gusto te preparo una *cotización* con un precio a medida. Solo necesito que me compartas unos datos para poder recomendarte la mejor opción para tu zona y cultivo');
+        if (mentionsAcaricida(text)) { S(from).vars.category='Insecticida'; await toText(from, 'Perfecto, *insecticidas para ácaros*.'); }
+        await toText(from,'Te preparo una *cotización* a medida. Para recomendarte bien necesito algunos datos rápidos (zona, cultivo, hectáreas y campaña).');
       }
 
       // Si llegó la cantidad y hay producto → carrito + “otro”
@@ -953,21 +995,56 @@ router.post('/wa/webhook', async (req,res)=>{
         res.sendStatus(200); return;
       }
 
-      const productIntent = prodExact || catTyped2 || asksPrice(text) || wantsBuy(text) || /producto|herbicida|insecticida|fungicida|acaricida|informaci[oó]n/i.test(tnorm);
-      if (S(from).stage === 'discovery' && productIntent) S(from).stage = 'product';
-
+      // Si ya tenemos producto y ubicación mínima, muestro detalle o pido cantidad
       if (S(from).vars.last_product && S(from).vars.departamento && S(from).vars.subzona){
-        const prod = findProduct(S(from).vars.last_product) || prodExact;
+        const prod = (CATALOG||[]).find(p=>p.sku===S(from).vars.last_sku) || findProduct(S(from).vars.last_product) || smart.prod;
         if (prod) {
           await showProduct(from, prod);
-          // Si faltó presentación, se pedirá. Si ya hay, pedir cantidad.
           if (productHasMultiPres(prod) && !S(from).vars.last_presentacion) {
-            // se pidió en showProduct
+            // pendiente de presentación
           } else if (!S(from).vars.cantidad && !S(from).asked.cantidad) {
             S(from).pending='cantidad'; S(from).lastPrompt='cantidad'; S(from).lastPromptTs=Date.now(); S(from).asked.cantidad=true;
             await toText(from,'¿Qué *cantidad* necesitas *(L/KG o unidades)* para este producto?');
           }
         }
+      }
+
+      // Nombre recibido
+      if (S(from).pending==='nombre'){
+        const full = title(text.toLowerCase());
+        S(from).profileName = preferLongerName(S(from).profileName, full);
+        S(from).fullName    = preferLongerName(S(from).fullName, full); // ★
+        S(from).pending=null; S(from).lastPrompt=null;
+      }
+
+      // Subzona libre
+      if (S(from).pending==='subzona_libre'){
+        S(from).vars.subzona = title(text.toLowerCase());
+        S(from).pending=null; S(from).lastPrompt=null;
+      }
+
+      // Hectáreas directas cuando está pendiente
+      if (S(from).pending==='hectareas'){
+        const ha2 = parseHectareas(text);
+        if(ha2){
+          S(from).vars.hectareas = ha2;
+          S(from).pending=null; S(from).lastPrompt=null;
+        } else {
+          await toText(from,'Por favor ingresa un número válido de *hectáreas* (ej. 50 ha).');
+          res.sendStatus(200); return;
+        }
+      }
+
+      // Campaña libre
+      if (S(from).pending==='campana_text'){
+        S(from).vars.campana = title(text);
+        S(from).pending=null; S(from).lastPrompt=null;
+      }
+
+      // Campaña por palabra suelta
+      if(!S(from).vars.campana){
+        if(/\bverano\b/i.test(text)) S(from).vars.campana='Verano';
+        else if(/\binvierno\b/i.test(text)) S(from).vars.campana='Invierno';
       }
 
       await nextStep(from);
