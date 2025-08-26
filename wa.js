@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
 import fs from 'fs';
+import path from 'path';             // ★ para persistencia disco
 import { appendFromSession } from './sheets.js'; 
 
 const router = express.Router();
@@ -59,11 +60,68 @@ const humanOn  = (id, hours=4)=> humanSilence.set(id, Date.now()+HOURS(hours));
 const humanOff = (id)=> humanSilence.delete(id);
 const isHuman  = (id)=> (humanSilence.get(id)||0) > Date.now();
 
-// ===== SESIONES =====
+// ===== SESIONES (persistencia 5 días, disco + GC) =====
+// ★ Persistimos sesiones en ./data/sessions (ligero para server $5)
+const SESSION_TTL_MS = 5*24*60*60*1000;     // 5 días
+const SESSION_DIR = path.resolve('./data/sessions');
+fs.mkdirSync(SESSION_DIR, { recursive: true });
+
 const sessions = new Map();
+const sessionTouched = new Map();           // id -> last ts (para GC RAM)
+function sessionPath(id){ return path.join(SESSION_DIR, `${id}.json`); }
+function loadSessionFromDisk(id){
+  try{
+    const raw = fs.readFileSync(sessionPath(id),'utf8');
+    const obj = JSON.parse(raw);
+    if (obj?._expiresAt && Date.now() > obj._expiresAt) return null;
+    return obj;
+  }catch{ return null; }
+}
+function persistSessionToDisk(id, s){
+  try{
+    const slim = {
+      greeted: s.greeted,
+      stage: s.stage,
+      pending: s.pending,
+      asked: s.asked,
+      vars: s.vars,
+      profileName: s.profileName,
+      memory: s.memory,           // ya capado a 12 líneas
+      lastPrompt: s.lastPrompt,
+      lastPromptTs: s.lastPromptTs,
+      meta: s.meta,
+      _savedToSheet: s._savedToSheet,
+      _expiresAt: Date.now() + SESSION_TTL_MS
+    };
+    const tmp = sessionPath(id)+'.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(slim));
+    fs.renameSync(tmp, sessionPath(id));
+  }catch(e){ /* no romper flujo si falla IO */ }
+}
+function deleteSessionFromDisk(id){ try{ fs.unlinkSync(sessionPath(id)); }catch{} }
+
+setInterval(()=>{ // GC RAM
+  const now = Date.now();
+  for(const [id, ts] of sessionTouched){
+    if (now - ts > SESSION_TTL_MS) { sessions.delete(id); sessionTouched.delete(id); }
+  }
+}, 10*60*1000);
+
+setInterval(()=>{ // GC DISCO
+  try{
+    const now = Date.now();
+    for(const f of fs.readdirSync(SESSION_DIR)){
+      const p = path.join(SESSION_DIR, f);
+      const st = fs.statSync(p);
+      if (now - st.mtimeMs > SESSION_TTL_MS) fs.unlinkSync(p);
+    }
+  }catch{}
+}, 60*60*1000);
+
 function S(id){
   if(!sessions.has(id)){
-    sessions.set(id,{
+    const fromDisk = loadSessionFromDisk(id);
+    sessions.set(id, fromDisk || {
       greeted:false,
       stage: 'discovery',
       pending: null,
@@ -88,9 +146,11 @@ function S(id){
       _savedToSheet: false // ← ★ bandera anti-doble escritura
     });
   }
+  sessionTouched.set(id, Date.now());
   return sessions.get(id);
 }
-function clearS(id){ sessions.delete(id); }
+function persistS(id){ persistSessionToDisk(id, S(id)); }
+function clearS(id){ sessions.delete(id); sessionTouched.delete(id); deleteSessionFromDisk(id); }
 
 // ===== HELPERS =====
 const norm  = (t='') => t.toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu,'');
@@ -105,6 +165,7 @@ const ub64u = s => Buffer.from(String(s).replace(/-/g,'+').replace(/_/g,'/'), 'b
 function remember(id, role, content){
   const s=S(id); s.memory.push({role,content,ts:Date.now()});
   if(s.memory.length>12) s.memory=s.memory.slice(-12);
+  persistS(id); // ★ persistimos minibuffer
 }
 
 // ===== BÚSQUEDA / PARSERS =====
@@ -122,6 +183,37 @@ function findProduct(text){
     return n.split(/\s+/).filter(Boolean).every(tok=>nt.includes(tok));
   }) || null;
 }
+// ★ IA sinónimos comunes (amplía según tu catálogo)
+const IA_SYNONYMS = {
+  'glifo':'glifosato', 'glyphosate':'glifosato', 'glifosate':'glifosato',
+  '24d':'2,4-d', '2 4 d':'2,4-d', '2,4d':'2,4-d',
+  'paraquat':'paraquat',
+  'clethodim':'clethodim', 'cleto':'clethodim',
+  'emamectina':'emamectin', 'emamectin':'emamectin',
+  'metsulfuron':'metsulfuron', 'imazetapir':'imazetapir', 'imazapir':'imazapir',
+  'abamectina':'abamectin', 'lambda':'lambda cihalotrina', 'lambda-cyhalothrin':'lambda cihalotrina'
+};
+function canonIA(t){
+  const x = norm(t).replace(/[^a-z0-9\s\.,\/\-\+]/g,' ').replace(/\s+/g,' ').trim();
+  return IA_SYNONYMS[x] || x;
+}
+function splitIAText(ia=''){
+  const t = canonIA(ia);
+  return t.split(/[,\+\/;]| y | con /g).map(s=>s.trim()).filter(w=>w.length>=3);
+}
+function findProductsByIA(text){
+  const q = canonIA(text);
+  if(!q) return [];
+  const hits = [];
+  for(const p of (CATALOG||[])){
+    const ia = p?.ingrediente_activo || p?.formulacion || '';
+    const parts = splitIAText(ia);
+    const match = parts.some(tok => q.includes(tok) || tok.includes(q));
+    if(match) hits.push(p);
+  }
+  return hits;
+}
+
 function levenshtein(a='', b=''){
   const m=a.length, n=b.length;
   const dp=Array.from({length:m+1},()=>Array(n+1).fill(0));
@@ -368,11 +460,13 @@ async function markPrompt(s, key){ s.lastPrompt = key; s.lastPromptTs = Date.now
 async function askNombre(to){
   const s=S(to); if (s.lastPrompt==='nombre' || s.asked.nombre) return;
   await markPrompt(s,'nombre'); s.pending='nombre'; s.asked.nombre=true;
+  persistS(to); // ★
   await toText(to,'Para personalizar tu atención, ¿cuál es tu *nombre completo*?');
 }
 async function askDepartamento(to){
   const s=S(to); if (s.lastPrompt==='departamento') return;
   await markPrompt(s,'departamento'); s.pending='departamento'; s.asked.departamento=true;
+  persistS(to); // ★
   await toList(to,'¡Perfecto! Para orientarte mejor, ¿en qué *departamento* produces?','Elegir departamento',
     DEPARTAMENTOS.map(d=>({ title:d, payload:`DPTO_${d.toUpperCase().replace(/\s+/g,'_')}` }))
   );
@@ -380,6 +474,7 @@ async function askDepartamento(to){
 async function askSubzonaSCZ(to){
   const s=S(to); if (s.lastPrompt==='subzona') return;
   await markPrompt(s,'subzona'); s.pending='subzona'; s.asked.subzona=true;
+  persistS(to); // ★
   await toList(to,'Gracias. ¿Qué *zona de Santa Cruz*?','Elegir zona',
     [{title:'Norte',payload:'SUBZ_NORTE'},{title:'Este',payload:'SUBZ_ESTE'},{title:'Sur',payload:'SUBZ_SUR'},{title:'Valles',payload:'SUBZ_VALLES'},{title:'Chiquitania',payload:'SUBZ_CHIQUITANIA'}]
   );
@@ -387,32 +482,38 @@ async function askSubzonaSCZ(to){
 async function askSubzonaLibre(to){
   const s=S(to); if (s.lastPrompt==='subzona_libre') return;
   await markPrompt(s,'subzona_libre'); s.pending='subzona_libre'; s.asked.subzona=true;
+  persistS(to); // ★
   const dep = s.vars.departamento || 'tu departamento';
   await toText(to, `Perfecto. ¿Para qué *zona* de *${dep}* quisieras?`);
 }
 async function askCultivo(to){
   const s=S(to); if (s.lastPrompt==='cultivo') return;
   await markPrompt(s,'cultivo'); s.pending='cultivo'; s.asked.cultivo=true;
+  persistS(to); // ★
   await toList(to,'Perfecto 🙌. Elige tu *cultivo*','Elegir cultivo', CROP_OPTIONS);
 }
 async function askHectareas(to){
   const s=S(to); if (s.lastPrompt==='hectareas') return;
   await markPrompt(s,'hectareas'); s.pending='hectareas'; s.asked.hectareas=true;
+  persistS(to); // ★
   await toText(to,'¿Cuántas *hectáreas* vas a tratar? (ej. 50 ha)');
 }
 async function askCampana(to){
   const s=S(to); if (s.lastPrompt==='campana') return;
   await markPrompt(s,'campana'); s.pending='campana'; s.asked.campana=true;
+  persistS(to); // ★
   await toButtons(to,'¿Para qué *campaña* es? (siembra)', CAMP_BTNS);
 }
 async function askCampanaLibre(to){
   const s=S(to); if (s.lastPrompt==='campana_text') return;
   await markPrompt(s,'campana_text'); s.pending='campana_text';
+  persistS(to); // ★
   await toText(to,'Escribe tu campaña (por ejemplo: *Invierno Chico*).');
 }
 async function askCategory(to){
   const s=S(to); if (s.lastPrompt==='categoria') return;
   s.stage='product'; await markPrompt(s,'categoria'); s.pending='categoria'; s.asked.categoria=true;
+  persistS(to); // ★
   await toButtons(to,'¿Qué tipo de producto necesitas?', CAT_QR.map(c=>({ title:c.title, payload:c.payload })));
 }
 
@@ -446,6 +547,13 @@ function productListRow(p){
   };
 }
 
+// ★ Listado por IA (cuando el usuario pide un ingrediente)
+async function listByIA(to, products, iaText){
+  const rows = products.slice(0,9).map(productListRow);
+  await toList(to, `Productos con IA: ${title(iaText)}`, 'Elegir producto', rows);
+  await toText(to, `Decime cuál te interesa y te paso el detalle. *Compra mínima: US$ 3.000*`);
+}
+
 // ===== Listado por categoría (paginado) =====
 async function listByCategory(to){
   const s=S(to);
@@ -470,12 +578,12 @@ async function showProduct(to, prod){
   s.vars.last_product = prod.nombre;
   s.vars.last_sku = prod.sku;
   s.vars.last_presentacion = null; // reset presentación al cambiar de producto
+  persistS(to); // ★
 
   const catNorm = normalizeCatLabel(prod.categoria||'');
   if(catNorm && !s.vars.category) s.vars.category = catNorm;
 
   if (shouldShowDetail(s, prod.sku)) {
-    const linkFicha = prod.link_ficha || CATALOG_URL;
     await toText(to, `Aquí tienes la ficha técnica de *${prod.nombre}* 📄`);
 
     const src = productImageSource(prod);
@@ -504,6 +612,7 @@ async function showProduct(to, prod){
   } else if (productHasMultiPres(prod) && !s.vars.last_presentacion){
     await askPresentacion(to, prod);
   }
+  persistS(to); // ★
 }
 
 // ===== CARRITO =====
@@ -549,81 +658,91 @@ async function afterSummary(to, variant='cart'){
   }
 }
 
-// ===== Orquestador =====
+// ===== Orquestador (guard anti re-entradas) =====
+const busy = new Set(); // ★ evita condiciones de carrera por usuario
+
 async function nextStep(to){
-  const s=S(to);
-  const stale = (key)=> s.lastPrompt===key && (Date.now()-s.lastPromptTs>25000);
-  if (s.pending && !stale(s.pending)) return;
+  if (busy.has(to)) return;
+  busy.add(to);
+  try{
+    const s=S(to);
+    const stale = (key)=> s.lastPrompt===key && (Date.now()-s.lastPromptTs>25000);
+    if (s.pending && !stale(s.pending)) return;
 
-  // (0) Nombre
-  if(s.meta.origin!=='messenger' && !s.asked.nombre){
-    if(stale('nombre') || s.lastPrompt!=='nombre') return askNombre(to);
-    return;
-  }
-
-  // (1) Departamento
-  if(!s.vars.departamento){
-    if(stale('departamento') || s.lastPrompt!=='departamento') return askDepartamento(to);
-    return;
-  }
-
-  // (2) Subzona
-  if(!s.vars.subzona){
-    if(s.vars.departamento==='Santa Cruz'){
-      if(stale('subzona') || s.lastPrompt!=='subzona') return askSubzonaSCZ(to);
-    }else{
-      if(stale('subzona_libre') || s.lastPrompt!=='subzona_libre') return askSubzonaLibre(to);
+    // (0) Nombre
+    if(s.meta.origin!=='messenger' && !s.asked.nombre){
+      if(stale('nombre') || s.lastPrompt!=='nombre') return askNombre(to);
+      return;
     }
-    return;
-  }
 
-  // (3) Cultivo (opciones)
-  if(!s.vars.cultivos || s.vars.cultivos.length===0){
-    if(stale('cultivo') || s.lastPrompt!=='cultivo') return askCultivo(to);
-    return;
-  }
-
-  // (4) Hectáreas
-  if(!s.vars.hectareas){
-    if(stale('hectareas') || s.lastPrompt!=='hectareas') return askHectareas(to);
-    return;
-  }
-
-  // (5) Campaña
-  if(!s.vars.campana){
-    if(stale('campana') || s.lastPrompt!=='campana') return askCampana(to);
-    return;
-  }
-
-  // (6) Categoría / producto
-  if(s.vars.last_product && !s.vars.category){
-    const p=(CATALOG||[]).find(pp=>norm(pp.nombre||'')===norm(s.vars.last_product));
-    const c=normalizeCatLabel(p?.categoria||''); if(c) s.vars.category=c;
-  }
-  if(!s.vars.last_product && !s.vars.category){
-    if(stale('categoria') || s.lastPrompt!=='categoria') return askCategory(to);
-    return;
-  }
-
-  // (7) Listado por categoría si aún no hay producto elegido
-  if(!s.vars.last_product) return listByCategory(to);
-
-  // (8) Presentación (si hay varias y aún no se eligió)
-  const prod = (CATALOG||[]).find(p=>p.sku===s.vars.last_sku);
-  if(prod && productHasMultiPres(prod) && !s.vars.last_presentacion){
-    return askPresentacion(to, prod);
-  }
-  if(prod && productSinglePres(prod) && !s.vars.last_presentacion){
-    s.vars.last_presentacion = productSinglePres(prod);
-  }
-
-  // (9) Cantidad
-  if(!s.vars.cantidad){
-    if (!s.asked.cantidad){
-      s.pending='cantidad'; await markPrompt(s,'cantidad'); s.asked.cantidad=true;
-      return toText(to,'Para poder realizar tu cotización, ¿qué *cantidad* necesitas *(L/KG o unidades)*?');
+    // (1) Departamento
+    if(!s.vars.departamento){
+      if(stale('departamento') || s.lastPrompt!=='departamento') return askDepartamento(to);
+      return;
     }
-    return;
+
+    // (2) Subzona
+    if(!s.vars.subzona){
+      if(s.vars.departamento==='Santa Cruz'){
+        if(stale('subzona') || s.lastPrompt!=='subzona') return askSubzonaSCZ(to);
+      }else{
+        if(stale('subzona_libre') || s.lastPrompt!=='subzona_libre') return askSubzonaLibre(to);
+      }
+      return;
+    }
+
+    // (3) Cultivo (opciones)
+    if(!s.vars.cultivos || s.vars.cultivos.length===0){
+      if(stale('cultivo') || s.lastPrompt!=='cultivo') return askCultivo(to);
+      return;
+    }
+
+    // (4) Hectáreas
+    if(!s.vars.hectareas){
+      if(stale('hectareas') || s.lastPrompt!=='hectareas') return askHectareas(to);
+      return;
+    }
+
+    // (5) Campaña
+    if(!s.vars.campana){
+      if(stale('campana') || s.lastPrompt!=='campana') return askCampana(to);
+      return;
+    }
+
+    // (6) Categoría / producto
+    if(s.vars.last_product && !s.vars.category){
+      const p=(CATALOG||[]).find(pp=>norm(pp.nombre||'')===norm(s.vars.last_product));
+      const c=normalizeCatLabel(p?.categoria||''); if(c) s.vars.category=c;
+    }
+    if(!s.vars.last_product && !s.vars.category){
+      if(stale('categoria') || s.lastPrompt!=='categoria') return askCategory(to);
+      return;
+    }
+
+    // (7) Listado por categoría si aún no hay producto elegido
+    if(!s.vars.last_product) return listByCategory(to);
+
+    // (8) Presentación (si hay varias y aún no se eligió)
+    const prod = (CATALOG||[]).find(p=>p.sku===s.vars.last_sku);
+    if(prod && productHasMultiPres(prod) && !s.vars.last_presentacion){
+      return askPresentacion(to, prod);
+    }
+    if(prod && productSinglePres(prod) && !s.vars.last_presentacion){
+      s.vars.last_presentacion = productSinglePres(prod);
+    }
+
+    // (9) Cantidad
+    if(!s.vars.cantidad){
+      if (!s.asked.cantidad){
+        s.pending='cantidad'; await markPrompt(s,'cantidad'); s.asked.cantidad=true;
+        persistS(to); // ★
+        return toText(to,'Para poder realizar tu cotización, ¿qué *cantidad* necesitas *(L/KG o unidades)*?');
+      }
+      return;
+    }
+  } finally {
+    persistS(to); // ★ guarda avance
+    busy.delete(to);
   }
 }
 
@@ -636,6 +755,12 @@ router.get('/wa/webhook',(req,res)=>{
   return res.sendStatus(403);
 });
 
+// ===== DEDUPE por wamid (evita dobles) =====
+const processed = new Map(); // wamid -> ts
+const PROCESSED_TTL = 5 * 60 * 1000;
+setInterval(()=>{ const now=Date.now(); for(const [k,ts] of processed){ if(now-ts>PROCESSED_TTL) processed.delete(k); } }, 60*1000);
+function seenWamid(id){ if(!id) return false; const now=Date.now(); const old=processed.get(id); processed.set(id,now); return !!old && (now-old)<PROCESSED_TTL; }
+
 // ===== RECEIVE =====
 router.post('/wa/webhook', async (req,res)=>{
   try{
@@ -646,6 +771,9 @@ router.post('/wa/webhook', async (req,res)=>{
     const from   = msg?.from;
     if(!msg || !from){ res.sendStatus(200); return; }
 
+    // ★ dedupe
+    if (seenWamid(msg.id)) { res.sendStatus(200); return; }
+
     const s = S(from);
     const textRaw = (msg.type==='text' ? (msg.text?.body || '').trim() : '');
 
@@ -655,20 +783,22 @@ router.post('/wa/webhook', async (req,res)=>{
         const quien = s.profileName ? `, ${s.profileName}` : '';
         await toText(from, `Listo${quien} 🙌. Reactivé el *asistente automático*. ¿En qué puedo ayudarte?`);
       }
-      res.sendStatus(200); return;
+      persistS(from); res.sendStatus(200); return;
     }
 
     const contactName = value?.contacts?.[0]?.profile?.name;
-    if(contactName && !s.profileName) s.profileName = contactName;
+    if(contactName && !s.profileName){ s.profileName = contactName; persistS(from); }
 
     const referral = msg?.referral;
     if (referral && !s.meta.referralHandled){
       s.meta.referralHandled = true;
       s.meta.origin = 'facebook';
       s.meta.referral = referral;
+      persistS(from);
       const prod = productFromReferral(referral);
       if (prod){
         s.vars.candidate_sku = prod.sku;
+        persistS(from);
         await toButtons(from, `Gracias por escribirnos desde Facebook. ¿La consulta es sobre *${prod.nombre}*?`, [
           { title:`Sí, ${prod.nombre}`, payload:`REF_YES_${prod.sku}` },
           { title:'No, otro producto',  payload:'REF_NO' }
@@ -682,7 +812,7 @@ router.post('/wa/webhook', async (req,res)=>{
       if(!isLeadMsg){
         await toText(from, PLAY?.greeting || '¡Qué gusto saludarte!, Soy el asistente virtual de *New Chem*. Estoy para ayudarte 🙂');
       }
-      s.greeted = true;
+      s.greeted = true; persistS(from);
       if(!isLeadMsg && !s.asked.nombre){
         await askNombre(from);
         res.sendStatus(200); return;
@@ -699,19 +829,15 @@ router.post('/wa/webhook', async (req,res)=>{
         try {
           if (!s._savedToSheet) {
             const cotId = await appendFromSession(s, from, 'nuevo');
-            s.vars.cotizacion_id = cotId;
-            s._savedToSheet = true;
+            s.vars.cotizacion_id = cotId; s._savedToSheet = true; persistS(from);
           }
-        } catch (err) {
-          console.error('Sheets append error:', err);
-          // No bloquear al usuario si falla Sheets
-        }
+        } catch (err) { console.error('Sheets append error:', err); }
         await toText(from,'¡Gracias por escribirnos! Nuestro encargado de negocios te enviará la cotización en breve. Si requieres más información, estamos a tu disposición.');
         await toText(from,'Para volver a activar el asistente, por favor, escribe *Asistente New Chem*.');
         humanOn(from, 4); clearS(from); res.sendStatus(200); return;
       }
       if(id==='QR_SEGUIR'){ await toText(from,'Perfecto, seguimos por aquí 🙌. ¿En qué más te puedo ayudar?'); await askCategory(from); res.sendStatus(200); return; }
-      if(id==='ADD_MORE'){ s.vars.catOffset=0; s.vars.last_product=null; s.vars.last_sku=null; s.vars.last_presentacion=null; s.vars.cantidad=null; s.asked.cantidad=false; await toButtons(from,'Dime el *nombre del otro producto* o elige una categoría 👇', CAT_QR.map(c=>({title:c.title,payload:c.payload}))); res.sendStatus(200); return; }
+      if(id==='ADD_MORE'){ s.vars.catOffset=0; s.vars.last_product=null; s.vars.last_sku=null; s.vars.last_presentacion=null; s.vars.cantidad=null; s.asked.cantidad=false; persistS(from); await toButtons(from,'Dime el *nombre del otro producto* o elige una categoría 👇', CAT_QR.map(c=>({title:c.title,payload:c.payload}))); res.sendStatus(200); return; }
       if(id==='NO_MORE'){ await afterSummary(from, 'help'); res.sendStatus(200); return; }
 
       if(/^REF_YES_/.test(id)){
@@ -720,13 +846,14 @@ router.post('/wa/webhook', async (req,res)=>{
         if(prod){
           s.vars.last_product = prod.nombre; s.vars.last_sku = prod.sku; s.vars.last_presentacion=null;
           const catNorm = normalizeCatLabel(prod.categoria||''); if(catNorm) s.vars.category = catNorm;
+          persistS(from);
           await showProduct(from, prod);
           await nextStep(from);
         }
         res.sendStatus(200); return;
       }
       if(id==='REF_NO'){
-        s.pending='product_name'; s.lastPrompt='product_name'; s.lastPromptTs=Date.now();
+        s.pending='product_name'; s.lastPrompt='product_name'; s.lastPromptTs=Date.now(); persistS(from);
         await toText(from,'Claro, indícame por favor el *nombre del producto* que te interesa y te paso el detalle.');
         res.sendStatus(200); return;
       }
@@ -735,7 +862,7 @@ router.post('/wa/webhook', async (req,res)=>{
         const depRaw = id.replace('DPTO_','').replace(/_/g,' ');
         const dep = (()=>{ const t=norm(depRaw); for(const d of DEPARTAMENTOS) if(norm(d)===t) return d; return title(depRaw); })();
         s.vars.departamento = dep; s.asked.departamento=true; s.pending=null; s.lastPrompt=null;
-        s.vars.subzona = null;
+        s.vars.subzona = null; persistS(from);
         if(dep==='Santa Cruz'){ await askSubzonaSCZ(from); } else { await askSubzonaLibre(from); }
         res.sendStatus(200); return;
       }
@@ -743,7 +870,7 @@ router.post('/wa/webhook', async (req,res)=>{
         const z = id.replace('SUBZ_','').toLowerCase();
         const mapa = { norte:'Norte', este:'Este', sur:'Sur', valles:'Valles', chiquitania:'Chiquitania' };
         if (s.vars.departamento==='Santa Cruz') s.vars.subzona = mapa[z] || null;
-        s.pending=null; s.lastPrompt=null;
+        s.pending=null; s.lastPrompt=null; persistS(from);
         await nextStep(from); res.sendStatus(200); return;
       }
       if(/^CROP_/.test(id)){
@@ -751,7 +878,7 @@ router.post('/wa/webhook', async (req,res)=>{
         const map  = { soya:'Soya', maiz:'Maíz', trigo:'Trigo', arroz:'Arroz', girasol:'Girasol' };
         const val  = map[code] || null;
         if(val){
-          s.vars.cultivos = [val]; s.pending=null; s.lastPrompt=null;
+          s.vars.cultivos = [val]; s.pending=null; s.lastPrompt=null; persistS(from);
           await nextStep(from);
         }
         res.sendStatus(200); return;
@@ -761,18 +888,18 @@ router.post('/wa/webhook', async (req,res)=>{
         if(code==='verano') s.vars.campana='Verano';
         else if(code==='invierno') s.vars.campana='Invierno';
         else if(code==='otra'){ await askCampanaLibre(from); res.sendStatus(200); return; }
-        s.pending=null; s.lastPrompt=null;
+        s.pending=null; s.lastPrompt=null; persistS(from);
         await nextStep(from); res.sendStatus(200); return;
       }
       if(/^CAT_/.test(id)){
         const key = id.replace('CAT_','').toLowerCase();
         s.vars.category = key==='herbicida' ? 'Herbicida' : key==='insecticida' ? 'Insecticida' : 'Fungicida';
-        s.vars.catOffset = 0; s.stage='product'; s.pending=null; s.lastPrompt=null;
+        s.vars.catOffset = 0; s.stage='product'; s.pending=null; s.lastPrompt=null; persistS(from);
         await nextStep(from); res.sendStatus(200); return;
       }
       if(/^CAT_MORE_/.test(id)){
         const next = parseInt(id.replace('CAT_MORE_',''),10) || 0;
-        s.vars.catOffset = next;
+        s.vars.catOffset = next; persistS(from);
         await listByCategory(from); res.sendStatus(200); return;
       }
       if(/^PROD_/.test(id)){
@@ -781,28 +908,26 @@ router.post('/wa/webhook', async (req,res)=>{
         if(prod){
           s.vars.last_product = prod.nombre; s.vars.last_sku = prod.sku; s.vars.last_presentacion=null;
           const catNorm = normalizeCatLabel(prod.categoria||''); if(catNorm) s.vars.category = catNorm;
+          persistS(from);
           await showProduct(from, prod);
-          // flujo: si hay multi presentación, la pido; si no, pido cantidad
           if(productHasMultiPres(prod)){
-            // no hacer nada, ya se pidió dentro de showProduct
+            // se pidió en showProduct
           } else if (!s.vars.cantidad && !s.asked.cantidad){
-            s.pending='cantidad'; s.lastPrompt='cantidad'; s.lastPromptTs=Date.now(); s.asked.cantidad=true;
+            s.pending='cantidad'; s.lastPrompt='cantidad'; s.lastPromptTs=Date.now(); s.asked.cantidad=true; persistS(from);
             await toText(from,'¿Qué *cantidad* necesitas *(L/KG o unidades)* para este producto?');
           }
         }
         res.sendStatus(200); return;
       }
       if(/^PRES_/.test(id)){
-        // id = PRES_<sku>__<b64url(presentacion)>
         const m = id.match(/^PRES_(.+?)__(.+)$/);
         if(m){
           const sku = m[1];
           const pres = ub64u(m[2]);
           if(s.vars.last_sku===sku){
-            s.vars.last_presentacion = pres;
-            // Luego de elegir presentación, pedimos cantidad si falta
+            s.vars.last_presentacion = pres; persistS(from);
             if(!s.vars.cantidad){
-              s.pending='cantidad'; s.lastPrompt='cantidad'; s.lastPromptTs=Date.now(); s.asked.cantidad=true;
+              s.pending='cantidad'; s.lastPrompt='cantidad'; s.lastPromptTs=Date.now(); s.asked.cantidad=true; persistS(from);
               await toText(from,'Perfecto. ¿Qué *cantidad* necesitas *(L/KG o unidades)* para este producto?');
             }
           }
@@ -817,11 +942,23 @@ router.post('/wa/webhook', async (req,res)=>{
       remember(from,'user',text);
       const tnorm = norm(text);
 
+      // ★ Guardia: si estamos pidiendo NOMBRE pero el texto parece consulta, no guardarlo como nombre
+      if (S(from).pending==='nombre'){
+        const looksLikeIntent = /[?¿]|(tiene|tienes|hay|precio|glifo|glifosato|producto|cat[aá]logo|insecticida|herbicida|fungicida|acaricida)/i.test(text);
+        if(!looksLikeIntent){
+          S(from).profileName = title(text.toLowerCase());
+          S(from).pending=null; S(from).lastPrompt=null; persistS(from);
+          await nextStep(from); res.sendStatus(200); return;
+        } else {
+          S(from).pending=null; S(from).lastPrompt=null; persistS(from);
+          // y seguimos procesando el mismo mensaje como consulta
+        }
+      }
+
       // Lead de Messenger
       const lead = parseMessengerLead(text);
       if (lead){
-        s.meta.origin = 'messenger';
-        s.greeted = true;
+        s.meta.origin = 'messenger'; s.greeted = true; persistS(from);
         if (lead.name) s.profileName = title(lead.name);
         if (lead.dptoZ){
           const dep = detectDepartamento(lead.dptoZ) || title(lead.dptoZ.split('/')[0]||'');
@@ -836,22 +973,16 @@ router.post('/wa/webhook', async (req,res)=>{
           const mapped = Array.from(new Set(picks.map(x=>CROP_SYN[x]).filter(Boolean)));
           if (mapped.length) s.vars.cultivos = [mapped[0]];
         }
+        persistS(from);
         const quien = s.profileName ? ` ${s.profileName}` : '';
         await toText(from, `👋 Hola${quien}, gracias por continuar con *New Chem* vía WhatsApp.\nAquí encontrarás los agroquímicos esenciales para tu cultivo, al mejor precio. 🌱`);
         await askCultivo(from); res.sendStatus(200); return;
       }
 
-      // Nombre
-      if (S(from).pending==='nombre'){
-        S(from).profileName = title(text.toLowerCase());
-        S(from).pending=null; S(from).lastPrompt=null;
-        await nextStep(from); res.sendStatus(200); return;
-      }
-
       // Subzona libre
       if (S(from).pending==='subzona_libre'){
         S(from).vars.subzona = title(text.toLowerCase());
-        S(from).pending=null; S(from).lastPrompt=null;
+        S(from).pending=null; S(from).lastPrompt=null; persistS(from);
         await nextStep(from); res.sendStatus(200); return;
       }
 
@@ -860,7 +991,7 @@ router.post('/wa/webhook', async (req,res)=>{
         const ha = parseHectareas(text);
         if(ha){
           S(from).vars.hectareas = ha;
-          S(from).pending=null; S(from).lastPrompt=null;
+          S(from).pending=null; S(from).lastPrompt=null; persistS(from);
           await nextStep(from);
           res.sendStatus(200); return;
         } else {
@@ -872,7 +1003,7 @@ router.post('/wa/webhook', async (req,res)=>{
       // Campaña libre
       if (S(from).pending==='campana_text'){
         S(from).vars.campana = title(text);
-        S(from).pending=null; S(from).lastPrompt=null;
+        S(from).pending=null; S(from).lastPrompt=null; persistS(from);
         await nextStep(from); res.sendStatus(200); return;
       }
 
@@ -880,7 +1011,7 @@ router.post('/wa/webhook', async (req,res)=>{
       if (wantsAgentPlus(text)) {
         const quien = s.profileName ? `, ${s.profileName}` : '';
         await toText(from, `¡Perfecto${quien}! Ya notifiqué a nuestro equipo. Un **asesor comercial** se pondrá en contacto contigo por este chat en unos minutos para ayudarte con tu consulta y la cotización. Desde ahora **pauso el asistente automático** para que te atienda una persona. 🙌`);
-        humanOn(from, 4); res.sendStatus(200); return;
+        humanOn(from, 4); persistS(from); res.sendStatus(200); return;
       }
 
       // Globales
@@ -898,45 +1029,61 @@ router.post('/wa/webhook', async (req,res)=>{
       if(wantsAnother(text)){ await askAddMore(from); res.sendStatus(200); return; }
 
       // CAPTURA PASIVA
-      const ha   = parseHectareas(text); if(ha && !S(from).vars.hectareas) S(from).vars.hectareas = ha;
-      const phone= parsePhone(text);     if(phone) S(from).vars.phone = phone;
+      const ha   = parseHectareas(text); if(ha && !S(from).vars.hectareas){ S(from).vars.hectareas = ha; persistS(from); }
+      const phone= parsePhone(text);     if(phone){ S(from).vars.phone = phone; persistS(from); }
 
       let cant = parseCantidad(text);
       if(!cant && (S(from).pending==='cantidad')){
         const mOnly = text.match(/^\s*(\d{1,6}(?:[.,]\d{1,2})?)\s*$/);
         if(mOnly){ const unit = inferUnitFromProduct(S(from)).toLowerCase(); cant = `${mOnly[1].replace(',','.') } ${unit}`; }
       }
-      if(cant) S(from).vars.cantidad = cant;
+      if(cant){ S(from).vars.cantidad = cant; persistS(from); }
 
       // Producto exacto
       const prodExact = findProduct(text);
+
+      // ★ Búsqueda por Ingrediente Activo
+      const iaHits = findProductsByIA(text);
+
       if (prodExact){
         S(from).vars.last_product = prodExact.nombre;
         S(from).vars.last_sku = prodExact.sku;
         S(from).vars.last_presentacion = null;
         const catFromProd = normalizeCatLabel(prodExact.categoria||''); if (catFromProd) S(from).vars.category = catFromProd;
-        S(from).stage='product'; S(from).vars.catOffset=0;
+        S(from).stage='product'; S(from).vars.catOffset=0; persistS(from);
+      } else if (iaHits.length === 1){
+        const prod = iaHits[0];
+        S(from).vars.last_product = prod.nombre;
+        S(from).vars.last_sku = prod.sku;
+        S(from).vars.last_presentacion = null;
+        const catFromProd = normalizeCatLabel(prod.categoria||''); if (catFromProd) S(from).vars.category = catFromProd;
+        S(from).stage='product'; S(from).vars.catOffset=0; persistS(from);
+      } else if (iaHits.length > 1){
+        // varios productos con ese IA → listar y salir
+        await listByIA(from, iaHits, text);
+        res.sendStatus(200); return;
       }
 
       // Categoría por texto
       const catTyped2 = detectCategory(text);
       if(catTyped2){
         S(from).vars.category=catTyped2; S(from).vars.catOffset=0; S(from).asked.categoria=true; S(from).stage='product';
+        persistS(from);
         if (mentionsAcaricida(text) && catTyped2==='Insecticida') await toText(from,'Te muestro Insecticidas que cubren ácaros.');
       }
 
       // Ubicación
       const depTyped = detectDepartamento(text);
       const subOnly  = detectSubzona(text);
-      if(depTyped){ S(from).vars.departamento = depTyped; S(from).vars.subzona=null; }
-      if((S(from).vars.departamento==='Santa Cruz' || depTyped==='Santa Cruz') && subOnly){ S(from).vars.subzona = subOnly; }
+      if(depTyped){ S(from).vars.departamento = depTyped; S(from).vars.subzona=null; persistS(from); }
+      if((S(from).vars.departamento==='Santa Cruz' || depTyped==='Santa Cruz') && subOnly){ S(from).vars.subzona = subOnly; persistS(from); }
 
       // Cultivo por texto (mapeo a opciones)
       if (S(from).pending==='cultivo'){
         const picked = Object.keys(CROP_SYN).find(k=>tnorm.includes(k));
         if (picked){
           S(from).vars.cultivos = [CROP_SYN[picked]];
-          S(from).pending=null; S(from).lastPrompt=null;
+          S(from).pending=null; S(from).lastPrompt=null; persistS(from);
           await askHectareas(from);
           res.sendStatus(200); return;
         } else {
@@ -959,23 +1106,22 @@ router.post('/wa/webhook', async (req,res)=>{
 
       // Si llegó la cantidad y hay producto → carrito + “otro”
       if(S(from).vars.cantidad && S(from).vars.last_sku){
-        addCurrentToCart(S(from));
+        addCurrentToCart(S(from)); persistS(from);
         await askAddMore(from);
         res.sendStatus(200); return;
       }
 
-      const productIntent = prodExact || catTyped2 || asksPrice(text) || wantsBuy(text) || /producto|herbicida|insecticida|fungicida|acaricida|informaci[oó]n/i.test(tnorm);
-      if (S(from).stage === 'discovery' && productIntent) S(from).stage = 'product';
+      const productIntent = prodExact || (iaHits.length>0) || catTyped2 || asksPrice(text) || wantsBuy(text) || /producto|herbicida|insecticida|fungicida|acaricida|informaci[oó]n/i.test(tnorm);
+      if (S(from).stage === 'discovery' && productIntent) { S(from).stage = 'product'; persistS(from); }
 
       if (S(from).vars.last_product && S(from).vars.departamento && S(from).vars.subzona){
-        const prod = findProduct(S(from).vars.last_product) || prodExact;
+        const prod = findProduct(S(from).vars.last_product) || prodExact || iaHits[0];
         if (prod) {
           await showProduct(from, prod);
-          // Si faltó presentación, se pedirá. Si ya hay, pedir cantidad.
           if (productHasMultiPres(prod) && !S(from).vars.last_presentacion) {
             // se pidió en showProduct
           } else if (!S(from).vars.cantidad && !S(from).asked.cantidad) {
-            S(from).pending='cantidad'; S(from).lastPrompt='cantidad'; S(from).lastPromptTs=Date.now(); S(from).asked.cantidad=true;
+            S(from).pending='cantidad'; S(from).lastPrompt='cantidad'; S(from).lastPromptTs=Date.now(); S(from).asked.cantidad=true; persistS(from);
             await toText(from,'¿Qué *cantidad* necesitas *(L/KG o unidades)* para este producto?');
           }
         }
