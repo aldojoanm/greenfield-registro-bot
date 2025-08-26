@@ -918,7 +918,7 @@ async function handleWaWebhook(body){
         await toText(from, `👋 Hola${quien}, gracias por continuar con *New Chem* vía WhatsApp.\nAquí encontrarás los agroquímicos esenciales para tu cultivo, al mejor precio. 🌱`);
         await askCultivo(from); return;
       }
-
+      
       const NAME_FILLERS = /^(hola|buenas|buenas tardes|buen día|buen dia|hey|qué tal|que tal|¿?ten[eé]s?|tienes?|hay|disponible|\?|!|\.\.\.)$/i;
         if (S(from).pending==='nombre') {
           if (NAME_FILLERS.test(text.trim())) {
@@ -931,7 +931,6 @@ async function handleWaWebhook(body){
           await nextStep(from);
           return;
         }
-      }
       if (S(from).pending==='subzona_libre'){
         S(from).vars.subzona = title(text.toLowerCase());
         S(from).pending=null; S(from).lastPrompt=null; persistSessionToDisk(from, S(from));
