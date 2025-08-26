@@ -467,7 +467,7 @@ async function askDepartamento(to){
   const s=S(to); if (s.lastPrompt==='departamento') return;
   await markPrompt(s,'departamento'); s.pending='departamento'; s.asked.departamento=true;
   persistS(to); // ★
-  await toList(to,'¡Perfecto! Para orientarte mejor, ¿en qué *departamento* produces?','Elegir departamento',
+  await toList(to,'📍 Cuéntanos, ¿desde qué *departamento* de Bolivia nos escribes?','Elegir departamento',
     DEPARTAMENTOS.map(d=>({ title:d, payload:`DPTO_${d.toUpperCase().replace(/\s+/g,'_')}` }))
   );
 }
@@ -475,7 +475,7 @@ async function askSubzonaSCZ(to){
   const s=S(to); if (s.lastPrompt==='subzona') return;
   await markPrompt(s,'subzona'); s.pending='subzona'; s.asked.subzona=true;
   persistS(to); // ★
-  await toList(to,'Gracias. ¿Qué *zona de Santa Cruz*?','Elegir zona',
+  await toList(to,'Gracias. ¿En qué *zona de Santa Cruz*?','Elegir zona',
     [{title:'Norte',payload:'SUBZ_NORTE'},{title:'Este',payload:'SUBZ_ESTE'},{title:'Sur',payload:'SUBZ_SUR'},{title:'Valles',payload:'SUBZ_VALLES'},{title:'Chiquitania',payload:'SUBZ_CHIQUITANIA'}]
   );
 }
@@ -484,13 +484,13 @@ async function askSubzonaLibre(to){
   await markPrompt(s,'subzona_libre'); s.pending='subzona_libre'; s.asked.subzona=true;
   persistS(to); // ★
   const dep = s.vars.departamento || 'tu departamento';
-  await toText(to, `Perfecto. ¿Para qué *zona* de *${dep}* quisieras?`);
+  await toText(to, `Perfecto. ¿En qué *zona* de *${dep}* trabajas?`);
 }
 async function askCultivo(to){
   const s=S(to); if (s.lastPrompt==='cultivo') return;
   await markPrompt(s,'cultivo'); s.pending='cultivo'; s.asked.cultivo=true;
   persistS(to); // ★
-  await toList(to,'Perfecto 🙌. Elige tu *cultivo*','Elegir cultivo', CROP_OPTIONS);
+  await toList(to,'📋 ¿Para qué *cultivo* necesitas el producto?','Elegir cultivo', CROP_OPTIONS);
 }
 async function askHectareas(to){
   const s=S(to); if (s.lastPrompt==='hectareas') return;
@@ -502,7 +502,7 @@ async function askCampana(to){
   const s=S(to); if (s.lastPrompt==='campana') return;
   await markPrompt(s,'campana'); s.pending='campana'; s.asked.campana=true;
   persistS(to); // ★
-  await toButtons(to,'¿Para qué *campaña* es? (siembra)', CAMP_BTNS);
+  await toButtons(to,'¿En qué *campaña* te encuentras? ', CAMP_BTNS);
 }
 async function askCampanaLibre(to){
   const s=S(to); if (s.lastPrompt==='campana_text') return;
@@ -842,7 +842,7 @@ router.post('/wa/webhook', async (req,res)=>{
         await toText(from,'Para volver a activar el asistente, por favor, escribe *Asistente New Chem*.');
         humanOn(from, 4); clearS(from); res.sendStatus(200); return;
       }
-      if(id==='QR_SEGUIR'){ await toText(from,'Perfecto, seguimos por aquí 🙌. ¿En qué más te puedo ayudar?'); await askCategory(from); res.sendStatus(200); return; }
+      if(id==='QR_SEGUIR'){ await toText(from,'Perfecto, vamos a añadir un nuevo producto 🙌.'); await askCategory(from); res.sendStatus(200); return; }
       if(id==='ADD_MORE'){ s.vars.catOffset=0; s.vars.last_product=null; s.vars.last_sku=null; s.vars.last_presentacion=null; s.vars.cantidad=null; s.asked.cantidad=false; persistS(from); await toButtons(from,'Dime el *nombre del otro producto* o elige una categoría 👇', CAT_QR.map(c=>({title:c.title,payload:c.payload}))); res.sendStatus(200); return; }
       if(id==='NO_MORE'){ await afterSummary(from, 'help'); res.sendStatus(200); return; }
 
