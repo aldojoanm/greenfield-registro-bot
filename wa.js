@@ -808,16 +808,22 @@ router.post('/wa/webhook', async (req,res)=>{
     }
 
     const isLeadMsg = msg.type==='text' && !!parseMessengerLead(msg.text?.body);
+// --- SALUDO (evitar duplicado) ---
     if(!s.greeted){
+      // marcar ANTES de enviar para evitar carreras si llegan varios mensajes
+      s.greeted = true; 
+      persistS(from);
+
       if(!isLeadMsg){
         await toText(from, PLAY?.greeting || '¡Qué gusto saludarte!, Soy el asistente virtual de *New Chem*. Estoy para ayudarte 🙂');
       }
-      s.greeted = true; persistS(from);
       if(!isLeadMsg && !s.asked.nombre){
         await askNombre(from);
-        res.sendStatus(200); return;
+        res.sendStatus(200); 
+        return;
       }
     }
+
 
     // ===== INTERACTIVOS =====
     if(msg.type==='interactive'){
@@ -942,18 +948,15 @@ router.post('/wa/webhook', async (req,res)=>{
       remember(from,'user',text);
       const tnorm = norm(text);
 
-      // ★ Guardia: si estamos pidiendo NOMBRE pero el texto parece consulta, no guardarlo como nombre
-      if (S(from).pending==='nombre'){
-        const looksLikeIntent = /[?¿]|(tiene|tienes|hay|precio|glifo|glifosato|producto|cat[aá]logo|insecticida|herbicida|fungicida|acaricida)/i.test(text);
-        if(!looksLikeIntent){
-          S(from).profileName = title(text.toLowerCase());
-          S(from).pending=null; S(from).lastPrompt=null; persistS(from);
-          await nextStep(from); res.sendStatus(200); return;
-        } else {
-          S(from).pending=null; S(from).lastPrompt=null; persistS(from);
-          // y seguimos procesando el mismo mensaje como consulta
-        }
+    if (S(from).pending==='nombre'){
+      const looksLikeIntent = /[?¿]|(tiene|tienes|hay|precio|glifo|glifosato|producto|cat[aá]logo|insecticida|herbicida|fungicida|acaricida)/i.test(text);
+      if(!looksLikeIntent){
+        S(from).profileName = title(text.toLowerCase());
+        S(from).pending=null; S(from).lastPrompt=null; persistS(from);
+        await nextStep(from); res.sendStatus(200); return;
+      } else {
       }
+    }
 
       // Lead de Messenger
       const lead = parseMessengerLead(text);
