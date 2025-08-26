@@ -776,7 +776,6 @@ async function handleWaWebhook(body){
         return;
       }
     }
-
     // ---------------- INTERACTIVOS ----------------
     if(msg.type==='interactive'){
       const br = msg.interactive?.button_reply;
@@ -897,7 +896,6 @@ async function handleWaWebhook(body){
       const text = (msg.text?.body||'').trim();
       remember(from,'user',text);
       const tnorm = norm(text);
-
       const lead = parseMessengerLead(text);
       if (lead){
         s.meta.origin = 'messenger'; s.greeted = true; persistSessionToDisk(from, s);
@@ -921,10 +919,18 @@ async function handleWaWebhook(body){
         await askCultivo(from); return;
       }
 
-      if (S(from).pending==='nombre'){
-        S(from).profileName = title(text.toLowerCase());
-        S(from).pending=null; S(from).lastPrompt=null; persistSessionToDisk(from, S(from));
-        await nextStep(from); return;
+      const NAME_FILLERS = /^(hola|buenas|buenas tardes|buen día|buen dia|hey|qué tal|que tal|¿?ten[eé]s?|tienes?|hay|disponible|\?|!|\.\.\.)$/i;
+        if (S(from).pending==='nombre') {
+          if (NAME_FILLERS.test(text.trim())) {
+            await toText(from,'¿Me dices tu *nombre completo*?');
+            return;
+          }
+          S(from).profileName = title(text.toLowerCase());
+          S(from).pending=null; S(from).lastPrompt=null;
+          persistSessionToDisk(from, S(from));
+          await nextStep(from);
+          return;
+        }
       }
       if (S(from).pending==='subzona_libre'){
         S(from).vars.subzona = title(text.toLowerCase());
@@ -1055,13 +1061,8 @@ async function handleWaWebhook(body){
     console.error('WA webhook error', e);
   }
 }
-
-// -----------------------------------------------------------------------------
-// EXPORT
-// -----------------------------------------------------------------------------
 export default router;
 
-// ---------------------- helpers FB referral / lead ---------------------------
 function parseMessengerLead(text){
   const t = String(text || '');
   if(!/\b(v[ií]a|via)\s*messenger\b/i.test(t)) return null;
