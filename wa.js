@@ -1,31 +1,12 @@
-// wa-router.js  — versión endurecida para producción (retiene flujo original)
-
 import 'dotenv/config';
 import express from 'express';
 import fs from 'fs';
-import path from 'path';
-import crypto from 'crypto';
-import { appendFromSession } from './sheets.js';
+import { appendFromSession } from './sheets.js'; 
 
-// -----------------------------------------------------------------------------
-// SETUP ROUTER + JSON con verificación de firma (si APP_SECRET está definido)
-// -----------------------------------------------------------------------------
 const router = express.Router();
+router.use(express.json());
 
-const APP_SECRET = process.env.APP_SECRET || '';
-router.use(express.json({
-  limit: '2mb',
-  verify: (req, res, buf) => {
-    const sig = req.get('x-hub-signature-256');
-    if (!APP_SECRET || !sig) return; // en dev puede estar vacío
-    const expected = 'sha256=' + crypto.createHmac('sha256', APP_SECRET).update(buf).digest('hex');
-    if (sig !== expected) throw new Error('Invalid X-Hub-Signature-256');
-  }
-}));
-
-// -----------------------------------------------------------------------------
-// ENV / CONFIG
-// -----------------------------------------------------------------------------
+// ===== ENV =====
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || 'VERIFY_123';
 const WA_TOKEN     = process.env.WHATSAPP_TOKEN || '';
 const WA_PHONE_ID  = process.env.WHATSAPP_PHONE_ID || '';
@@ -33,28 +14,14 @@ const CATALOG_URL  = process.env.CATALOG_URL || 'https://tinyurl.com/PORTAFOLIO-
 const STORE_LAT    = process.env.STORE_LAT || '-17.7580406';
 const STORE_LNG    = process.env.STORE_LNG || '-63.1532503';
 const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || '').replace(/\/+$/,'');
-const GRAPH_VERSION = process.env.GRAPH_VERSION || 'v21.0';
-const GRAPH_BASE    = `https://graph.facebook.com/${GRAPH_VERSION}`;
 
-const SEND_INTERVAL_MS = Number(process.env.WA_SEND_INTERVAL_MS || 900); // pace por destinatario
-const MAX_QUEUE_PER_RECIPIENT = Number(process.env.WA_MAX_QUEUE || 50);
-
-// Persistencia muy liviana a disco (para $5 server)
-const SESSION_TTL_MS = Number(process.env.SESSION_TTL_MS || 5*24*60*60*1000); // 5 días
-const SESSION_DIR    = process.env.SESSION_DIR || path.resolve('./data/sessions');
-fs.mkdirSync(SESSION_DIR, { recursive: true });
-
-// -----------------------------------------------------------------------------
-// DATA
-// -----------------------------------------------------------------------------
+// ===== DATA =====
 function loadJSON(p){ try { return JSON.parse(fs.readFileSync(p,'utf8')); } catch { return {}; } }
 const CATALOG = loadJSON('./knowledge/catalog.json');
 const PLAY    = loadJSON('./knowledge/playbooks.json');
 const FAQS    = loadJSON('./knowledge/faqs.json');
 
-// -----------------------------------------------------------------------------
-// CONSTANTES / UTILS
-// -----------------------------------------------------------------------------
+// ===== CONSTANTES =====
 const DEPARTAMENTOS = ['Santa Cruz','Cochabamba','La Paz','Chuquisaca','Tarija','Oruro','Potosí','Beni','Pando'];
 const SUBZONAS_SCZ  = ['Norte','Este','Sur','Valles','Chiquitania'];
 const CAT_QR = [
@@ -81,9 +48,51 @@ const CAMP_BTNS = [
 ];
 const linkMaps  = () => `https://www.google.com/maps?q=${encodeURIComponent(`${STORE_LAT},${STORE_LNG}`)}`;
 
+// Límites visuales de WhatsApp List
 const LIST_TITLE_MAX = 24;
 const LIST_DESC_MAX  = 72;
 
+// ===== MODO HUMANO (mute 4h) =====
+const humanSilence = new Map();
+const HOURS = (h)=> h*60*60*1000;
+const humanOn  = (id, hours=4)=> humanSilence.set(id, Date.now()+HOURS(hours));
+const humanOff = (id)=> humanSilence.delete(id);
+const isHuman  = (id)=> (humanSilence.get(id)||0) > Date.now();
+
+// ===== SESIONES =====
+const sessions = new Map();
+function S(id){
+  if(!sessions.has(id)){
+    sessions.set(id,{
+      greeted:false,
+      stage: 'discovery',
+      pending: null,
+      asked: { nombre:false, departamento:false, subzona:false, cultivo:false, hectareas:false, campana:false, categoria:false, cantidad:false },
+      vars: {
+        departamento:null, subzona:null, category:null,
+        cultivos: [],
+        hectareas:null,
+        campana:null, // Verano/Invierno/Otra
+        last_product:null, last_sku:null, last_presentacion:null,
+        cantidad:null, phone:null,
+        last_detail_sku:null, last_detail_ts:0,
+        candidate_sku:null,
+        catOffset:0,
+        cart: [] // {sku,nombre,presentacion?,cantidad}
+      },
+      profileName: null,
+      memory: [],
+      lastPrompt: null,
+      lastPromptTs: 0,
+      meta: { origin:null, referral:null, referralHandled:false },
+      _savedToSheet: false // ← ★ bandera anti-doble escritura
+    });
+  }
+  return sessions.get(id);
+}
+function clearS(id){ sessions.delete(id); }
+
+// ===== HELPERS =====
 const norm  = (t='') => t.toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu,'');
 const title = s => String(s||'').replace(/\w\S*/g, w => w[0].toUpperCase()+w.slice(1).toLowerCase());
 const clamp = (t, n=20) => (String(t).length<=n? String(t) : String(t).slice(0,n-1)+'…');
@@ -93,152 +102,12 @@ const upperNoDia = (t='') => t.normalize('NFD').replace(/\p{Diacritic}/gu,'').to
 const b64u = s => Buffer.from(String(s),'utf8').toString('base64').replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
 const ub64u = s => Buffer.from(String(s).replace(/-/g,'+').replace(/_/g,'/'), 'base64').toString('utf8');
 
-const sleep = (ms=350)=>new Promise(r=>setTimeout(r,ms));
-
-// -----------------------------------------------------------------------------
-// MODO HUMANO (persistente)
-// -----------------------------------------------------------------------------
-const HOURS = (h)=> h*60*60*1000;
-
-// -----------------------------------------------------------------------------
-// SESIONES con persistencia (archivo por usuario) + GC por TTL
-// -----------------------------------------------------------------------------
-const sessions = new Map();        // id -> session
-const sessionTouched = new Map();  // id -> ts (para GC)
-const busy = new Set();            // guard reentrancias
-
-function sessionPath(id){ return path.join(SESSION_DIR, `${id}.json`); }
-
-function loadSessionFromDisk(id){
-  try{
-    const raw = fs.readFileSync(sessionPath(id),'utf8');
-    const obj = JSON.parse(raw);
-    if (!obj || (obj._expiresAt && Date.now() > obj._expiresAt)) return null;
-    return obj;
-  }catch{ return null; }
-}
-
-function persistSessionToDisk(id, s){
-  try{
-    const slim = {
-      greeted: s.greeted,
-      stage: s.stage,
-      pending: s.pending,
-      asked: s.asked,
-      vars: s.vars,
-      profileName: s.profileName,
-      memory: s.memory,
-      lastPrompt: s.lastPrompt,
-      lastPromptTs: s.lastPromptTs,
-      meta: s.meta,
-      _savedToSheet: s._savedToSheet,
-      humanUntil: s.humanUntil || 0,
-      _expiresAt: Date.now() + SESSION_TTL_MS
-    };
-    const tmp = sessionPath(id)+'.tmp';
-    fs.writeFileSync(tmp, JSON.stringify(slim));
-    fs.renameSync(tmp, sessionPath(id));
-  }catch(e){ console.error('persistSessionToDisk error', e); }
-}
-
-function S(id){
-  let s = sessions.get(id);
-  if(!s){
-    const fromDisk = loadSessionFromDisk(id);
-    if (fromDisk){
-      s = { ...fromDisk };
-    } else {
-      s = {
-        greeted:false,
-        stage: 'discovery',
-        pending: null,
-        asked: { nombre:false, departamento:false, subzona:false, cultivo:false, hectareas:false, campana:false, categoria:false, cantidad:false },
-        vars: {
-          departamento:null, subzona:null, category:null,
-          cultivos: [],
-          hectareas:null,
-          campana:null, // Verano/Invierno/Otra
-          last_product:null, last_sku:null, last_presentacion:null,
-          cantidad:null, phone:null,
-          last_detail_sku:null, last_detail_ts:0,
-          candidate_sku:null,
-          catOffset:0,
-          cart: [] // {sku,nombre,presentacion?,cantidad}
-        },
-        profileName: null,
-        memory: [],
-        lastPrompt: null,
-        lastPromptTs: 0,
-        meta: { origin:null, referral:null, referralHandled:false },
-        _savedToSheet: false,
-        humanUntil: 0
-      };
-    }
-    sessions.set(id, s);
-  }
-  sessionTouched.set(id, Date.now());
-  return s;
-}
-function clearS(id){
-  sessions.delete(id);
-  sessionTouched.delete(id);
-  try{ fs.unlinkSync(sessionPath(id)); }catch{}
-}
-
-// GC en memoria (cada 10 min) y en disco (cada 60 min)
-setInterval(()=> {
-  const now = Date.now();
-  for (const [id, ts] of sessionTouched) {
-    if (now - ts > SESSION_TTL_MS) { clearS(id); }
-  }
-}, 10*60*1000);
-
-setInterval(()=> {
-  try{
-    const files = fs.readdirSync(SESSION_DIR);
-    const now = Date.now();
-    for (const f of files){
-      const p = path.join(SESSION_DIR, f);
-      const stat = fs.statSync(p);
-      if (now - stat.mtimeMs > SESSION_TTL_MS) { fs.unlinkSync(p); }
-    }
-  }catch(e){ /* ignore */ }
-}, 60*60*1000);
-
-// helpers humano
-const humanOn  = (id, hours=4)=>{ const s=S(id); s.humanUntil = Date.now()+HOURS(hours); persistSessionToDisk(id, s); };
-const humanOff = (id)=>{ const s=S(id); s.humanUntil = 0; persistSessionToDisk(id, s); };
-const isHuman  = (id)=> (S(id).humanUntil||0) > Date.now();
-
-// -----------------------------------------------------------------------------
-// MEMO conversacional
-// -----------------------------------------------------------------------------
 function remember(id, role, content){
   const s=S(id); s.memory.push({role,content,ts:Date.now()});
   if(s.memory.length>12) s.memory=s.memory.slice(-12);
-  persistSessionToDisk(id, s);
 }
 
-// -----------------------------------------------------------------------------
-// DEDUPE DE WEBHOOKS
-// -----------------------------------------------------------------------------
-const processed = new Map(); // wamid -> ts
-const PROCESSED_TTL = 5 * 60 * 1000;
-setInterval(() => {
-  const now = Date.now();
-  for (const [k, ts] of processed) if (now - ts > PROCESSED_TTL) processed.delete(k);
-}, 60 * 1000);
-function seenWamid(id) {
-  if (!id) return false;
-  const now = Date.now();
-  const old = processed.get(id);
-  processed.set(id, now);
-  return !!old && (now - old) < PROCESSED_TTL;
-}
-
-// -----------------------------------------------------------------------------
-// PARSERS & SEARCH (igual que tenías)
-// -----------------------------------------------------------------------------
+// ===== BÚSQUEDA / PARSERS =====
 const normalizeCatLabel = (c='')=>{
   const t=norm(c);
   if(t.includes('fungicida')) return 'Fungicida';
@@ -303,8 +172,16 @@ const parsePhone = text=>{
   const m = String(text).match(/(\+?\d[\d\s\-]{6,17}\d)/);
   return m ? m[1].replace(/[^\d+]/g,'') : null;
 };
-function detectDepartamento(text){ const t = norm(text); for (const d of DEPARTAMENTOS) if (t.includes(norm(d))) return d; return null; }
-function detectSubzona(text){ const t = norm(text); for (const z of SUBZONAS_SCZ) if (t.includes(norm(z))) return z; return null; }
+function detectDepartamento(text){
+  const t = norm(text);
+  for (const d of DEPARTAMENTOS) if (t.includes(norm(d))) return d;
+  return null;
+}
+function detectSubzona(text){
+  const t = norm(text);
+  for (const z of SUBZONAS_SCZ) if (t.includes(norm(z))) return z;
+  return null;
+}
 function detectCategory(text){
   const t = norm(text);
   if (/fungicida/.test(t)) return 'Fungicida';
@@ -323,14 +200,47 @@ const wantsAgentPlus = t => /asesor(a)?|agente|ejecutiv[oa]|vendedor(a)?|represe
 const wantsAnother  = t => /(otro|agregar|añadir|sumar|incluir).*(producto|art[ií]culo|item)|cotizar otro/i.test(norm(t));
 const wantsBotBack = t => /([Aa]sistente [Nn]ew [Cc]hem)/i.test(t);
 
-// -----------------------------------------------------------------------------
-// RESUMEN, IMAGEN, ENVÍOS (fortalecidos con backoff y caché de media)
-// -----------------------------------------------------------------------------
+// ===== REFERAL FB / LEAD =====
+function parseMessengerLead(text){
+  const t = String(text || '');
+  if(!/\b(v[ií]a|via)\s*messenger\b/i.test(t)) return null;
+  const pick = (re)=>{ const m=t.match(re); return m? m[1].trim() : null; };
+  const name  = pick(/Hola,\s*soy\s*([^(•\n]+?)(?=\s*\(|\s*\.|\s*Me|$)/i);
+  const prod  = pick(/Producto:\s*([^•\n]+)/i);
+  const qty   = pick(/Cantidad:\s*([^•\n]+)/i);
+  const crops = pick(/Cultivos?:\s*([^•\n]+)/i);
+  const dptoZ = pick(/Departamento(?:\/Zona)?:\s*([^•\n]+)/i);
+  const zona  = pick(/Zona:\s*([^•\n]+)/i);
+  return { name, prod, qty, crops, dptoZ, zona };
+}
+function productFromReferral(ref){
+  try{
+    const bits = [ref?.headline, ref?.body, ref?.source_url, ref?.adgroup_name, ref?.campaign_name]
+      .filter(Boolean).join(' ');
+    let byQS=null;
+    try{
+      const u = new URL(ref?.source_url||'');
+      const q = (k)=>u.searchParams.get(k);
+      const sku = q('sku') || q('SKU');
+      const pn  = q('product') || q('producto') || q('p') || q('ref');
+      if(sku){
+        byQS = (CATALOG||[]).find(p=>String(p.sku).toLowerCase()===String(sku).toLowerCase());
+      }
+      if(!byQS && pn){
+        byQS = findProduct(pn) || (fuzzyCandidate(pn)||{}).prod || null;
+      }
+    }catch{}
+    const byText = findProduct(bits) || ((fuzzyCandidate(bits)||{}).prod) || null;
+    return byQS || byText || null;
+  }catch{ return null; }
+}
+
+// ===== RESUMEN =====
 function inferUnitFromProduct(s){
   const name = s?.vars?.last_product || '';
   const prod = name ? (CATALOG||[]).find(p => norm(p.nombre||'')===norm(name)) : null;
   const pres = (prod?.presentaciones||[]).join(' ').toLowerCase();
-  if(/\bkg\b/.test(pres)) return 'Kg';
+  if(/kg/.test(pres)) return 'Kg';
   if(/\b(l|lt|lts|litro)s?\b/.test(pres)) return 'L';
   const cat = (prod?.categoria || s?.vars?.category || '').toLowerCase();
   if(/herbicida|insecticida|fungicida/.test(cat)) return 'L';
@@ -371,6 +281,7 @@ function summaryText(s){
   ].join('\n');
 }
 
+// ===== IMÁGENES =====
 function productImageSource(prod){
   const direct = prod.image_url || prod.imagen || (Array.isArray(prod.images)&&prod.images[0]) || prod.img;
   if (direct && /^https?:\/\//i.test(direct)) return { url: direct };
@@ -391,44 +302,19 @@ function productImageSource(prod){
   return null;
 }
 
-// Envío robusto con pacing y reintentos
-const recipientQueues = new Map(); // to -> Promise
-const queueTouched = new Map();    // to -> last ts
-setInterval(() => { // GC de colas inactivas
-  const now = Date.now();
-  for (const [to, ts] of queueTouched) if (now - ts > 10 * 60 * 1000) {
-    recipientQueues.delete(to); queueTouched.delete(to);
-  }
-}, 60*1000);
-
-function enqueueFor(to, fn) {
-  const prev = recipientQueues.get(to) || Promise.resolve();
-  const next = prev.then(fn).finally(() => sleep(SEND_INTERVAL_MS));
-  const size = (prev.size||0) + 1;
-  if (size > MAX_QUEUE_PER_RECIPIENT) console.warn('Queue high for', to, size);
-  recipientQueues.set(to, next);
-  queueTouched.set(to, Date.now());
-  return next;
-}
-
+// ===== ENVÍO WA =====
+const sendQueues = new Map();
+const sleep = (ms=350)=>new Promise(r=>setTimeout(r,ms));
 async function waSendQ(to, payload){
-  if (!WA_TOKEN || !WA_PHONE_ID) { console.error('Missing WA_TOKEN/WA_PHONE_ID'); return; }
-  const url = `${GRAPH_BASE}/${WA_PHONE_ID}/messages`;
-  return enqueueFor(to, async () => {
-    const RETRIES = [0, 500, 1500, 5000];
-    for (let i = 0; i < RETRIES.length; i++) {
-      const r = await fetch(url, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${WA_TOKEN}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      if (r.ok) return r.json();
-      const txt = await r.text();
-      if (r.status === 429 || r.status >= 500) { await sleep(RETRIES[i]); continue; }
-      console.error('WA send error', r.status, txt);
-      break;
-    }
-  });
+  const exec = async ()=>{
+    const url = `https://graph.facebook.com/v20.0/${WA_PHONE_ID}/messages`;
+    const r = await fetch(url,{ method:'POST', headers:{ 'Authorization':`Bearer ${WA_TOKEN}`, 'Content-Type':'application/json' }, body:JSON.stringify(payload) });
+    if(!r.ok) console.error('WA send error', r.status, await r.text());
+  };
+  const prev = sendQueues.get(to) || Promise.resolve();
+  const next = prev.then(exec).then(()=>sleep(350));
+  sendQueues.set(to, next);
+  return next;
 }
 const toText = (to, body) => waSendQ(to,{
   messaging_product:'whatsapp', to, type:'text',
@@ -437,13 +323,13 @@ const toText = (to, body) => waSendQ(to,{
 const toButtons = (to, body, buttons=[]) => waSendQ(to,{
   messaging_product:'whatsapp', to, type:'interactive',
   interactive:{ type:'button', body:{ text: String(body).slice(0,1024) },
-    action:{ buttons: buttons.slice(0,3).map(b=>({ type:'reply', reply:{ id:b.payload || b.id, title: clamp(b.title, 20) }})) }
+    action:{ buttons: buttons.slice(0,3).map(b=>({ type:'reply', reply:{ id:b.payload || b.id, title: clamp(b.title) }})) }
   }
 });
 const toList = (to, body, title, rows=[]) => waSendQ(to,{
   messaging_product:'whatsapp', to, type:'interactive',
   interactive:{ type:'list', body:{ text:String(body).slice(0,1024) }, action:{
-    button: String(title||'Elegir').slice(0,20),
+    button: title.slice(0,20),
     sections:[{ title, rows: rows.slice(0,10).map(r=>{
       const id = r.payload || r.id;
       const t  = clampN(r.title ?? '', LIST_TITLE_MAX);
@@ -453,26 +339,21 @@ const toList = (to, body, title, rows=[]) => waSendQ(to,{
   }}
 });
 
-const mediaCache = new Map(); // path -> { id, exp }
+// Upload local file to WhatsApp Cloud and return media id
 async function waUploadMediaFromFile(filePath){
-  const now = Date.now();
-  const cached = mediaCache.get(filePath);
-  if (cached && cached.exp > now) return cached.id;
-
-  const url = `${GRAPH_BASE}/${encodeURIComponent(WA_PHONE_ID)}/media`;
+  const url = `https://graph.facebook.com/v20.0/${encodeURIComponent(WA_PHONE_ID)}/media`;
   const ext = (filePath.split('.').pop() || '').toLowerCase();
   const mime = ext==='png' ? 'image/png' : (ext==='jpg'||ext==='jpeg') ? 'image/jpeg' : ext==='webp' ? 'image/webp' : 'application/octet-stream';
-  const stream = fs.createReadStream(filePath);
+  const buf = fs.readFileSync(filePath);
+  const blob = new Blob([buf], { type: mime });
   const form = new FormData();
-  form.append('file', stream, filePath.split(/[\\/]/).pop());
+  form.append('file', blob, filePath.split(/[\\/]/).pop());
   form.append('type', mime);
   form.append('messaging_product', 'whatsapp');
   const r = await fetch(url,{ method:'POST', headers:{ 'Authorization':`Bearer ${WA_TOKEN}` }, body: form });
   if(!r.ok){ console.error('waUploadMediaFromFile', await r.text()); return null; }
   const j = await r.json();
-  const id = j?.id || null;
-  if (id) mediaCache.set(filePath, { id, exp: now + 12*60*60*1000 }); // 12h
-  return id;
+  return j?.id || null;
 }
 async function toImage(to, source){
   if(source?.url) return waSendQ(to,{ messaging_product:'whatsapp', to, type:'image', image:{ link: source.url } });
@@ -482,60 +363,90 @@ async function toImage(to, source){
   }
 }
 
-// -----------------------------------------------------------------------------
-// PREGUNTAS ATÓMICAS (sin cambios de UX)
-// -----------------------------------------------------------------------------
-async function markPrompt(s, key){ s.lastPrompt = key; s.lastPromptTs = Date.now(); persistSessionToDisk(s._from || '', s); }
-async function askNombre(to){ const s=S(to); if (s.lastPrompt==='nombre' || s.asked.nombre) return; s._from=to; await markPrompt(s,'nombre'); s.pending='nombre'; s.asked.nombre=true; await toText(to,'Para personalizar tu atención, ¿cuál es tu *nombre completo*?'); persistSessionToDisk(to, s); }
-async function askDepartamento(to){ const s=S(to); if (s.lastPrompt==='departamento') return; s._from=to; await markPrompt(s,'departamento'); s.pending='departamento'; s.asked.departamento=true;
+// ===== PREGUNTAS ATÓMICAS =====
+async function markPrompt(s, key){ s.lastPrompt = key; s.lastPromptTs = Date.now(); }
+async function askNombre(to){
+  const s=S(to); if (s.lastPrompt==='nombre' || s.asked.nombre) return;
+  await markPrompt(s,'nombre'); s.pending='nombre'; s.asked.nombre=true;
+  await toText(to,'Para personalizar tu atención, ¿cuál es tu *nombre completo*?');
+}
+async function askDepartamento(to){
+  const s=S(to); if (s.lastPrompt==='departamento') return;
+  await markPrompt(s,'departamento'); s.pending='departamento'; s.asked.departamento=true;
   await toList(to,'¡Perfecto! Para orientarte mejor, ¿en qué *departamento* produces?','Elegir departamento',
     DEPARTAMENTOS.map(d=>({ title:d, payload:`DPTO_${d.toUpperCase().replace(/\s+/g,'_')}` }))
-  ); persistSessionToDisk(to, s);
+  );
 }
-async function askSubzonaSCZ(to){ const s=S(to); if (s.lastPrompt==='subzona') return; s._from=to; await markPrompt(s,'subzona'); s.pending='subzona'; s.asked.subzona=true;
+async function askSubzonaSCZ(to){
+  const s=S(to); if (s.lastPrompt==='subzona') return;
+  await markPrompt(s,'subzona'); s.pending='subzona'; s.asked.subzona=true;
   await toList(to,'Gracias. ¿Qué *zona de Santa Cruz*?','Elegir zona',
     [{title:'Norte',payload:'SUBZ_NORTE'},{title:'Este',payload:'SUBZ_ESTE'},{title:'Sur',payload:'SUBZ_SUR'},{title:'Valles',payload:'SUBZ_VALLES'},{title:'Chiquitania',payload:'SUBZ_CHIQUITANIA'}]
-  ); persistSessionToDisk(to, s);
+  );
 }
-async function askSubzonaLibre(to){ const s=S(to); if (s.lastPrompt==='subzona_libre') return; s._from=to; await markPrompt(s,'subzona_libre'); s.pending='subzona_libre'; s.asked.subzona=true;
+async function askSubzonaLibre(to){
+  const s=S(to); if (s.lastPrompt==='subzona_libre') return;
+  await markPrompt(s,'subzona_libre'); s.pending='subzona_libre'; s.asked.subzona=true;
   const dep = s.vars.departamento || 'tu departamento';
-  await toText(to, `Perfecto. ¿Para qué *zona* de *${dep}* quisieras?`); persistSessionToDisk(to, s);
+  await toText(to, `Perfecto. ¿Para qué *zona* de *${dep}* quisieras?`);
 }
-async function askCultivo(to){ const s=S(to); if (s.lastPrompt==='cultivo') return; s._from=to; await markPrompt(s,'cultivo'); s.pending='cultivo'; s.asked.cultivo=true;
-  await toList(to,'Perfecto 🙌. Elige tu *cultivo*','Elegir cultivo', CROP_OPTIONS); persistSessionToDisk(to, s);
+async function askCultivo(to){
+  const s=S(to); if (s.lastPrompt==='cultivo') return;
+  await markPrompt(s,'cultivo'); s.pending='cultivo'; s.asked.cultivo=true;
+  await toList(to,'Perfecto 🙌. Elige tu *cultivo*','Elegir cultivo', CROP_OPTIONS);
 }
-async function askHectareas(to){ const s=S(to); if (s.lastPrompt==='hectareas') return; s._from=to; await markPrompt(s,'hectareas'); s.pending='hectareas'; s.asked.hectareas=true;
-  await toText(to,'¿Cuántas *hectáreas* vas a tratar? (ej. 50 ha)'); persistSessionToDisk(to, s);
+async function askHectareas(to){
+  const s=S(to); if (s.lastPrompt==='hectareas') return;
+  await markPrompt(s,'hectareas'); s.pending='hectareas'; s.asked.hectareas=true;
+  await toText(to,'¿Cuántas *hectáreas* vas a tratar? (ej. 50 ha)');
 }
-async function askCampana(to){ const s=S(to); if (s.lastPrompt==='campana') return; s._from=to; await markPrompt(s,'campana'); s.pending='campana'; s.asked.campana=true;
-  await toButtons(to,'¿Para qué *campaña* es? (siembra)', CAMP_BTNS); persistSessionToDisk(to, s);
+async function askCampana(to){
+  const s=S(to); if (s.lastPrompt==='campana') return;
+  await markPrompt(s,'campana'); s.pending='campana'; s.asked.campana=true;
+  await toButtons(to,'¿Para qué *campaña* es? (siembra)', CAMP_BTNS);
 }
-async function askCampanaLibre(to){ const s=S(to); if (s.lastPrompt==='campana_text') return; s._from=to; await markPrompt(s,'campana_text'); s.pending='campana_text';
-  await toText(to,'Escribe tu campaña (por ejemplo: *Invierno Chico*).'); persistSessionToDisk(to, s);
+async function askCampanaLibre(to){
+  const s=S(to); if (s.lastPrompt==='campana_text') return;
+  await markPrompt(s,'campana_text'); s.pending='campana_text';
+  await toText(to,'Escribe tu campaña (por ejemplo: *Invierno Chico*).');
 }
-async function askCategory(to){ const s=S(to); if (s.lastPrompt==='categoria') return; s._from=to; s.stage='product'; await markPrompt(s,'categoria'); s.pending='categoria'; s.asked.categoria=true;
-  await toButtons(to,'¿Qué tipo de producto necesitas?', CAT_QR.map(c=>({ title:c.title, payload:c.payload }))); persistSessionToDisk(to, s);
+async function askCategory(to){
+  const s=S(to); if (s.lastPrompt==='categoria') return;
+  s.stage='product'; await markPrompt(s,'categoria'); s.pending='categoria'; s.asked.categoria=true;
+  await toButtons(to,'¿Qué tipo de producto necesitas?', CAT_QR.map(c=>({ title:c.title, payload:c.payload })));
 }
 
-// -----------------------------------------------------------------------------
-// Presentaciones / Listas / Detalles (sin cambio de UX)
-// -----------------------------------------------------------------------------
-function productHasMultiPres(prod){ const pres = Array.isArray(prod?.presentaciones) ? prod.presentaciones.filter(Boolean) : []; return pres.length > 1; }
-function productSinglePres(prod){ const pres = Array.isArray(prod?.presentaciones) ? prod.presentaciones.filter(Boolean) : []; return pres.length === 1 ? pres[0] : null; }
-
+// ===== Presentaciones =====
+function productHasMultiPres(prod){
+  const pres = Array.isArray(prod?.presentaciones) ? prod.presentaciones.filter(Boolean) : [];
+  return pres.length > 1;
+}
+function productSinglePres(prod){
+  const pres = Array.isArray(prod?.presentaciones) ? prod.presentaciones.filter(Boolean) : [];
+  return pres.length === 1 ? pres[0] : null;
+}
 async function askPresentacion(to, prod){
   const pres = (prod?.presentaciones||[]).filter(Boolean);
   if(pres.length <= 1) return;
-  const rows = pres.map(p => ({ title: String(p), payload: `PRES_${prod.sku}__${b64u(String(p))}` }));
+  const rows = pres.map(p => ({
+    title: String(p),
+    payload: `PRES_${prod.sku}__${b64u(String(p))}`
+  }));
   await toList(to, `¿En qué *presentación* deseas *${prod.nombre}*?`, 'Elegir presentación', rows);
 }
 
+// ===== Fila de producto con ingrediente activo (para listas)
 function productListRow(p){
   const nombre = p?.nombre || '';
   const ia     = p?.ingrediente_activo || p?.formulacion || p?.categoria || '';
-  return { title: nombre, description: ia ? `IA: ${ia}` : undefined, payload: `PROD_${p.sku}` };
+  return {
+    title: nombre,
+    description: ia ? `IA: ${ia}` : undefined,
+    payload: `PROD_${p.sku}`
+  };
 }
 
+// ===== Listado por categoría (paginado) =====
 async function listByCategory(to){
   const s=S(to);
   const all = getProductsByCategory(s.vars.category||'');
@@ -555,16 +466,18 @@ const shouldShowDetail = (s, sku) => s.vars.last_detail_sku !== sku || (Date.now
 const markDetailShown = (s, sku) => { s.vars.last_detail_sku = sku; s.vars.last_detail_ts = Date.now(); };
 
 async function showProduct(to, prod){
-  const s=S(to); s._from=to;
+  const s=S(to);
   s.vars.last_product = prod.nombre;
   s.vars.last_sku = prod.sku;
-  s.vars.last_presentacion = null;
+  s.vars.last_presentacion = null; // reset presentación al cambiar de producto
 
   const catNorm = normalizeCatLabel(prod.categoria||'');
   if(catNorm && !s.vars.category) s.vars.category = catNorm;
 
   if (shouldShowDetail(s, prod.sku)) {
+    const linkFicha = prod.link_ficha || CATALOG_URL;
     await toText(to, `Aquí tienes la ficha técnica de *${prod.nombre}* 📄`);
+
     const src = productImageSource(prod);
     if (src) {
       await toImage(to, src);
@@ -572,7 +485,8 @@ async function showProduct(to, prod){
       const plagas=(prod.plaga||[]).slice(0,5).join(', ')||'-';
       const present=(prod.presentaciones||[]).join(', ')||'-';
       const ia = prod.ingrediente_activo || '-';
-      await toText(to, `Sobre *${prod.nombre}* (${prod.categoria}):`+
+      await toText(to,
+        `Sobre *${prod.nombre}* (${prod.categoria}):`+
         `\n• Ingrediente activo: ${ia}`+
         `\n• Formulación / acción: ${prod.formulacion}`+
         `\n• Dosis de referencia: ${prod.dosis}`+
@@ -583,24 +497,26 @@ async function showProduct(to, prod){
     markDetailShown(s, prod.sku);
   }
 
+  // Si solo hay una presentación, la fijamos; si hay varias, preguntamos
   const single = productSinglePres(prod);
   if(single && !s.vars.last_presentacion){
     s.vars.last_presentacion = single;
   } else if (productHasMultiPres(prod) && !s.vars.last_presentacion){
     await askPresentacion(to, prod);
   }
-  persistSessionToDisk(to, s);
 }
 
-// -----------------------------------------------------------------------------
-// Carrito (igual)
-// -----------------------------------------------------------------------------
+// ===== CARRITO =====
 function addCurrentToCart(s){
   if(!s.vars.last_sku || !s.vars.last_product || !s.vars.cantidad) return false;
   const exists = (s.vars.cart||[]).find(it=>it.sku===s.vars.last_sku);
   const pres = s.vars.last_presentacion || undefined;
-  if(exists){ exists.cantidad = s.vars.cantidad; exists.presentacion = pres; }
-  else { s.vars.cart.push({ sku:s.vars.last_sku, nombre:s.vars.last_product, presentacion:pres, cantidad:s.vars.cantidad }); }
+  if(exists){
+    exists.cantidad = s.vars.cantidad;
+    exists.presentacion = pres;
+  } else {
+    s.vars.cart.push({ sku:s.vars.last_sku, nombre:s.vars.last_product, presentacion:pres, cantidad:s.vars.cantidad });
+  }
   s.vars.last_product=null; s.vars.last_sku=null; s.vars.cantidad=null; s.vars.last_presentacion=null;
   s.asked.cantidad=false;
   return true;
@@ -633,75 +549,85 @@ async function afterSummary(to, variant='cart'){
   }
 }
 
-// -----------------------------------------------------------------------------
-// ORQUESTADOR con guard reentrancias + persist
-// -----------------------------------------------------------------------------
+// ===== Orquestador =====
 async function nextStep(to){
-  if (busy.has(to)) return;
-  busy.add(to);
-  try{
-    const s=S(to);
-    const stale = (key)=> s.lastPrompt===key && (Date.now()-s.lastPromptTs>25000);
-    if (s.pending && !stale(s.pending)) return;
+  const s=S(to);
+  const stale = (key)=> s.lastPrompt===key && (Date.now()-s.lastPromptTs>25000);
+  if (s.pending && !stale(s.pending)) return;
 
-    if(s.meta.origin!=='messenger' && !s.asked.nombre){
-      if(stale('nombre') || s.lastPrompt!=='nombre') await askNombre(to);
-      return;
-    }
-    if(!s.vars.departamento){
-      if(stale('departamento') || s.lastPrompt!=='departamento') await askDepartamento(to);
-      return;
-    }
-    if(!s.vars.subzona){
-      if(s.vars.departamento==='Santa Cruz'){
-        if(stale('subzona') || s.lastPrompt!=='subzona') await askSubzonaSCZ(to);
-      }else{
-        if(stale('subzona_libre') || s.lastPrompt!=='subzona_libre') await askSubzonaLibre(to);
-      }
-      return;
-    }
-    if(!s.vars.cultivos || s.vars.cultivos.length===0){
-      if(stale('cultivo') || s.lastPrompt!=='cultivo') await askCultivo(to);
-      return;
-    }
-    if(!s.vars.hectareas){
-      if(stale('hectareas') || s.lastPrompt!=='hectareas') await askHectareas(to);
-      return;
-    }
-    if(!s.vars.campana){
-      if(stale('campana') || s.lastPrompt!=='campana') await askCampana(to);
-      return;
-    }
-    if(s.vars.last_product && !s.vars.category){
-      const p=(CATALOG||[]).find(pp=>norm(pp.nombre||'')===norm(s.vars.last_product));
-      const c=normalizeCatLabel(p?.categoria||''); if(c) s.vars.category=c;
-    }
-    if(!s.vars.last_product && !s.vars.category){
-      if(stale('categoria') || s.lastPrompt!=='categoria') await askCategory(to);
-      return;
-    }
-    if(!s.vars.last_product) { await listByCategory(to); return; }
+  // (0) Nombre
+  if(s.meta.origin!=='messenger' && !s.asked.nombre){
+    if(stale('nombre') || s.lastPrompt!=='nombre') return askNombre(to);
+    return;
+  }
 
-    const prod = (CATALOG||[]).find(p=>p.sku===s.vars.last_sku);
-    if(prod && productHasMultiPres(prod) && !s.vars.last_presentacion){ await askPresentacion(to, prod); return; }
-    if(prod && productSinglePres(prod) && !s.vars.last_presentacion){ s.vars.last_presentacion = productSinglePres(prod); }
+  // (1) Departamento
+  if(!s.vars.departamento){
+    if(stale('departamento') || s.lastPrompt!=='departamento') return askDepartamento(to);
+    return;
+  }
 
-    if(!s.vars.cantidad){
-      if (!s.asked.cantidad){
-        s.pending='cantidad'; await markPrompt(s,'cantidad'); s.asked.cantidad=true;
-        await toText(to,'Para poder realizar tu cotización, ¿qué *cantidad* necesitas *(L/KG o unidades)*?');
-      }
-      return;
+  // (2) Subzona
+  if(!s.vars.subzona){
+    if(s.vars.departamento==='Santa Cruz'){
+      if(stale('subzona') || s.lastPrompt!=='subzona') return askSubzonaSCZ(to);
+    }else{
+      if(stale('subzona_libre') || s.lastPrompt!=='subzona_libre') return askSubzonaLibre(to);
     }
-  } finally {
-    persistSessionToDisk(to, S(to));
-    busy.delete(to);
+    return;
+  }
+
+  // (3) Cultivo (opciones)
+  if(!s.vars.cultivos || s.vars.cultivos.length===0){
+    if(stale('cultivo') || s.lastPrompt!=='cultivo') return askCultivo(to);
+    return;
+  }
+
+  // (4) Hectáreas
+  if(!s.vars.hectareas){
+    if(stale('hectareas') || s.lastPrompt!=='hectareas') return askHectareas(to);
+    return;
+  }
+
+  // (5) Campaña
+  if(!s.vars.campana){
+    if(stale('campana') || s.lastPrompt!=='campana') return askCampana(to);
+    return;
+  }
+
+  // (6) Categoría / producto
+  if(s.vars.last_product && !s.vars.category){
+    const p=(CATALOG||[]).find(pp=>norm(pp.nombre||'')===norm(s.vars.last_product));
+    const c=normalizeCatLabel(p?.categoria||''); if(c) s.vars.category=c;
+  }
+  if(!s.vars.last_product && !s.vars.category){
+    if(stale('categoria') || s.lastPrompt!=='categoria') return askCategory(to);
+    return;
+  }
+
+  // (7) Listado por categoría si aún no hay producto elegido
+  if(!s.vars.last_product) return listByCategory(to);
+
+  // (8) Presentación (si hay varias y aún no se eligió)
+  const prod = (CATALOG||[]).find(p=>p.sku===s.vars.last_sku);
+  if(prod && productHasMultiPres(prod) && !s.vars.last_presentacion){
+    return askPresentacion(to, prod);
+  }
+  if(prod && productSinglePres(prod) && !s.vars.last_presentacion){
+    s.vars.last_presentacion = productSinglePres(prod);
+  }
+
+  // (9) Cantidad
+  if(!s.vars.cantidad){
+    if (!s.asked.cantidad){
+      s.pending='cantidad'; await markPrompt(s,'cantidad'); s.asked.cantidad=true;
+      return toText(to,'Para poder realizar tu cotización, ¿qué *cantidad* necesitas *(L/KG o unidades)*?');
+    }
+    return;
   }
 }
 
-// -----------------------------------------------------------------------------
-// VERIFY
-// -----------------------------------------------------------------------------
+// ===== VERIFY =====
 router.get('/wa/webhook',(req,res)=>{
   const mode=req.query['hub.mode'];
   const token=req.query['hub.verify_token'];
@@ -710,30 +636,17 @@ router.get('/wa/webhook',(req,res)=>{
   return res.sendStatus(403);
 });
 
-// -----------------------------------------------------------------------------
-// RECEIVE — respondemos 200 inmediato y procesamos async (idempotente por wamid)
-// -----------------------------------------------------------------------------
-router.post('/wa/webhook', (req,res)=>{
-  res.sendStatus(200);
-  queueMicrotask(() => handleWaWebhook(req.body).catch(e => console.error('Async webhook error', e)));
-});
-
-async function handleWaWebhook(body){
+// ===== RECEIVE =====
+router.post('/wa/webhook', async (req,res)=>{
   try{
-    const entry  = body?.entry?.[0];
+    const entry  = req.body?.entry?.[0];
     const change = entry?.changes?.[0];
     const value  = change?.value;
     const msg    = value?.messages?.[0];
     const from   = msg?.from;
-    if(!msg || !from) return;
-
-    const wamid = msg?.id;
-    if (seenWamid(wamid)) return;
+    if(!msg || !from){ res.sendStatus(200); return; }
 
     const s = S(from);
-    s._from = from;
-    persistSessionToDisk(from, s);
-
     const textRaw = (msg.type==='text' ? (msg.text?.body || '').trim() : '');
 
     if (isHuman(from)) {
@@ -742,18 +655,17 @@ async function handleWaWebhook(body){
         const quien = s.profileName ? `, ${s.profileName}` : '';
         await toText(from, `Listo${quien} 🙌. Reactivé el *asistente automático*. ¿En qué puedo ayudarte?`);
       }
-      return;
+      res.sendStatus(200); return;
     }
 
     const contactName = value?.contacts?.[0]?.profile?.name;
-    if(contactName && !s.profileName){ s.profileName = contactName; persistSessionToDisk(from, s); }
+    if(contactName && !s.profileName) s.profileName = contactName;
 
     const referral = msg?.referral;
     if (referral && !s.meta.referralHandled){
       s.meta.referralHandled = true;
       s.meta.origin = 'facebook';
       s.meta.referral = referral;
-      persistSessionToDisk(from, s);
       const prod = productFromReferral(referral);
       if (prod){
         s.vars.candidate_sku = prod.sku;
@@ -761,7 +673,7 @@ async function handleWaWebhook(body){
           { title:`Sí, ${prod.nombre}`, payload:`REF_YES_${prod.sku}` },
           { title:'No, otro producto',  payload:'REF_NO' }
         ]);
-        return;
+        res.sendStatus(200); return;
       }
     }
 
@@ -770,13 +682,14 @@ async function handleWaWebhook(body){
       if(!isLeadMsg){
         await toText(from, PLAY?.greeting || '¡Qué gusto saludarte!, Soy el asistente virtual de *New Chem*. Estoy para ayudarte 🙂');
       }
-      s.greeted = true; persistSessionToDisk(from, s);
+      s.greeted = true;
       if(!isLeadMsg && !s.asked.nombre){
         await askNombre(from);
-        return;
+        res.sendStatus(200); return;
       }
     }
-    // ---------------- INTERACTIVOS ----------------
+
+    // ===== INTERACTIVOS =====
     if(msg.type==='interactive'){
       const br = msg.interactive?.button_reply;
       const lr = msg.interactive?.list_reply;
@@ -785,18 +698,21 @@ async function handleWaWebhook(body){
       if(id==='QR_FINALIZAR'){
         try {
           if (!s._savedToSheet) {
-            const cotId = await appendFromSession(s, from, 'nuevo'); // si puedes, haz upsert por llave en sheets.js
+            const cotId = await appendFromSession(s, from, 'nuevo');
             s.vars.cotizacion_id = cotId;
-            s._savedToSheet = true; persistSessionToDisk(from, s);
+            s._savedToSheet = true;
           }
-        } catch (err) { console.error('Sheets append error:', err); }
+        } catch (err) {
+          console.error('Sheets append error:', err);
+          // No bloquear al usuario si falla Sheets
+        }
         await toText(from,'¡Gracias por escribirnos! Nuestro encargado de negocios te enviará la cotización en breve. Si requieres más información, estamos a tu disposición.');
         await toText(from,'Para volver a activar el asistente, por favor, escribe *Asistente New Chem*.');
-        humanOn(from, 4); clearS(from); return;
+        humanOn(from, 4); clearS(from); res.sendStatus(200); return;
       }
-      if(id==='QR_SEGUIR'){ await toText(from,'Perfecto, seguimos por aquí 🙌. ¿En qué más te puedo ayudar?'); await askCategory(from); return; }
-      if(id==='ADD_MORE'){ s.vars.catOffset=0; s.vars.last_product=null; s.vars.last_sku=null; s.vars.last_presentacion=null; s.vars.cantidad=null; s.asked.cantidad=false; persistSessionToDisk(from, s); await toButtons(from,'Dime el *nombre del otro producto* o elige una categoría 👇', CAT_QR.map(c=>({title:c.title,payload:c.payload}))); return; }
-      if(id==='NO_MORE'){ await afterSummary(from, 'help'); return; }
+      if(id==='QR_SEGUIR'){ await toText(from,'Perfecto, seguimos por aquí 🙌. ¿En qué más te puedo ayudar?'); await askCategory(from); res.sendStatus(200); return; }
+      if(id==='ADD_MORE'){ s.vars.catOffset=0; s.vars.last_product=null; s.vars.last_sku=null; s.vars.last_presentacion=null; s.vars.cantidad=null; s.asked.cantidad=false; await toButtons(from,'Dime el *nombre del otro producto* o elige una categoría 👇', CAT_QR.map(c=>({title:c.title,payload:c.payload}))); res.sendStatus(200); return; }
+      if(id==='NO_MORE'){ await afterSummary(from, 'help'); res.sendStatus(200); return; }
 
       if(/^REF_YES_/.test(id)){
         const sku = id.replace('REF_YES_','');
@@ -804,58 +720,60 @@ async function handleWaWebhook(body){
         if(prod){
           s.vars.last_product = prod.nombre; s.vars.last_sku = prod.sku; s.vars.last_presentacion=null;
           const catNorm = normalizeCatLabel(prod.categoria||''); if(catNorm) s.vars.category = catNorm;
-          persistSessionToDisk(from, s);
           await showProduct(from, prod);
           await nextStep(from);
         }
-        return;
+        res.sendStatus(200); return;
       }
       if(id==='REF_NO'){
-        s.pending='product_name'; s.lastPrompt='product_name'; s.lastPromptTs=Date.now(); persistSessionToDisk(from, s);
+        s.pending='product_name'; s.lastPrompt='product_name'; s.lastPromptTs=Date.now();
         await toText(from,'Claro, indícame por favor el *nombre del producto* que te interesa y te paso el detalle.');
-        return;
+        res.sendStatus(200); return;
       }
 
       if(/^DPTO_/.test(id)){
         const depRaw = id.replace('DPTO_','').replace(/_/g,' ');
         const dep = (()=>{ const t=norm(depRaw); for(const d of DEPARTAMENTOS) if(norm(d)===t) return d; return title(depRaw); })();
-        s.vars.departamento = dep; s.asked.departamento=true; s.pending=null; s.lastPrompt=null; s.vars.subzona = null;
-        persistSessionToDisk(from, s);
+        s.vars.departamento = dep; s.asked.departamento=true; s.pending=null; s.lastPrompt=null;
+        s.vars.subzona = null;
         if(dep==='Santa Cruz'){ await askSubzonaSCZ(from); } else { await askSubzonaLibre(from); }
-        return;
+        res.sendStatus(200); return;
       }
       if(/^SUBZ_/.test(id)){
         const z = id.replace('SUBZ_','').toLowerCase();
         const mapa = { norte:'Norte', este:'Este', sur:'Sur', valles:'Valles', chiquitania:'Chiquitania' };
         if (s.vars.departamento==='Santa Cruz') s.vars.subzona = mapa[z] || null;
-        s.pending=null; s.lastPrompt=null; persistSessionToDisk(from, s);
-        await nextStep(from); return;
+        s.pending=null; s.lastPrompt=null;
+        await nextStep(from); res.sendStatus(200); return;
       }
       if(/^CROP_/.test(id)){
         const code = id.replace('CROP_','').toLowerCase();
         const map  = { soya:'Soya', maiz:'Maíz', trigo:'Trigo', arroz:'Arroz', girasol:'Girasol' };
         const val  = map[code] || null;
-        if(val){ s.vars.cultivos = [val]; s.pending=null; s.lastPrompt=null; persistSessionToDisk(from, s); await nextStep(from); }
-        return;
+        if(val){
+          s.vars.cultivos = [val]; s.pending=null; s.lastPrompt=null;
+          await nextStep(from);
+        }
+        res.sendStatus(200); return;
       }
       if(/^CAMP_/.test(id)){
         const code = id.replace('CAMP_','').toLowerCase();
         if(code==='verano') s.vars.campana='Verano';
         else if(code==='invierno') s.vars.campana='Invierno';
-        else if(code==='otra'){ await askCampanaLibre(from); return; }
-        s.pending=null; s.lastPrompt=null; persistSessionToDisk(from, s);
-        await nextStep(from); return;
+        else if(code==='otra'){ await askCampanaLibre(from); res.sendStatus(200); return; }
+        s.pending=null; s.lastPrompt=null;
+        await nextStep(from); res.sendStatus(200); return;
       }
       if(/^CAT_/.test(id)){
         const key = id.replace('CAT_','').toLowerCase();
         s.vars.category = key==='herbicida' ? 'Herbicida' : key==='insecticida' ? 'Insecticida' : 'Fungicida';
-        s.vars.catOffset = 0; s.stage='product'; s.pending=null; s.lastPrompt=null; persistSessionToDisk(from, s);
-        await nextStep(from); return;
+        s.vars.catOffset = 0; s.stage='product'; s.pending=null; s.lastPrompt=null;
+        await nextStep(from); res.sendStatus(200); return;
       }
       if(/^CAT_MORE_/.test(id)){
         const next = parseInt(id.replace('CAT_MORE_',''),10) || 0;
-        s.vars.catOffset = next; persistSessionToDisk(from, s);
-        await listByCategory(from); return;
+        s.vars.catOffset = next;
+        await listByCategory(from); res.sendStatus(200); return;
       }
       if(/^PROD_/.test(id)){
         const sku = id.replace('PROD_','');
@@ -863,42 +781,47 @@ async function handleWaWebhook(body){
         if(prod){
           s.vars.last_product = prod.nombre; s.vars.last_sku = prod.sku; s.vars.last_presentacion=null;
           const catNorm = normalizeCatLabel(prod.categoria||''); if(catNorm) s.vars.category = catNorm;
-          persistSessionToDisk(from, s);
           await showProduct(from, prod);
+          // flujo: si hay multi presentación, la pido; si no, pido cantidad
           if(productHasMultiPres(prod)){
-            // pedido dentro de showProduct
+            // no hacer nada, ya se pidió dentro de showProduct
           } else if (!s.vars.cantidad && !s.asked.cantidad){
-            s.pending='cantidad'; s.lastPrompt='cantidad'; s.lastPromptTs=Date.now(); s.asked.cantidad=true; persistSessionToDisk(from, s);
+            s.pending='cantidad'; s.lastPrompt='cantidad'; s.lastPromptTs=Date.now(); s.asked.cantidad=true;
             await toText(from,'¿Qué *cantidad* necesitas *(L/KG o unidades)* para este producto?');
           }
         }
-        return;
+        res.sendStatus(200); return;
       }
       if(/^PRES_/.test(id)){
+        // id = PRES_<sku>__<b64url(presentacion)>
         const m = id.match(/^PRES_(.+?)__(.+)$/);
         if(m){
           const sku = m[1];
           const pres = ub64u(m[2]);
           if(s.vars.last_sku===sku){
-            s.vars.last_presentacion = pres; persistSessionToDisk(from, s);
+            s.vars.last_presentacion = pres;
+            // Luego de elegir presentación, pedimos cantidad si falta
             if(!s.vars.cantidad){
-              s.pending='cantidad'; s.lastPrompt='cantidad'; s.lastPromptTs=Date.now(); s.asked.cantidad=true; persistSessionToDisk(from, s);
+              s.pending='cantidad'; s.lastPrompt='cantidad'; s.lastPromptTs=Date.now(); s.asked.cantidad=true;
               await toText(from,'Perfecto. ¿Qué *cantidad* necesitas *(L/KG o unidades)* para este producto?');
             }
           }
         }
-        return;
+        res.sendStatus(200); return;
       }
     }
 
-    // ---------------- TEXTO ----------------
+    // ===== TEXTO =====
     if(msg.type==='text'){
       const text = (msg.text?.body||'').trim();
       remember(from,'user',text);
       const tnorm = norm(text);
+
+      // Lead de Messenger
       const lead = parseMessengerLead(text);
       if (lead){
-        s.meta.origin = 'messenger'; s.greeted = true; persistSessionToDisk(from, s);
+        s.meta.origin = 'messenger';
+        s.greeted = true;
         if (lead.name) s.profileName = title(lead.name);
         if (lead.dptoZ){
           const dep = detectDepartamento(lead.dptoZ) || title(lead.dptoZ.split('/')[0]||'');
@@ -913,185 +836,161 @@ async function handleWaWebhook(body){
           const mapped = Array.from(new Set(picks.map(x=>CROP_SYN[x]).filter(Boolean)));
           if (mapped.length) s.vars.cultivos = [mapped[0]];
         }
-        persistSessionToDisk(from, s);
         const quien = s.profileName ? ` ${s.profileName}` : '';
         await toText(from, `👋 Hola${quien}, gracias por continuar con *New Chem* vía WhatsApp.\nAquí encontrarás los agroquímicos esenciales para tu cultivo, al mejor precio. 🌱`);
-        await askCultivo(from); return;
+        await askCultivo(from); res.sendStatus(200); return;
       }
-      
-      const NAME_FILLERS = /^(hola|buenas|buenas tardes|buen día|buen dia|hey|qué tal|que tal|¿?ten[eé]s?|tienes?|hay|disponible|\?|!|\.\.\.)$/i;
-        if (S(from).pending==='nombre') {
-          if (NAME_FILLERS.test(text.trim())) {
-            await toText(from,'¿Me dices tu *nombre completo*?');
-            return;
-          }
-          S(from).profileName = title(text.toLowerCase());
-          S(from).pending=null; S(from).lastPrompt=null;
-          persistSessionToDisk(from, S(from));
-          await nextStep(from);
-          return;
-        }
+
+      // Nombre
+      if (S(from).pending==='nombre'){
+        S(from).profileName = title(text.toLowerCase());
+        S(from).pending=null; S(from).lastPrompt=null;
+        await nextStep(from); res.sendStatus(200); return;
+      }
+
+      // Subzona libre
       if (S(from).pending==='subzona_libre'){
         S(from).vars.subzona = title(text.toLowerCase());
-        S(from).pending=null; S(from).lastPrompt=null; persistSessionToDisk(from, S(from));
-        await nextStep(from); return;
+        S(from).pending=null; S(from).lastPrompt=null;
+        await nextStep(from); res.sendStatus(200); return;
       }
+
+      // Hectáreas
       if (S(from).pending==='hectareas'){
         const ha = parseHectareas(text);
         if(ha){
           S(from).vars.hectareas = ha;
-          S(from).pending=null; S(from).lastPrompt=null; persistSessionToDisk(from, S(from));
-          await nextStep(from); return;
+          S(from).pending=null; S(from).lastPrompt=null;
+          await nextStep(from);
+          res.sendStatus(200); return;
         } else {
           await toText(from,'Por favor ingresa un número válido de *hectáreas* (ej. 50 ha).');
-          return;
+          res.sendStatus(200); return;
         }
       }
+
+      // Campaña libre
       if (S(from).pending==='campana_text'){
         S(from).vars.campana = title(text);
-        S(from).pending=null; S(from).lastPrompt=null; persistSessionToDisk(from, S(from));
-        await nextStep(from); return;
+        S(from).pending=null; S(from).lastPrompt=null;
+        await nextStep(from); res.sendStatus(200); return;
       }
 
+      // ASESOR
       if (wantsAgentPlus(text)) {
         const quien = s.profileName ? `, ${s.profileName}` : '';
         await toText(from, `¡Perfecto${quien}! Ya notifiqué a nuestro equipo. Un **asesor comercial** se pondrá en contacto contigo por este chat en unos minutos para ayudarte con tu consulta y la cotización. Desde ahora **pauso el asistente automático** para que te atienda una persona. 🙌`);
-        humanOn(from, 4); return;
+        humanOn(from, 4); res.sendStatus(200); return;
       }
 
-      if(/horario|atienden|abren|cierran/i.test(tnorm)){ await toText(from, `Atendemos ${FAQS?.horarios || 'Lun–Vie 8:00–17:00'} 🙂`); return; }
-      if(wantsLocation(text)){ await toText(from, `Nuestra ubicación en Google Maps 👇\nVer ubicación: ${linkMaps()}`); await toButtons(from,'¿Hay algo más en lo que pueda ayudarte?',[{title:'Seguir',payload:'QR_SEGUIR'},{title:'Finalizar',payload:'QR_FINALIZAR'}]); return; }
+      // Globales
+      if(/horario|atienden|abren|cierran/i.test(tnorm)){ await toText(from, `Atendemos ${FAQS?.horarios || 'Lun–Vie 8:00–17:00'} 🙂`); res.sendStatus(200); return; }
+      if(wantsLocation(text)){ await toText(from, `Nuestra ubicación en Google Maps 👇\nVer ubicación: ${linkMaps()}`); await toButtons(from,'¿Hay algo más en lo que pueda ayudarte?',[{title:'Seguir',payload:'QR_SEGUIR'},{title:'Finalizar',payload:'QR_FINALIZAR'}]); res.sendStatus(200); return; }
       if(wantsCatalog(text)){
         await toText(from, `Este es nuestro catálogo completo\n${CATALOG_URL}`);
         await toButtons(from,'¿Quieres que te ayude a elegir o añadir un producto ahora?',[{title:'Añadir producto', payload:'ADD_MORE'},{title:'Finalizar', payload:'QR_FINALIZAR'}]);
-        return;
+        res.sendStatus(200); return;
       }
       if(wantsClose(text)){
         await toText(from,'¡Gracias por escribirnos! Si más adelante te surge algo, aquí estoy para ayudarte. 👋');
-        humanOn(from, 4); clearS(from); return;
+        humanOn(from, 4); clearS(from); res.sendStatus(200); return;
       }
-      if(wantsAnother(text)){ await askAddMore(from); return; }
+      if(wantsAnother(text)){ await askAddMore(from); res.sendStatus(200); return; }
 
-      const ha   = parseHectareas(text); if(ha && !S(from).vars.hectareas){ S(from).vars.hectareas = ha; persistSessionToDisk(from, S(from)); }
-      const phone= parsePhone(text);     if(phone){ S(from).vars.phone = phone; persistSessionToDisk(from, S(from)); }
+      // CAPTURA PASIVA
+      const ha   = parseHectareas(text); if(ha && !S(from).vars.hectareas) S(from).vars.hectareas = ha;
+      const phone= parsePhone(text);     if(phone) S(from).vars.phone = phone;
 
       let cant = parseCantidad(text);
       if(!cant && (S(from).pending==='cantidad')){
         const mOnly = text.match(/^\s*(\d{1,6}(?:[.,]\d{1,2})?)\s*$/);
         if(mOnly){ const unit = inferUnitFromProduct(S(from)).toLowerCase(); cant = `${mOnly[1].replace(',','.') } ${unit}`; }
       }
-      if(cant){ S(from).vars.cantidad = cant; persistSessionToDisk(from, S(from)); }
+      if(cant) S(from).vars.cantidad = cant;
 
+      // Producto exacto
       const prodExact = findProduct(text);
       if (prodExact){
         S(from).vars.last_product = prodExact.nombre;
         S(from).vars.last_sku = prodExact.sku;
         S(from).vars.last_presentacion = null;
         const catFromProd = normalizeCatLabel(prodExact.categoria||''); if (catFromProd) S(from).vars.category = catFromProd;
-        S(from).stage='product'; S(from).vars.catOffset=0; persistSessionToDisk(from, S(from));
+        S(from).stage='product'; S(from).vars.catOffset=0;
       }
 
+      // Categoría por texto
       const catTyped2 = detectCategory(text);
       if(catTyped2){
-        S(from).vars.category=catTyped2; S(from).vars.catOffset=0; S(from).asked.categoria=true; S(from).stage='product'; persistSessionToDisk(from, S(from));
+        S(from).vars.category=catTyped2; S(from).vars.catOffset=0; S(from).asked.categoria=true; S(from).stage='product';
         if (mentionsAcaricida(text) && catTyped2==='Insecticida') await toText(from,'Te muestro Insecticidas que cubren ácaros.');
       }
 
+      // Ubicación
       const depTyped = detectDepartamento(text);
       const subOnly  = detectSubzona(text);
-      if(depTyped){ S(from).vars.departamento = depTyped; S(from).vars.subzona=null; persistSessionToDisk(from, S(from)); }
-      if((S(from).vars.departamento==='Santa Cruz' || depTyped==='Santa Cruz') && subOnly){ S(from).vars.subzona = subOnly; persistSessionToDisk(from, S(from)); }
+      if(depTyped){ S(from).vars.departamento = depTyped; S(from).vars.subzona=null; }
+      if((S(from).vars.departamento==='Santa Cruz' || depTyped==='Santa Cruz') && subOnly){ S(from).vars.subzona = subOnly; }
 
+      // Cultivo por texto (mapeo a opciones)
       if (S(from).pending==='cultivo'){
         const picked = Object.keys(CROP_SYN).find(k=>tnorm.includes(k));
         if (picked){
           S(from).vars.cultivos = [CROP_SYN[picked]];
-          S(from).pending=null; S(from).lastPrompt=null; persistSessionToDisk(from, S(from));
-          await askHectareas(from); return;
+          S(from).pending=null; S(from).lastPrompt=null;
+          await askHectareas(from);
+          res.sendStatus(200); return;
         } else {
           await toText(from, 'Por favor, *elige una opción del listado* para continuar.');
-          await askCultivo(from); return;
+          await askCultivo(from); res.sendStatus(200); return;
         }
       }
 
+      // Campaña si el usuario escribió directamente "verano"/"invierno"
       if(!S(from).vars.campana){
         if(/\bverano\b/i.test(text)) S(from).vars.campana='Verano';
         else if(/\binvierno\b/i.test(text)) S(from).vars.campana='Invierno';
-        persistSessionToDisk(from, S(from));
       }
 
+      // COTIZACIÓN
       if(asksPrice(text)){
         if (mentionsAcaricida(text)) await toText(from, 'Te muestro Insecticidas que cubren ácaros.');
         await toText(from,'Con gusto te preparo una *cotización* con un precio a medida. Solo necesito que me compartas unos datos para poder recomendarte la mejor opción para tu zona y cultivo');
       }
 
+      // Si llegó la cantidad y hay producto → carrito + “otro”
       if(S(from).vars.cantidad && S(from).vars.last_sku){
-        addCurrentToCart(S(from)); persistSessionToDisk(from, S(from));
-        await askAddMore(from); return;
+        addCurrentToCart(S(from));
+        await askAddMore(from);
+        res.sendStatus(200); return;
       }
 
       const productIntent = prodExact || catTyped2 || asksPrice(text) || wantsBuy(text) || /producto|herbicida|insecticida|fungicida|acaricida|informaci[oó]n/i.test(tnorm);
-      if (S(from).stage === 'discovery' && productIntent){ S(from).stage = 'product'; persistSessionToDisk(from, S(from)); }
+      if (S(from).stage === 'discovery' && productIntent) S(from).stage = 'product';
 
       if (S(from).vars.last_product && S(from).vars.departamento && S(from).vars.subzona){
         const prod = findProduct(S(from).vars.last_product) || prodExact;
         if (prod) {
           await showProduct(from, prod);
+          // Si faltó presentación, se pedirá. Si ya hay, pedir cantidad.
           if (productHasMultiPres(prod) && !S(from).vars.last_presentacion) {
-            // ya preguntado en showProduct
+            // se pidió en showProduct
           } else if (!S(from).vars.cantidad && !S(from).asked.cantidad) {
-            S(from).pending='cantidad'; S(from).lastPrompt='cantidad'; S(from).lastPromptTs=Date.now(); S(from).asked.cantidad=true; persistSessionToDisk(from, S(from));
+            S(from).pending='cantidad'; S(from).lastPrompt='cantidad'; S(from).lastPromptTs=Date.now(); S(from).asked.cantidad=true;
             await toText(from,'¿Qué *cantidad* necesitas *(L/KG o unidades)* para este producto?');
           }
         }
       }
 
       await nextStep(from);
-      return;
+      res.sendStatus(200); return;
     }
 
-    // mensaje no-texto (documento, imagen, etc.)
-    if (msg.type !== 'text' && msg.type !== 'interactive') {
-      await toText(from, 'Recibí tu archivo 👍. ¿Deseas cotización o información de un producto?');
-      await nextStep(from);
-    }
-
+    await nextStep(from);
+    res.sendStatus(200);
   }catch(e){
     console.error('WA webhook error', e);
+    res.sendStatus(500);
   }
-}
-export default router;
+});
 
-function parseMessengerLead(text){
-  const t = String(text || '');
-  if(!/\b(v[ií]a|via)\s*messenger\b/i.test(t)) return null;
-  const pick = (re)=>{ const m=t.match(re); return m? m[1].trim() : null; };
-  const name  = pick(/Hola,\s*soy\s*([^(•\n]+?)(?=\s*\(|\s*\.|\s*Me|$)/i);
-  const prod  = pick(/Producto:\s*([^•\n]+)/i);
-  const qty   = pick(/Cantidad:\s*([^•\n]+)/i);
-  const crops = pick(/Cultivos?:\s*([^•\n]+)/i);
-  const dptoZ = pick(/Departamento(?:\/Zona)?:\s*([^•\n]+)/i);
-  const zona  = pick(/Zona:\s*([^•\n]+)/i);
-  return { name, prod, qty, crops, dptoZ, zona };
-}
-function productFromReferral(ref){
-  try{
-    const bits = [ref?.headline, ref?.body, ref?.source_url, ref?.adgroup_name, ref?.campaign_name]
-      .filter(Boolean).join(' ');
-    let byQS=null;
-    try{
-      const u = new URL(ref?.source_url||'');
-      const q = (k)=>u.searchParams.get(k);
-      const sku = q('sku') || q('SKU');
-      const pn  = q('product') || q('producto') || q('p') || q('ref');
-      if(sku){
-        byQS = (CATALOG||[]).find(p=>String(p.sku).toLowerCase()===String(sku).toLowerCase());
-      }
-      if(!byQS && pn){
-        byQS = findProduct(pn) || (fuzzyCandidate(pn)||{}).prod || null;
-      }
-    }catch{}
-    const byText = findProduct(bits) || ((fuzzyCandidate(bits)||{}).prod) || null;
-    return byQS || byText || null;
-  }catch{ return null; }
-}
+export default router;
