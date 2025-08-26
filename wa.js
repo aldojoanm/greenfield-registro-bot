@@ -542,7 +542,7 @@ function productListRow(p){
   const ia     = p?.ingrediente_activo || p?.formulacion || p?.categoria || '';
   return {
     title: nombre,
-    description: ia ? `IA: ${ia}` : undefined,
+    description: ia ? `${ia}` : undefined,
     payload: `PROD_${p.sku}`
   };
 }
