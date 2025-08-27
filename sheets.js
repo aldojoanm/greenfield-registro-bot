@@ -5,7 +5,7 @@ import { google } from 'googleapis';
 let _sheets; // cache del cliente de Sheets
 
 async function getSheets() {
-  if (_sheets) return _sheets;
+  if (_sheets) return __sheets;
 
   // 1) Credenciales inline (GOOGLE_CREDENTIALS_JSON)  2) keyFile (GOOGLE_APPLICATION_CREDENTIALS)
   let auth;
@@ -40,14 +40,30 @@ async function getSheets() {
 const onlyDigits = (s='') => String(s).replace(/[^\d]/g, '');
 const pad2 = n => String(n).padStart(2, '0');
 
-// Fecha legible (usa la zona horaria del servidor)
+// Zona horaria local (corrige hora del resumen). Puedes cambiarla por env: LOCAL_TZ="America/La_Paz"
+const LOCAL_TZ = process.env.LOCAL_TZ || 'America/La_Paz';
+
+// Fecha legible en la zona horaria local
 function formatDisplayDate(d){
-  const yy = d.getFullYear();
-  const mm = pad2(d.getMonth()+1);
-  const dd = pad2(d.getDate());
-  const hh = pad2(d.getHours());
-  const mi = pad2(d.getMinutes());
-  return `${yy}-${mm}-${dd} ${hh}:${mi}`;
+  try{
+    const parts = new Intl.DateTimeFormat('es-BO', {
+      timeZone: LOCAL_TZ,
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', hour12: false
+    }).formatToParts(d);
+    const get = t => parts.find(p => p.type === t)?.value || '';
+    const yyyy = get('year'), mm = get('month'), dd = get('day');
+    const hh = get('hour'), mi = get('minute');
+    return `${yyyy}-${mm}-${dd} ${hh}:${mi}`;
+  }catch{
+    // Fallback simple si Intl fallara
+    const yy = d.getFullYear();
+    const mm = pad2(d.getMonth()+1);
+    const dd = pad2(d.getDate());
+    const hh = pad2(d.getHours());
+    const mi = pad2(d.getMinutes());
+    return `${yy}-${mm}-${dd} ${hh}:${mi}`;
+  }
 }
 
 function buildSummaryBullets(s, fechaDisplay) {
@@ -86,15 +102,18 @@ function buildSummaryBullets(s, fechaDisplay) {
   return base.join('\n');
 }
 
-function buildWhatsAppMessageToClient({ nombre, cotId, resumen }) {
+// Mensaje corto para el CLIENTE (solo productos y cantidades)
+function buildClientMessage({ nombre, items }) {
   const quien = nombre || 'Hola';
+  const lines = items.map(it => {
+    const pres = it.presentacion ? ` (${it.presentacion})` : '';
+    const cant = it.cantidad ? ` — ${it.cantidad}` : '';
+    return `• ${it.nombre}${pres}${cant}`;
+  });
   return [
-    `Hola ${quien}, soy del equipo de New Chem. Te contacto por tu cotización ${cotId}.`,
-    ``,
-    `Resumen:`,
-    resumen,
-    ``,
-    `¿Te queda bien si te envío la propuesta por aquí?`
+    `Hola ${quien}, soy Jonathan Arteaga, encargado de negocios de NEW CHEM. `,
+    `Te escribo por tu cotización con los siguientes productos:`,
+    ...lines
   ].join('\n');
 }
 
@@ -143,7 +162,7 @@ function buildRowFromSession(s, fromPhone, estado = 'NUEVO') {
         cantidad: s?.vars?.cantidad || ''
       }].filter(it => it.nombre);
 
-  // Multilínea
+  // Multilínea para columnas
   const productoCell     = items.map(it => it?.nombre || '').join('\n');
   const presentacionCell = items.map(it => it?.presentacion || '').join('\n');
   const cantidadCell     = items.map(it => it?.cantidad || '').join('\n');
@@ -154,14 +173,14 @@ function buildRowFromSession(s, fromPhone, estado = 'NUEVO') {
   // Resumen (texto) — incluye la fecha
   const resumenTxt = buildSummaryBullets(s, fechaDisplay);
 
-  // Link de WhatsApp directo al cliente (con mensaje prellenado)
-  const msgForClient = buildWhatsAppMessageToClient({ nombre: fullName, cotId: cotizacion_id, resumen: resumenTxt });
-  const linkClient   = buildWaLinkTo(fromPhone, msgForClient);
+  // Link al CLIENTE con el mensaje corto (solo productos y cantidades)
+  const clientMsg  = buildClientMessage({ nombre: fullName, items });
+  const linkCliente = buildWaLinkTo(fromPhone, clientMsg);
 
-  // “Resumen” como LINK de compartir (para pegar en el grupo)
+  // “Resumen Pedido” como LINK de compartir (para pegar en el grupo)
   const phoneDigits = onlyDigits(fromPhone);
   const groupMsg = buildGroupShareMessage({ resumen: resumenTxt, phoneDigits });
-  const resumenShareLink = buildShareLink(groupMsg);
+  const resumenPedidoLink = buildShareLink(groupMsg);
 
   // Estado a 3 valores
   const EST = String(estado || '').toUpperCase();
@@ -176,7 +195,8 @@ function buildRowFromSession(s, fromPhone, estado = 'NUEVO') {
   // Teléfono: solo dígitos
   const phoneDigitsOnly = phoneDigits;
 
-  // === ORDEN EXACTO DE COLUMNAS (SIN “Mensaje Whatsapp”) ===
+  // === ORDEN EXACTO DE COLUMNAS (renombradas) ===
+  // Fecha | Teléfono | Nombre Completo | Ubicación | Cultivo | Hectáreas | Campaña | Producto | Presentacion | Cantidad | Estado | Contacto Cliente | Resumen Pedido | Seguimiento | cotizacion_id | calendar_event_id
   return [
     nowISO,               // 0  Fecha
     phoneDigitsOnly,      // 1  Teléfono
@@ -189,8 +209,8 @@ function buildRowFromSession(s, fromPhone, estado = 'NUEVO') {
     presentacionCell,     // 8  Presentacion
     cantidadCell,         // 9  Cantidad
     estadoFinal,          // 10 Estado
-    linkClient,           // 11 Link Whatsapp (cliente)
-    resumenShareLink,     // 12 Resumen (link para compartir)
+    linkCliente,          // 11 Contacto Cliente (link con mensaje)
+    resumenPedidoLink,    // 12 Resumen Pedido (link para compartir)
     seguimiento,          // 13 Seguimiento
     cotizacion_id,        // 14 cotizacion_id
     calId                 // 15 calendar_event_id
