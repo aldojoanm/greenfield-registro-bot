@@ -2,7 +2,7 @@
   {
     "sku": "SEAL-20L",
     "nombre": "SEAL",
-    "ingrediente_activo": "Atrazine",
+    "ingrediente_activo": "Atrazine 500 g/l SC",
     "categoria": "Herbicida",
     "cultivo": ["Maíz", "Sorgo"],
     "plaga": ["Verdolaga", "Quinuilla", "Malva taporita", "Chiori"],
@@ -15,7 +15,7 @@
   {
     "sku": "SINERGY-10-20L",
     "nombre": "SINERGY",
-    "ingrediente_activo": "Clethodim",
+    "ingrediente_activo": "Clethodim 240 g/l EC",
     "categoria": "Herbicida",
     "cultivo": ["Soya"],
     "plaga": ["Rogelia", "Orizahá", "Cadillo", "Pata de gallina", "Pata de gallo"],
@@ -28,7 +28,7 @@
   {
     "sku": "DRIER-20-200L",
     "nombre": "DRIER",
-    "ingrediente_activo": "Paraquat dichloride",
+    "ingrediente_activo": "Paraquat dichloride 276 g/l SL",
     "categoria": "Herbicida",
     "cultivo": ["Barbecho químico"],
     "plaga": ["Chiori"],
@@ -41,7 +41,7 @@
   {
     "sku": "GLISATO-20-200L",
     "nombre": "GLISATO",
-    "ingrediente_activo": "Glifosato",
+    "ingrediente_activo": "Glifosato Sal IPA 480 g/l SL",
     "categoria": "Herbicida",
     "cultivo": ["Barbecho químico"],
     "plaga": ["Rogelia", "Torito", "Verdolaga camba", "Emilia", "Leche leche", "Sanana", "Chiori", "Malva taporita", "Chupurujume", "Maicillo"],
@@ -54,7 +54,7 @@
   {
     "sku": "NICOXAM-10L",
     "nombre": "NICOXAM",
-    "ingrediente_activo": "Thiametoxan",
+    "ingrediente_activo": "Thiametoxan 333 g/l SC",
     "categoria": "Insecticida-Acaricida",
     "cultivo": ["Soya"],
     "plaga": ["Chinche verde pequeño"],
@@ -67,7 +67,7 @@
   {
     "sku": "TRENCH-10L",
     "nombre": "TRENCH",
-    "ingrediente_activo": "Bifenthrin",
+    "ingrediente_activo": "Bifenthrin 100 g/l EC",
     "categoria": "Insecticida-Acaricida",
     "cultivo": ["Soya"],
     "plaga": ["Chinche café panza verde", "Mosca barrenadora"],
@@ -80,7 +80,7 @@
   {
     "sku": "MEXIN-5-10L",
     "nombre": "MEXIN",
-    "ingrediente_activo": "Abamectin",
+    "ingrediente_activo": "Abamectin 50 g/l EC",
     "categoria": "Insecticida-Acaricida",
     "cultivo": ["Soya"],
     "plaga": ["Ácaro"],
@@ -93,7 +93,7 @@
   {
     "sku": "FENPRONIL-1KG",
     "nombre": "FENPRONIL",
-    "ingrediente_activo": "Fipronil",
+    "ingrediente_activo": "Fipronil 800 g/kg WG",
     "categoria": "Insecticida-Acaricida",
     "cultivo": ["Soya"],
     "plaga": ["Picudo gris pequeño", "Trips"],
@@ -106,7 +106,7 @@
   {
     "sku": "NOATO-1KG",
     "nombre": "NOATO",
-    "ingrediente_activo": "Emamectin Benzoato",
+    "ingrediente_activo": "Emamectin Benzoato 57 g/kg WG",
     "categoria": "Insecticida-Acaricida",
     "cultivo": ["Soya"],
     "plaga": ["Pegador de hoja"],
@@ -119,7 +119,7 @@
   {
     "sku": "LAYER-20KG",
     "nombre": "LAYER",
-    "ingrediente_activo": "Mancozeb",
+    "ingrediente_activo": "Mancozeb 800 g/kg WP",
     "categoria": "Fungicida",
     "cultivo": ["Soya"],
     "plaga": ["Roya Asiática"],
