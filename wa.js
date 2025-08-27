@@ -531,8 +531,18 @@ async function askCultivo(to){
   const s=S(to); if (s.lastPrompt==='cultivo') return;
   await markPrompt(s,'cultivo'); s.pending='cultivo'; s.asked.cultivo=true;
   persistS(to); // ★
-  await toList(to,'📋 ¿Para qué *cultivo* necesitas el producto?','Elegir cultivo', CROP_OPTIONS);
+
+  const rows = [...CROP_OPTIONS, { title:'Otro', payload:'CROP_OTRO' }];
+  await toList(to,'📋 ¿Para qué *cultivo* necesitas el producto?','Elegir cultivo', rows);
 }
+
+async function askCultivoLibre(to){
+  const s=S(to); if (s.lastPrompt==='cultivo_text') return;
+  await markPrompt(s,'cultivo_text'); s.pending='cultivo_text';
+  persistS(to); // ★
+  await toText(to,'Escribe tu *cultivo* (ej. Ajonjolí, Hortalizas, Sorgo…).');
+}
+
 async function askHectareas(to){
   const s=S(to); if (s.lastPrompt==='hectareas') return;
   await markPrompt(s,'hectareas'); s.pending='hectareas'; s.asked.hectareas=true;
@@ -549,7 +559,7 @@ async function askCampanaLibre(to){
   const s=S(to); if (s.lastPrompt==='campana_text') return;
   await markPrompt(s,'campana_text'); s.pending='campana_text';
   persistS(to); // ★
-  await toText(to,'Escribe tu campaña.');
+  await toText(to,'Podrias decirme que *campaña*?.');
 }
 async function askCategory(to){
   const s=S(to); if (s.lastPrompt==='categoria') return;
@@ -920,6 +930,12 @@ router.post('/wa/webhook', async (req,res)=>{
         s.pending=null; s.lastPrompt=null; persistS(from);
         await nextStep(from); res.sendStatus(200); return;
       }
+
+      if (id === 'CROP_OTRO'){
+        await askCultivoLibre(from);
+        res.sendStatus(200); return;
+      }
+
       if(/^CROP_/.test(id)){
         const code = id.replace('CROP_','').toLowerCase();
         const map  = { soya:'Soya', maiz:'Maíz', trigo:'Trigo', arroz:'Arroz', girasol:'Girasol' };
@@ -930,6 +946,7 @@ router.post('/wa/webhook', async (req,res)=>{
         }
         res.sendStatus(200); return;
       }
+
       if(/^CAMP_/.test(id)){
         const code = id.replace('CAMP_','').toLowerCase();
         if(code==='verano') s.vars.campana='Verano';
@@ -998,6 +1015,12 @@ router.post('/wa/webhook', async (req,res)=>{
       } else {
       }
     }
+      if (S(from).pending==='cultivo_text'){
+        S(from).vars.cultivos = [title(text)];
+        S(from).pending=null; S(from).lastPrompt=null; persistS(from);
+        await askHectareas(from);
+        res.sendStatus(200); return;
+      }
 
       // Lead de Messenger
       const lead = parseMessengerLead(text);
