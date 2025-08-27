@@ -559,7 +559,7 @@ async function askCampanaLibre(to){
   const s=S(to); if (s.lastPrompt==='campana_text') return;
   await markPrompt(s,'campana_text'); s.pending='campana_text';
   persistS(to); // ★
-  await toText(to,'Podrias decirme que *campaña*?.');
+  await toText(to,'Podrias decirme que *campaña*?');
 }
 async function askCategory(to){
   const s=S(to); if (s.lastPrompt==='categoria') return;

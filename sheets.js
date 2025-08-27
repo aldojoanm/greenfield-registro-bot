@@ -36,15 +36,74 @@ async function getSheets() {
   return _sheets;
 }
 
-function buildRowFromSession(s, fromPhone, estado = 'nuevo') {
+// ===== Helpers =====
+const onlyDigits = (s='') => String(s).replace(/[^\d]/g, '');
+const title = s => String(s||'').replace(/\w\S*/g, w => w[0].toUpperCase()+w.slice(1).toLowerCase());
+
+function buildSummaryBullets(s) {
+  const nombre = s?.profileName || s?.fullName || 'Cliente';
+  const dep    = s?.vars?.departamento || 'ND';
+  const zona   = s?.vars?.subzona || 'ND';
+  const cultivo= (s?.vars?.cultivos && s.vars.cultivos[0]) || 'ND';
+  const ha     = s?.vars?.hectareas || 'ND';
+  const camp   = s?.vars?.campana || 'ND';
+
+  // productos: carrito o último producto
+  const carrito = Array.isArray(s?.vars?.cart) ? s.vars.cart : [];
+  const items = (carrito.length > 0) ? carrito : [{
+    nombre: s?.vars?.last_product || '',
+    presentacion: s?.vars?.last_presentacion || '',
+    cantidad: s?.vars?.cantidad || ''
+  }].filter(it => it.nombre);
+
+  const linesProductos = items.map(it => {
+    const pres = it.presentacion ? ` (${it.presentacion})` : '';
+    const cant = it.cantidad ? ` — ${it.cantidad}` : '';
+    return `* ${it.nombre}${pres}${cant}`;
+  });
+
+  const base = [
+    `* ${nombre}`,
+    `* Departamento: ${dep}`,
+    `* Zona: ${zona}`,
+    `* Cultivo: ${cultivo}`,
+    `* Hectáreas: ${ha}`,
+    `* Campaña: ${camp}`,
+    ...linesProductos
+  ];
+
+  return base.join('\n');
+}
+
+function buildWhatsAppMessage({ nombre, cotId, resumen }) {
+  const quien = nombre || 'Hola';
+  return [
+    `Hola ${quien}, soy del equipo de New Chem. Te contacto por tu cotización ${cotId}.`,
+    ``,
+    `Resumen:`,
+    resumen,
+    ``,
+    `¿Te queda bien si te envío la propuesta por aquí?`
+  ].join('\n');
+}
+
+function buildWaLink(phoneDigits, message) {
+  const to = onlyDigits(phoneDigits);
+  const text = encodeURIComponent(message);
+  return to ? `https://wa.me/${to}?text=${text}` : '';
+}
+
+function buildRowFromSession(s, fromPhone, estado = 'NUEVO') {
   const nowISO = new Date().toISOString();
   const fullName = s?.fullName || s?.profileName || '';
-  const ubicacion = [s?.vars?.departamento, s?.vars?.subzona].filter(Boolean).join(' - ');
+  const dep = s?.vars?.departamento || '';
+  const zona = s?.vars?.subzona || '';
+  const ubicacion = [dep, zona].filter(Boolean).join(' - ');
   const cultivo = (s?.vars?.cultivos && s.vars.cultivos[0]) || '';
   const hectareas = s?.vars?.hectareas || '';
   const campana = s?.vars?.campana || '';
 
-  // Fuente de items: carrito si existe, si no el “actual”
+  // carrito o último producto
   const carrito = Array.isArray(s?.vars?.cart) ? s.vars.cart : [];
   const items = (carrito.length > 0)
     ? carrito
@@ -52,37 +111,58 @@ function buildRowFromSession(s, fromPhone, estado = 'nuevo') {
         nombre: s?.vars?.last_product || '',
         presentacion: s?.vars?.last_presentacion || '',
         cantidad: s?.vars?.cantidad || ''
-      }].filter(it => it.nombre); // solo si hay nombre
+      }].filter(it => it.nombre);
 
-  // Columnas multilinea (una línea por item)
-  const productoCell      = items.map(it => it?.nombre || '').join('\n');
-  const presentacionCell  = items.map(it => it?.presentacion || '').join('\n');
-  const cantidadCell      = items.map(it => it?.cantidad || '').join('\n');
+  // Multilínea
+  const productoCell     = items.map(it => it?.nombre || '').join('\n');
+  const presentacionCell = items.map(it => it?.presentacion || '').join('\n');
+  const cantidadCell     = items.map(it => it?.cantidad || '').join('\n');
 
-  // JSON solo si hay carrito real
-  const carrito_json = carrito.length ? JSON.stringify(carrito) : '';
-
-  // ID simple para trazabilidad
+  // ID de cotización
   const cotizacion_id = `${Date.now()}-${String(fromPhone || '').slice(-7)}`;
 
+  // Resumen (solo viñetas, como pediste)
+  const resumen = buildSummaryBullets(s);
+
+  // Mensaje y Link de WhatsApp para el vendedor → cliente
+  const msgForWa = buildWhatsAppMessage({ nombre: fullName, cotId: cotizacion_id, resumen });
+  const linkWa   = buildWaLink(fromPhone, msgForWa);
+
+  // Normaliza estado a 3 valores
+  const EST = String(estado || '').toUpperCase();
+  const estadoFinal = (EST === 'NUEVO' || EST === 'PENDIENTE' || EST === 'CERRADO') ? EST : 'NUEVO';
+
+  // Seguimiento: vacío (lo calculará Apps Script si no lo llenan)
+  const seguimiento = '';
+
+  // calendar_event_id: vacío (lo llenará Apps Script al crear evento)
+  const calId = '';
+
+  // Teléfono: dejo solo dígitos por claridad
+  const phoneDigits = onlyDigits(fromPhone);
+
   return [
-    nowISO,                   // timestamp
-    String(fromPhone || ''),  // from_phone
-    fullName,                 // full_name
-    ubicacion,                // ubicacion
-    cultivo,                  // cultivo
-    String(hectareas || ''),  // hectareas
-    campana,                  // campaña
-    productoCell,             // producto (solo nombres, multilinea)
-    presentacionCell,         // presentacion (multilinea)
-    cantidadCell,             // cantidad (multilinea)
-    carrito_json,             // carrito_json
-    estado,                   // estado
-    cotizacion_id             // cotizacion_id
+    nowISO,              // Fecha
+    phoneDigits,         // Teléfono
+    fullName,            // Nombre Completo
+    ubicacion,           // Ubicación
+    cultivo,             // Cultivo
+    String(hectareas||''), // Hectáreas
+    campana,             // Campaña
+    productoCell,        // Producto
+    presentacionCell,    // Presentacion
+    cantidadCell,        // Cantidad
+    estadoFinal,         // Estado
+    msgForWa,            // Mensaje Whatsapp
+    linkWa,              // Link Whatsapp
+    resumen,             // Resumen
+    seguimiento,         // Seguimiento
+    cotizacion_id,       // cotizacion_id
+    calId                // calendar_event_id
   ];
 }
 
-export async function appendFromSession(s, fromPhone, estado = 'nuevo') {
+export async function appendFromSession(s, fromPhone, estado = 'NUEVO') {
   const sheets = await getSheets();
   const spreadsheetId = process.env.SHEETS_SPREADSHEET_ID;
   const tab = process.env.SHEETS_TAB_NAME || 'Hoja 1';
@@ -101,7 +181,8 @@ export async function appendFromSession(s, fromPhone, estado = 'nuevo') {
     requestBody: { values },
   });
 
-  return values[0][12]; // cotizacion_id
+  // devuelve cotizacion_id (columna 16, índice 15)
+  return values[0][15];
 }
 
 export { getSheets, buildRowFromSession };
