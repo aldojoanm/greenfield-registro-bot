@@ -540,7 +540,7 @@ async function askCultivoLibre(to){
   const s=S(to); if (s.lastPrompt==='cultivo_text') return;
   await markPrompt(s,'cultivo_text'); s.pending='cultivo_text';
   persistS(to); // ★
-  await toText(to,'Escribe tu *cultivo* (ej. Ajonjolí, Hortalizas, Sorgo…).');
+  await toText(to,'Que *cultivo* manejas?');
 }
 
 async function askHectareas(to){
