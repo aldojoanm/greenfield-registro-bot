@@ -38,9 +38,19 @@ async function getSheets() {
 
 // ===== Helpers =====
 const onlyDigits = (s='') => String(s).replace(/[^\d]/g, '');
-const title = s => String(s||'').replace(/\w\S*/g, w => w[0].toUpperCase()+w.slice(1).toLowerCase());
+const pad2 = n => String(n).padStart(2, '0');
 
-function buildSummaryBullets(s) {
+// Fecha legible (usa la zona horaria del servidor)
+function formatDisplayDate(d){
+  const yy = d.getFullYear();
+  const mm = pad2(d.getMonth()+1);
+  const dd = pad2(d.getDate());
+  const hh = pad2(d.getHours());
+  const mi = pad2(d.getMinutes());
+  return `${yy}-${mm}-${dd} ${hh}:${mi}`;
+}
+
+function buildSummaryBullets(s, fechaDisplay) {
   const nombre = s?.profileName || s?.fullName || 'Cliente';
   const dep    = s?.vars?.departamento || 'ND';
   const zona   = s?.vars?.subzona || 'ND';
@@ -63,6 +73,7 @@ function buildSummaryBullets(s) {
   });
 
   const base = [
+    `* Fecha: ${fechaDisplay}`,
     `* ${nombre}`,
     `* Departamento: ${dep}`,
     `* Zona: ${zona}`,
@@ -93,12 +104,12 @@ function buildWaLinkTo(numberDigits, message) {
   return to ? `https://wa.me/${to}?text=${text}` : '';
 }
 
-// Link para “compartir” (elige contacto o grupo al abrir)
+// Link “compartir” (elige contacto o grupo al abrir)
 function buildShareLink(message) {
   return `https://wa.me/?text=${encodeURIComponent(message)}`;
 }
 
-// Mensaje para compartir en grupo vacío del vendedor
+// Mensaje para compartir en el grupo (incluye link al cliente)
 function buildGroupShareMessage({ resumen, phoneDigits }) {
   const clienteLink = phoneDigits ? `https://wa.me/${phoneDigits}` : '';
   return [
@@ -110,7 +121,10 @@ function buildGroupShareMessage({ resumen, phoneDigits }) {
 }
 
 function buildRowFromSession(s, fromPhone, estado = 'NUEVO') {
-  const nowISO = new Date().toISOString();
+  const now = new Date();
+  const nowISO = now.toISOString();
+  const fechaDisplay = formatDisplayDate(now);
+
   const fullName = s?.fullName || s?.profileName || '';
   const dep = s?.vars?.departamento || '';
   const zona = s?.vars?.subzona || '';
@@ -137,49 +151,49 @@ function buildRowFromSession(s, fromPhone, estado = 'NUEVO') {
   // ID de cotización
   const cotizacion_id = `${Date.now()}-${String(fromPhone || '').slice(-7)}`;
 
-  // Resumen (texto)
-  const resumenTxt = buildSummaryBullets(s);
+  // Resumen (texto) — incluye la fecha
+  const resumenTxt = buildSummaryBullets(s, fechaDisplay);
 
-  // Mensaje y Link de WhatsApp para el vendedor → cliente
+  // Link de WhatsApp directo al cliente (con mensaje prellenado)
   const msgForClient = buildWhatsAppMessageToClient({ nombre: fullName, cotId: cotizacion_id, resumen: resumenTxt });
   const linkClient   = buildWaLinkTo(fromPhone, msgForClient);
 
-  // “Resumen” ahora será LINK DE COMPARTIR a grupo (con resumen + link cliente)
+  // “Resumen” como LINK de compartir (para pegar en el grupo)
   const phoneDigits = onlyDigits(fromPhone);
   const groupMsg = buildGroupShareMessage({ resumen: resumenTxt, phoneDigits });
   const resumenShareLink = buildShareLink(groupMsg);
 
-  // Normaliza estado a 3 valores
+  // Estado a 3 valores
   const EST = String(estado || '').toUpperCase();
   const estadoFinal = (EST === 'NUEVO' || EST === 'PENDIENTE' || EST === 'CERRADO') ? EST : 'NUEVO';
 
-  // Seguimiento: vacío (lo calculará Apps Script si no lo llenan)
+  // Seguimiento (lo llenará Apps Script si está vacío)
   const seguimiento = '';
 
-  // calendar_event_id: vacío (lo llenará Apps Script al crear evento)
+  // calendar_event_id (lo llenará Apps Script)
   const calId = '';
 
   // Teléfono: solo dígitos
   const phoneDigitsOnly = phoneDigits;
 
+  // === ORDEN EXACTO DE COLUMNAS (SIN “Mensaje Whatsapp”) ===
   return [
-    nowISO,                 // Fecha
-    phoneDigitsOnly,        // Teléfono
-    fullName,               // Nombre Completo
-    ubicacion,              // Ubicación
-    cultivo,                // Cultivo
-    String(hectareas||''),  // Hectáreas
-    campana,                // Campaña
-    productoCell,           // Producto
-    presentacionCell,       // Presentacion
-    cantidadCell,           // Cantidad
-    estadoFinal,            // Estado
-    msgForClient,           // Mensaje Whatsapp (para cliente)
-    linkClient,             // Link Whatsapp (directo al cliente)
-    resumenShareLink,       // Resumen (LINK de compartir a grupo)
-    seguimiento,            // Seguimiento
-    cotizacion_id,          // cotizacion_id
-    calId                   // calendar_event_id
+    nowISO,               // 0  Fecha
+    phoneDigitsOnly,      // 1  Teléfono
+    fullName,             // 2  Nombre Completo
+    ubicacion,            // 3  Ubicación
+    cultivo,              // 4  Cultivo
+    String(hectareas||''),// 5  Hectáreas
+    campana,              // 6  Campaña
+    productoCell,         // 7  Producto
+    presentacionCell,     // 8  Presentacion
+    cantidadCell,         // 9  Cantidad
+    estadoFinal,          // 10 Estado
+    linkClient,           // 11 Link Whatsapp (cliente)
+    resumenShareLink,     // 12 Resumen (link para compartir)
+    seguimiento,          // 13 Seguimiento
+    cotizacion_id,        // 14 cotizacion_id
+    calId                 // 15 calendar_event_id
   ];
 }
 
@@ -202,8 +216,8 @@ export async function appendFromSession(s, fromPhone, estado = 'NUEVO') {
     requestBody: { values },
   });
 
-  // devuelve cotizacion_id (columna 16, índice 15)
-  return values[0][15];
+  // devuelve cotizacion_id (columna 15, índice 14)
+  return values[0][14];
 }
 
 export { getSheets, buildRowFromSession };
