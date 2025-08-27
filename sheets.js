@@ -5,7 +5,7 @@ import { google } from 'googleapis';
 let _sheets; // cache del cliente de Sheets
 
 async function getSheets() {
-  if (_sheets) return __sheets;
+  if (_sheets) return _sheets;
 
   // 1) Credenciales inline (GOOGLE_CREDENTIALS_JSON)  2) keyFile (GOOGLE_APPLICATION_CREDENTIALS)
   let auth;
@@ -40,10 +40,10 @@ async function getSheets() {
 const onlyDigits = (s='') => String(s).replace(/[^\d]/g, '');
 const pad2 = n => String(n).padStart(2, '0');
 
-// Zona horaria local (corrige hora del resumen). Puedes cambiarla por env: LOCAL_TZ="America/La_Paz"
+// Zona horaria local para formateo. Cambiable por env: LOCAL_TZ="America/La_Paz"
 const LOCAL_TZ = process.env.LOCAL_TZ || 'America/La_Paz';
 
-// Fecha legible en la zona horaria local
+// Fecha legible en la zona horaria local (YYYY-MM-DD HH:MM)
 function formatDisplayDate(d){
   try{
     const parts = new Intl.DateTimeFormat('es-BO', {
@@ -111,7 +111,7 @@ function buildClientMessage({ nombre, items }) {
     return `• ${it.nombre}${pres}${cant}`;
   });
   return [
-    `Hola ${quien}, soy Jonathan Arteaga, encargado de negocios de NEW CHEM. `,
+    `Hola ${quien}, soy Jonathan Arteaga, encargado de negocios de NEW CHEM.`,
     `Te escribo por tu cotización con los siguientes productos:`,
     ...lines
   ].join('\n');
@@ -128,21 +128,19 @@ function buildShareLink(message) {
   return `https://wa.me/?text=${encodeURIComponent(message)}`;
 }
 
-// Mensaje para compartir en el grupo (incluye link al cliente)
-function buildGroupShareMessage({ resumen, phoneDigits }) {
-  const clienteLink = phoneDigits ? `https://wa.me/${phoneDigits}` : '';
+// Mensaje para compartir en el grupo (incluye link al cliente CON SALUDO)
+function buildGroupShareMessage({ resumen, linkClienteConMensaje }) {
   return [
     `Resumen de solicitud:`,
     resumen,
     ``,
-    `Contacto del cliente: ${clienteLink}`
+    `Contacto del cliente: ${linkClienteConMensaje}`
   ].join('\n');
 }
 
 function buildRowFromSession(s, fromPhone, estado = 'NUEVO') {
   const now = new Date();
-  const nowISO = now.toISOString();
-  const fechaDisplay = formatDisplayDate(now);
+  const fechaDisplay = formatDisplayDate(now); // ← lo que se guardará en la celda "Fecha"
 
   const fullName = s?.fullName || s?.profileName || '';
   const dep = s?.vars?.departamento || '';
@@ -174,12 +172,14 @@ function buildRowFromSession(s, fromPhone, estado = 'NUEVO') {
   const resumenTxt = buildSummaryBullets(s, fechaDisplay);
 
   // Link al CLIENTE con el mensaje corto (solo productos y cantidades)
-  const clientMsg  = buildClientMessage({ nombre: fullName, items });
+  const clientMsg   = buildClientMessage({ nombre: fullName, items });
   const linkCliente = buildWaLinkTo(fromPhone, clientMsg);
 
-  // “Resumen Pedido” como LINK de compartir (para pegar en el grupo)
-  const phoneDigits = onlyDigits(fromPhone);
-  const groupMsg = buildGroupShareMessage({ resumen: resumenTxt, phoneDigits });
+  // “Resumen Pedido” como LINK de compartir (para pegar en el grupo) usando el link con saludo
+  const groupMsg = buildGroupShareMessage({
+    resumen: resumenTxt,
+    linkClienteConMensaje: linkCliente
+  });
   const resumenPedidoLink = buildShareLink(groupMsg);
 
   // Estado a 3 valores
@@ -193,12 +193,12 @@ function buildRowFromSession(s, fromPhone, estado = 'NUEVO') {
   const calId = '';
 
   // Teléfono: solo dígitos
-  const phoneDigitsOnly = phoneDigits;
+  const phoneDigitsOnly = onlyDigits(fromPhone);
 
   // === ORDEN EXACTO DE COLUMNAS (renombradas) ===
   // Fecha | Teléfono | Nombre Completo | Ubicación | Cultivo | Hectáreas | Campaña | Producto | Presentacion | Cantidad | Estado | Contacto Cliente | Resumen Pedido | Seguimiento | cotizacion_id | calendar_event_id
   return [
-    nowISO,               // 0  Fecha
+    fechaDisplay,         // 0  Fecha (legible local)
     phoneDigitsOnly,      // 1  Teléfono
     fullName,             // 2  Nombre Completo
     ubicacion,            // 3  Ubicación
@@ -209,7 +209,7 @@ function buildRowFromSession(s, fromPhone, estado = 'NUEVO') {
     presentacionCell,     // 8  Presentacion
     cantidadCell,         // 9  Cantidad
     estadoFinal,          // 10 Estado
-    linkCliente,          // 11 Contacto Cliente (link con mensaje)
+    linkCliente,          // 11 Contacto Cliente (link con saludo)
     resumenPedidoLink,    // 12 Resumen Pedido (link para compartir)
     seguimiento,          // 13 Seguimiento
     cotizacion_id,        // 14 cotizacion_id
