@@ -183,16 +183,22 @@ function findProduct(text){
     return n.split(/\s+/).filter(Boolean).every(tok=>nt.includes(tok));
   }) || null;
 }
-// ★ IA sinónimos comunes (amplía según tu catálogo)
+
 const IA_SYNONYMS = {
-  'glifo':'glifosato', 'glyphosate':'glifosato', 'glifosate':'glifosato',
-  '24d':'2,4-d', '2 4 d':'2,4-d', '2,4d':'2,4-d',
-  'paraquat':'paraquat',
-  'clethodim':'clethodim', 'cleto':'clethodim',
+  'glifo':'glifosato', 'glifosate':'glifosato', 'glyphosate':'glifosato',
+  'paraquat':'paraquat', 'paraquat dichloride':'paraquat',
+  'dicloruro de paraquat':'paraquat', 'paraquat dicloruro':'paraquat',
+  'atrazina':'atrazine',
+  'clethodim':'clethodim', 'cletodim':'clethodim', 'cleto':'clethodim',
+  'abamectina':'abamectin', 'abamectin':'abamectin',
   'emamectina':'emamectin', 'emamectin':'emamectin',
-  'metsulfuron':'metsulfuron', 'imazetapir':'imazetapir', 'imazapir':'imazapir',
-  'abamectina':'abamectin', 'lambda':'lambda cihalotrina', 'lambda-cyhalothrin':'lambda cihalotrina'
+  'tiametoxam':'thiametoxam', 'thiametoxam':'thiametoxam',
+  'thiamethoxam':'thiametoxam', 'tiametoxan':'thiametoxam', 'thiametoxan':'thiametoxam',
+  'bifentrina':'bifenthrin', 'bifentrin':'bifenthrin', 'bifenthrin':'bifenthrin',
+  'fipronil':'fipronil',
+  'mancoceb':'mancozeb', 'mancozeb':'mancozeb'
 };
+
 function canonIA(t){
   const x = norm(t).replace(/[^a-z0-9\s\.,\/\-\+]/g,' ').replace(/\s+/g,' ').trim();
   return IA_SYNONYMS[x] || x;
@@ -201,18 +207,28 @@ function splitIAText(ia=''){
   const t = canonIA(ia);
   return t.split(/[,\+\/;]| y | con /g).map(s=>s.trim()).filter(w=>w.length>=3);
 }
+// IA SOLO por nombre (ignora números). No dispara con mensajes que parecen cantidad.
+// Búsqueda por IA SOLO por nombre (ignora números). No se activa con cantidades.
 function findProductsByIA(text){
-  const q = canonIA(text);
-  if(!q) return [];
+  const q = String(text || '');
+  if (!/[a-z]/i.test(q) || isLikelyQuantity(q)) return [];  // sin letras o parece cantidad
+
+  const qAlpha = alphaIA(q);
+  if (!qAlpha || qAlpha.length < 3) return [];
+
+  const qTokens = qAlpha.split(' ').filter(t => t.length >= 3);
+
   const hits = [];
-  for(const p of (CATALOG||[])){
-    const ia = p?.ingrediente_activo || p?.formulacion || '';
-    const parts = splitIAText(ia);
-    const match = parts.some(tok => q.includes(tok) || tok.includes(q));
-    if(match) hits.push(p);
+  for (const p of (CATALOG || [])){
+    const iaAlpha = alphaIA(p?.ingrediente_activo || p?.formulacion || '');
+    if (!iaAlpha) continue;
+    const match = qTokens.every(tok => iaAlpha.includes(tok));
+    if (match) hits.push(p);
   }
   return hits;
 }
+
+
 
 function levenshtein(a='', b=''){
   const m=a.length, n=b.length;
@@ -372,6 +388,31 @@ function summaryText(s){
     '*La entrega de tu pedido se realiza en nuestro almacén*.'
   ].join('\n');
 }
+// Detecta si el texto parece una cantidad (con o sin unidad)
+function isLikelyQuantity(text=''){
+  return /^\s*\d{1,6}(?:[.,]\d{1,2})?\s*(l|lt|lts|litro?s|kg|kilos?|unid|unidad(?:es)?)?\s*$/i.test(text);
+}
+
+// Escapa texto para regex
+function escRe(s=''){ return String(s).replace(/[.*+?^${}()|[\]\\]/g,'\\$&'); }
+
+// Normaliza aplicando sinónimos y dejando solo letras (sin números / unidades / formulaciones)
+function alphaIA(str=''){
+  // 1) minus/diacríticos + sinónimos
+  let x = norm(str);
+  for (const [k,v] of Object.entries(IA_SYNONYMS)){
+    const re = new RegExp(`\\b${escRe(k)}\\b`, 'g'); // mapea palabra completa
+    x = x.replace(re, v);
+  }
+  // 2) quita números y formulaciones/unidades típicas
+  return x
+    .replace(/\d+(?:[.,]\d+)?/g, ' ')                              // números
+    .replace(/\b(l|lt|lts|litros?|kg|kilos?|g|gr|ha|wg|wp|sc|sl|ec|ew|cs|od|gr)\b/g,' ') // unidades/formulaciones
+    .replace(/[^a-z\s]/g,' ')                                      // solo letras/espacios
+    .replace(/\s+/g,' ')
+    .trim();
+}
+
 
 // ===== IMÁGENES =====
 function productImageSource(prod){
