@@ -6,34 +6,28 @@
   <title>Inbox New Chem</title>
   <style>
     :root{
-      /* paleta dark sobria (inspiración WhatsApp) */
       --bg:#0b141a;
       --panel:#111b21;
       --panel-2:#1f2c33;
       --card:#0b141a;
       --muted:#8696a0;
       --txt:#e9edef;
-      --accent:#00a884;   /* botón enviar */
-      --accent-2:#09c7a1; /* hover */
+      --accent:#00a884;
+      --accent-2:#09c7a1;
       --stroke:#202c33;
       --ring:#233138;
       --radius:18px;
       --shadow:0 8px 24px rgba(0,0,0,.25);
     }
-
     *{box-sizing:border-box}
     html,body{height:100%}
-    body{
-      margin:0;
-      background:var(--bg);
-      color:var(--txt);
-      font:14px/1.4 system-ui,Segoe UI,Roboto,Ubuntu,Arial;
-    }
+    body{margin:0;background:var(--bg);color:var(--txt);font:14px/1.4 system-ui,Segoe UI,Roboto,Ubuntu,Arial}
 
-    /* layout */
-    .app{display:grid;grid-template-columns:320px 1fr; height:100dvh; overflow:hidden}
+    /* LAYOUT */
+    .app{display:grid;grid-template-columns:320px 1fr;height:100dvh;overflow:hidden}
+    .left,.right,.chat,.list,.msgs{min-height:0} /* ← CLAVE para que scroll funcione en flex */
 
-    /* LEFT ─────────────────────────────────────────────────────────────── */
+    /* LEFT */
     .left{
       border-right:1px solid var(--stroke);
       background:var(--panel);
@@ -41,22 +35,16 @@
     }
     .top{
       position:sticky;top:0;z-index:2;
-      padding:10px 12px;
-      border-bottom:1px solid var(--stroke);
+      padding:10px 12px;border-bottom:1px solid var(--stroke);
       background:var(--panel);
       display:flex;gap:8px;align-items:center
     }
     .top input{
-      flex:1;
-      background:var(--panel-2);
-      border:1px solid var(--ring);
-      color:var(--txt);
+      flex:1;background:var(--panel-2);border:1px solid var(--ring);color:var(--txt);
       padding:10px 12px;border-radius:999px;outline:none
     }
     .btn{
-      background:var(--panel-2);
-      border:1px solid var(--ring);
-      color:var(--txt);
+      background:var(--panel-2);border:1px solid var(--ring);color:var(--txt);
       padding:10px 12px;border-radius:12px;cursor:pointer;transition:.15s
     }
     .btn:hover{filter:brightness(1.05)}
@@ -64,73 +52,55 @@
 
     .list{overflow:auto}
     .item{
-      cursor:pointer;
-      display:grid;grid-template-columns:1fr auto;
-      gap:10px;align-items:center;
-      padding:12px 14px;border-bottom:1px solid var(--stroke);
-      transition:.12s background
+      cursor:pointer;display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;
+      padding:12px 14px;border-bottom:1px solid var(--stroke);transition:.12s background
     }
     .item:hover{background:#182229}
     .item.active{background:#182229}
     .name{font-weight:600}
     .sub{color:var(--muted);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;opacity:.95}
-    .pill{
-      background:#233138;color:#cdd6da;
-      font-size:11px;border-radius:999px;padding:2px 8px
-    }
+    .pill{background:#233138;color:#cdd6da;font-size:11px;border-radius:999px;padding:2px 8px}
     .pill.human{background:#5b21b6}
 
-    /* RIGHT ────────────────────────────────────────────────────────────── */
+    /* RIGHT */
     .right{display:flex;flex-direction:column;min-width:0}
-    .right .top{
-      background:var(--panel);
-      border-bottom:1px solid var(--stroke);
-      gap:10px
-    }
+    .right .top{background:var(--panel);border-bottom:1px solid var(--stroke);gap:10px}
     #title{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
     .row{display:flex;gap:8px}
-    .chat{flex:1;display:flex;flex-direction:column;background:var(--card)}
 
-    /* mensajes */
+    .chat{flex:1;display:flex;flex-direction:column;background:var(--card)}
     .msgs{
       flex:1;overflow:auto;
-      padding:16px 8vw 18px 8vw;  /* buen respiro lateral */
+      padding:16px 8vw 18px 8vw;
       display:flex;flex-direction:column;gap:8px;
       background:
         radial-gradient(900px 400px at 10% -10%, rgba(0,168,132,.06), transparent),
         radial-gradient(800px 500px at 120% 10%, rgba(41,182,246,.05), transparent),
         var(--card);
+      overscroll-behavior:contain;
     }
     @media (max-width:1100px){ .msgs{padding:14px 24px} }
 
-    .bubble{
-      position:relative;
-      max-width:74%;
-      padding:10px 12px;border-radius:var(--radius);
-      line-height:1.35;white-space:pre-wrap;word-break:break-word;
-      box-shadow:var(--shadow)
-    }
-    /* colas (tails) */
-    .bubble.u::after,.bubble.b::after,.bubble.a::after{
-      content:"";position:absolute;bottom:0;width:0;height:0;border:8px solid transparent
-    }
-    /* user (izq) */
-    .u{background:#202c33;align-self:flex-start;border-bottom-left-radius:6px;border:1px solid #2a3a40}
-    .u::after{left:-6px;border-right-color:#202c33;border-bottom:0;border-left:0}
-    /* bot (der) */
-    .b{background:#0f1f2c;align-self:flex-end;border-bottom-right-radius:6px;border:1px solid #1a2a38}
-    .b::after{right:-6px;border-left-color:#0f1f2c;border-bottom:0;border-right:0}
-    /* agent (der verde) */
-    .a{background:linear-gradient(180deg,#0a8e7b,#0b6d60);align-self:flex-end;border-bottom-right-radius:6px;border:1px solid #0f5c52}
-    .a::after{right:-6px;border-left-color:#0a8e7b;border-bottom:0;border-right:0}
-    /* syst */
-    .sys{
-      align-self:center;background:#0f1b24;color:#93c5fd;border:1px dashed #2a4054;border-radius:12px
-    }
+    /* scrollbars lindos */
+    .msgs::-webkit-scrollbar,.list::-webkit-scrollbar{width:10px}
+    .msgs::-webkit-scrollbar-thumb,.list::-webkit-scrollbar-thumb{background:#22323a;border-radius:8px}
+    .msgs::-webkit-scrollbar-track,.list::-webkit-scrollbar-track{background:transparent}
 
-    .input{
-      display:flex;gap:8px;padding:12px;border-top:1px solid var(--stroke);background:var(--panel)
+    /* Burbujas */
+    .bubble{
+      position:relative;max-width:74%;
+      padding:10px 12px;border-radius:var(--radius);
+      line-height:1.35;white-space:pre-wrap;word-break:break-word;box-shadow:var(--shadow)
     }
+    .bubble.u{background:#202c33;align-self:flex-start;border:1px solid #2a3a40;border-bottom-left-radius:6px}
+    .bubble.u::after{content:"";position:absolute;bottom:0;left:-6px;border:8px solid transparent;border-right-color:#202c33}
+    .bubble.b{background:#0f1f2c;align-self:flex-end;border:1px solid #1a2a38;border-bottom-right-radius:6px}
+    .bubble.b::after{content:"";position:absolute;bottom:0;right:-6px;border:8px solid transparent;border-left-color:#0f1f2c}
+    .bubble.a{background:linear-gradient(180deg,#0a8e7b,#0b6d60);align-self:flex-end;border:1px solid #0f5c52;border-bottom-right-radius:6px}
+    .bubble.a::after{content:"";position:absolute;bottom:0;right:-6px;border:8px solid transparent;border-left-color:#0a8e7b}
+    .bubble.sys{align-self:center;background:#0f1b24;color:#93c5fd;border:1px dashed #2a4054;border-radius:12px}
+
+    .input{display:flex;gap:8px;padding:12px;border-top:1px solid var(--stroke);background:var(--panel)}
     .input textarea{
       flex:1;background:var(--panel-2);border:1px solid var(--ring);color:var(--txt);
       padding:10px 12px;border-radius:12px;min-height:44px;max-height:140px;outline:none;resize:vertical
@@ -144,14 +114,9 @@
     /* MOBILE */
     @media (max-width:900px){
       .app{grid-template-columns:1fr}
-      .left{
-        position:fixed;inset:0 30% 0 0;transform:translateX(-100%);
-        transition:.2s;z-index:5
-      }
+      .left{position:fixed;inset:0 30% 0 0;transform:translateX(-100%);transition:.2s;z-index:5}
       .app.show-left .left{transform:none}
-      .app.show-left::before{
-        content:"";position:fixed;inset:0;background:rgba(0,0,0,.35);backdrop-filter:blur(1px);z-index:4
-      }
+      .app.show-left::before{content:"";position:fixed;inset:0;background:rgba(0,0,0,.35);backdrop-filter:blur(1px);z-index:4}
       .msgs{padding-bottom:84px}
     }
   </style>
@@ -192,7 +157,6 @@
 <script>
 const api = {
   token: localStorage.getItem('AGENT_TOKEN') || '',
-  base: '',
   headers(){ return { 'Authorization':'Bearer '+this.token, 'Content-Type':'application/json' }; },
   async convos(){ const r=await fetch('/wa/agent/convos',{headers:this.headers()}); if(!r.ok) throw 0; return r.json(); },
   async history(id){ const r=await fetch('/wa/agent/history/'+encodeURIComponent(id),{headers:this.headers()}); if(!r.ok) throw 0; return r.json(); },
@@ -201,51 +165,65 @@ const api = {
   async handoff(to,mode){ const r=await fetch('/wa/agent/handoff',{method:'POST',headers:this.headers(),body:JSON.stringify({to,mode})}); if(!r.ok) throw 0; return r.json(); }
 };
 
-(async function bootstrap(){
+(function bootstrap(){
   if(!api.token){
-    const t = prompt('Token de agente');
-    if(!t) return;
-    localStorage.setItem('AGENT_TOKEN', t);
-    api.token = t;
+    const t = prompt('Token de agente'); if(!t) return;
+    localStorage.setItem('AGENT_TOKEN', t); api.token = t;
   }
 
+  const app = document.getElementById('app');
   const elList = document.getElementById('list');
   const elMsgs = document.getElementById('msgs');
   const elTitle= document.getElementById('title');
   const elStatus= document.getElementById('status');
   const box = document.getElementById('box');
-  let current = null;
-  let allConvos = [];
 
-  function fmt(ts){ if(!ts) return ''; const d=new Date(ts); return d.toLocaleString(); }
+  let current = null;         // { id, name, memory, human }
+  let allConvos = [];
+  let openLock = false;       // evita reentradas/doble chat
+
+  const normId = v => String(v ?? '');
+  const sameId = (a,b)=> normId(a) === normId(b);
 
   function renderList(filter=''){
     elList.innerHTML='';
     const q = (filter||'').toLowerCase();
-    for(const c of allConvos){
-      if(q && !String(c.name).toLowerCase().includes(q) && !String(c.id).includes(q)) continue;
-      const div = document.createElement('div');
-      div.className = 'item'+(current && current.id===c.id?' active':'');
-      div.onclick = async ()=>{ await openChat(c.id); };
-      div.innerHTML = `
+    for(const c0 of (allConvos||[])){
+      const c = {...c0, id: normId(c0.id)};
+      if(q && !String(c.name||'').toLowerCase().includes(q) && !c.id.includes(q)) continue;
+
+      const row = document.createElement('div');
+      const isActive = current && sameId(c.id, current.id);
+      row.className = 'item'+(isActive?' active':'');
+      row.onclick = ()=> openChat(c.id);
+
+      const last = String(c.last||'').replace(/\n/g,' · ');
+      row.innerHTML = `
         <div>
-          <div class="name">${(c.name||c.id)}</div>
-          <div class="sub">${(c.last||'').replace(/\n/g,' · ').slice(0,80)}</div>
+          <div class="name">${c.name||c.id}</div>
+          <div class="sub">${last.slice(0,90)}</div>
         </div>
         <div style="display:flex;gap:6px;align-items:center">
           ${c.human?'<span class="pill human">HUMANO</span>':''}
           ${c.unread?`<span class="pill">${c.unread}</span>`:''}
         </div>
       `;
-      elList.appendChild(div);
+      elList.appendChild(row);
     }
   }
 
-  async function refresh(){
+  async function refresh(openFirstIfNeeded=false){
     try{
       const {convos} = await api.convos();
-      allConvos = convos||[];
+      allConvos = (convos||[]).map(c=>({...c,id:normId(c.id)}));
       renderList(document.getElementById('search').value);
+
+      // abrir último chat recordado si no hay uno activo
+      if(openFirstIfNeeded && !current && allConvos.length){
+        const last = sessionStorage.getItem('lastChatId');
+        const fallback = last && allConvos.find(c=>sameId(c.id,last)) ? last : allConvos[0].id;
+        openChat(fallback);
+      }
     }catch(e){ /* noop */ }
   }
 
@@ -253,60 +231,82 @@ const api = {
     elMsgs.innerHTML = '';
     for(const m of (mem||[])){
       const div = document.createElement('div');
-      let cls='sys';
-      if(m.role==='user') cls='u';
-      else if(m.role==='bot') cls='b';
-      else if(m.role==='agent') cls='a';
-      div.className = 'bubble '+cls;
-      div.textContent = m.content;
+      let cls='bubble sys';
+      if(m.role==='user') cls='bubble u';
+      else if(m.role==='bot') cls='bubble b';
+      else if(m.role==='agent') cls='bubble a';
+      div.className = cls;
+      div.textContent = m.content ?? '';
       elMsgs.appendChild(div);
     }
     elMsgs.scrollTop = elMsgs.scrollHeight;
   }
 
   async function openChat(id){
+    if(openLock) return; openLock = true;
     try{
-      current = await api.history(id);
+      const res = await api.history(normId(id));
+      // normalizamos id y evitamos inconsistencias
+      current = {...res, id:normId(res.id)};
       elTitle.textContent = `${current.name||current.id} (${current.id})`;
       elStatus.style.display = current.human ? 'inline-block' : 'none';
       elStatus.textContent = current.human ? 'HUMANO' : '';
       renderMsgs(current.memory||[]);
-      await api.read(current.id);      // marcar leído al abrir
-      await refresh();                 // refrescar contadores
-      if (window.innerWidth<900) document.getElementById('app').classList.remove('show-left');
-    }catch(e){}
+      sessionStorage.setItem('lastChatId', current.id);
+
+      // marcar leído sin bloquear UI
+      api.read(current.id).catch(()=>{});
+      // refrescar contadores sin reabrir chats
+      refresh(false);
+      if (window.innerWidth<900) app.classList.remove('show-left');
+    }catch(e){
+      // fallback simple si algo falla
+      elTitle.textContent = normId(id);
+      elStatus.style.display='none';
+    }finally{
+      openLock = false;
+    }
   }
 
   // Acciones
   document.getElementById('send').onclick = async ()=>{
     const txt = box.value.trim(); if(!txt || !current) return;
-    box.value=''; await api.send(current.id, txt);
+    box.value='';
+    await api.send(current.id, txt);
+    // no duplicamos: esperamos SSE para pintar
   };
-  document.getElementById('markRead').onclick = async ()=>{ if(!current) return; await api.read(current.id); await refresh(); };
+  box.addEventListener('keydown', (e)=>{
+    if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); document.getElementById('send').click(); }
+  });
+
+  document.getElementById('markRead').onclick = async ()=>{ if(!current) return; await api.read(current.id); refresh(false); };
   document.getElementById('takeHuman').onclick = async ()=>{ if(!current) return; await api.handoff(current.id,'human'); elStatus.style.display='inline-block'; elStatus.textContent='HUMANO'; };
   document.getElementById('resumeBot').onclick = async ()=>{ if(!current) return; await api.handoff(current.id,'bot'); elStatus.style.display='none'; };
 
   // UI menores
-  document.getElementById('refresh').onclick = refresh;
+  document.getElementById('refresh').onclick = ()=>refresh(true);
   document.getElementById('logout').onclick = ()=>{ localStorage.removeItem('AGENT_TOKEN'); location.reload(); };
   document.getElementById('search').oninput = (e)=> renderList(e.target.value);
-  document.getElementById('toggleLeft').onclick = ()=> document.getElementById('app').classList.toggle('show-left');
+  document.getElementById('toggleLeft').onclick = ()=> app.classList.toggle('show-left');
 
-  // SSE
+  // SSE (evita “dos chats” y conserva IDs como string)
   try{
     const sse = new EventSource('/wa/agent/stream?token='+encodeURIComponent(api.token));
     sse.addEventListener('msg', (ev)=>{
       const data = JSON.parse(ev.data||'{}');
-      if(current && data.id===current.id){
+      const msgId = normId(data.id);
+      // si es el chat abierto, append y scroll
+      if(current && sameId(msgId,current.id)){
         current.memory = (current.memory||[]).concat([{role:data.role, content:data.content, ts:data.ts}]);
         renderMsgs(current.memory);
       }
-      refresh();
+      // reordenar/contadores sin reabrir
+      refresh(false);
     });
   }catch(e){}
 
-  // Primer carga
-  await refresh();
+  // Primera carga
+  refresh(true);
 })();
 </script>
 </body>
