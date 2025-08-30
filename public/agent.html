@@ -1,128 +1,112 @@
 <!doctype html>
 <html lang="es">
 <head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
-  <title>Inbox New Chem</title>
-  <style>
-    :root{
-      --bg:#0b1020;
-      --panel:#0e152b;
-      --card:#0c1226;
-      --muted:#9aa4b2;
-      --txt:#e7ebf3;
-      --accent:#22c55e;
-      --accent2:#16a34a;
-      --danger:#ef4444;
-      --ring:#1f2a44;
-      --shadow: 0 10px 30px rgba(0,0,0,.35);
-      --radius: 14px;
-    }
-    *{box-sizing:border-box}
-    html,body{height:100%}
-    body{
-      margin:0;background:radial-gradient(1200px 600px at 100% -10%,rgba(34,197,94,.15),transparent),
-      radial-gradient(750px 450px at -10% 0%,rgba(59,130,246,.12),transparent),
-      var(--bg);
-      color:var(--txt);
-      font:14px/1.4 system-ui,Segoe UI,Roboto,Ubuntu,Arial;
-    }
-    .app{display:grid;grid-template-columns:360px 1fr; height:100dvh; overflow:hidden}
-    /* LEFT */
-    .left{
-      border-right:1px solid var(--ring);
-      background:linear-gradient(180deg, rgba(255,255,255,.02), rgba(255,255,255,0)) , var(--panel);
-      display:flex;flex-direction:column;min-width:280px
-    }
-    .top{
-      padding:12px 14px;border-bottom:1px solid var(--ring);
-      display:flex;gap:8px;align-items:center;backdrop-filter:saturate(120%) blur(6px)
-    }
-    .brand{font-weight:800;letter-spacing:.2px}
-    .top input{
-      flex:1;background:#0b1224;border:1px solid var(--ring);color:var(--txt);
-      padding:10px 12px;border-radius:12px;outline:none
-    }
-    .btn{
-      background:linear-gradient(180deg,#0f1630,#0b1124);
-      border:1px solid var(--ring);color:var(--txt);
-      padding:10px 12px;border-radius:12px;cursor:pointer; transition:.15s;
-    }
-    .btn:hover{border-color:#2a365a; transform:translateY(-1px)}
-    .btn.pri{
-      background:linear-gradient(180deg,var(--accent),var(--accent2));
-      border-color:transparent; color:#05240f; font-weight:700;
-    }
-    .list{overflow:auto}
-    .item{
-      padding:12px 14px;border-bottom:1px solid var(--ring);cursor:pointer;
-      display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center
-    }
-    .item:hover{background:#0b1222}
-    .item.active{background:#0e1731; position:relative}
-    .name{font-weight:700}
-    .sub{color:var(--muted);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;opacity:.9}
-    .pill{justify-self:end;background:#1b2440;color:#cbd5e1;font-size:11px;border-radius:999px;padding:2px 8px}
-    .pill.human{background:#5b21b6}
-    /* RIGHT */
-    .right{display:flex;flex-direction:column;min-width:0}
-    .header{
-      position:sticky;top:0;z-index:2;background:linear-gradient(180deg,rgba(10,15,30,.85),rgba(10,15,30,.6));
-      border-bottom:1px solid var(--ring);
-      display:flex;gap:10px;align-items:center;padding:10px 12px;backdrop-filter:blur(6px)
-    }
-    .title{font-weight:800}
-    .actions{display:flex;gap:8px;margin-left:auto}
-    .chat{flex:1;display:flex;flex-direction:column;background:linear-gradient(180deg,rgba(255,255,255,.02),transparent), var(--card)}
-    .msgs{flex:1;overflow:auto;padding:20px 14px;display:flex;flex-direction:column;gap:8px}
-    .date-sep{
-      align-self:center;font-size:12px;color:#c8d1de;background:#0e1731;
-      padding:4px 10px;border-radius:999px;border:1px solid var(--ring);margin:10px 0
-    }
-    .msg{display:flex;gap:8px;max-width:86%}
-    .msg.right{align-self:flex-end; flex-direction:row-reverse}
-    .bubble{
-      padding:10px 12px;border-radius:var(--radius);box-shadow:var(--shadow); white-space:pre-wrap; word-break:break-word
-    }
-    .u .bubble{background:#172036;border:1px solid #1f2a48}
-    .b .bubble{background:#0e1b2f;border:1px solid #1a2a4a}
-    .a .bubble{background:#083c2e;border:1px solid #0b5a43}
-    .sys .bubble{background:#10192c;border:1px dashed #2b3d63;color:#93c5fd}
-    .meta{font-size:11px;color:#a9b5c7;margin-top:4px;opacity:.9}
-    .badge{
-      display:inline-block;font-size:11px;color:#cde7ff;background:#183154;border:1px solid #224778;
-      padding:2px 6px;border-radius:999px;margin-left:6px
-    }
-    .badge.green{background:#0d3a2a;border-color:#145a43;color:#bff3d5}
-    .input{
-      display:flex;gap:10px;padding:12px;border-top:1px solid var(--ring);
-      background:linear-gradient(180deg,rgba(10,15,30,.6),rgba(10,15,30,.9))
-    }
-    .input textarea{
-      flex:1;background:#0b1224;border:1px solid var(--ring);color:var(--txt);
-      padding:12px;border-radius:12px;min-height:44px;max-height:160px;outline:none; resize:vertical
-    }
-    .ghost{opacity:.65}
-    /* MOBILE */
-    @media (max-width:980px){
-      .app{grid-template-columns:1fr}
-      .left{position:fixed;inset:0 35% 0 0;transform:translateX(-100%);transition:.2s;z-index:5}
-      .app.show-left .left{transform:none}
-      .overlay{display:none}
-      .app.show-left .overlay{display:block;position:fixed;inset:0;background:rgba(0,0,0,.35);backdrop-filter:blur(1px);z-index:4}
-      .header .brand{display:none}
-      .msgs{padding-bottom:80px}
-    }
-  </style>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
+<title>Inbox · New Chem</title>
+<style>
+:root{
+  --bg:#0b141a;        /* fondo tipo WhatsApp */
+  --side:#111b21;      /* sidebar */
+  --chat:#0b141a;      /* chat area */
+  --bubble-me:#075e54; /* verde envío */
+  --bubble-me-2:#0b806f;
+  --bubble-other:#202c33;
+  --text:#e9edef;
+  --muted:#8696a0;
+  --accent:#22c55e;
+  --ring:#233138;
+  --radius:18px;
+  --shadow:0 8px 24px rgba(0,0,0,.25);
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.4 system-ui,Segoe UI,Roboto,Ubuntu,Arial}
+
+.app{display:grid;grid-template-columns: 360px 1fr; height:100dvh; overflow:hidden}
+
+/* LEFT (chat list) */
+.left{display:flex;flex-direction:column;background:var(--side);border-right:1px solid #1f2c33;min-width:280px}
+.left .top{display:flex;gap:8px;align-items:center;padding:10px;border-bottom:1px solid #1f2c33}
+.brand{font-weight:700}
+.input{
+  background:#1f2c33;border:1px solid #26343b;color:var(--text);
+  border-radius:999px;padding:10px 12px;flex:1;outline:none
+}
+.btn{background:#1f2c33;border:1px solid #26343b;color:var(--text);border-radius:10px;padding:10px 12px;cursor:pointer}
+.btn:hover{filter:brightness(1.05)}
+.list{overflow:auto}
+.item{
+  display:grid;grid-template-columns:1fr auto;gap:10px;padding:12px 14px;border-bottom:1px solid #1f2c33;cursor:pointer
+}
+.item:hover{background:#182229}
+.item.active{background:#182229}
+.name{font-weight:600}
+.sub{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.meta{display:flex;gap:6px;align-items:center}
+.pill{font-size:11px;background:#233138;color:#cdd6da;border-radius:999px;padding:2px 8px}
+.pill.human{background:#5b21b6}
+
+/* RIGHT (chat) */
+.right{display:flex;flex-direction:column;min-width:0;background:var(--chat)}
+.header{
+  display:flex;gap:10px;align-items:center;padding:10px 12px;border-bottom:1px solid #1f2c33;background:#111b21;position:sticky;top:0;z-index:3
+}
+.title{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.actions{display:flex;gap:8px;margin-left:auto}
+.btn.ghost{opacity:.85}
+.btn.pri{background:linear-gradient(180deg,#0bb197,#0a8e7b);border-color:#0a8e7b}
+
+.chat{flex:1;display:flex;flex-direction:column;background:var(--chat)}
+.msgs{flex:1;overflow:auto;padding:16px 8vw 20px 8vw;display:flex;flex-direction:column;gap:6px}
+@media (max-width:1100px){ .msgs{padding:12px 24px 20px} }
+
+.date{align-self:center;font-size:12px;color:#d1d7db;background:#1f2c33;border:1px solid #27363d;border-radius:999px;padding:3px 10px;margin:10px 0}
+.row{display:flex;gap:6px;max-width:80%}
+.row.me{align-self:flex-end}
+.row.other{align-self:flex-start}
+.bubble{
+  padding:9px 12px;border-radius:var(--radius);position:relative;box-shadow:var(--shadow);
+  white-space:pre-wrap;word-break:break-word
+}
+.row.other .bubble{background:var(--bubble-other);border-top-left-radius:6px}
+.row.me .bubble{background:linear-gradient(180deg,var(--bubble-me),var(--bubble-me-2));border-top-right-radius:6px}
+.badge{display:inline-block;font-size:11px;margin-left:6px;background:#2a3840;color:#cde7ff;border:1px solid #35505b;border-radius:999px;padding:0 6px}
+.badge.green{background:#1a4d43;border-color:#1a6a5b;color:#c7f7e3}
+
+.time{font-size:11px;color:#cbd3d6;margin-top:3px;display:flex;gap:6px;align-items:center}
+.check{font-size:12px;opacity:.9}
+
+/* composer */
+.composer{
+  display:flex;gap:8px;align-items:flex-end;padding:10px;border-top:1px solid #1f2c33;background:#111b21
+}
+textarea{
+  flex:1;background:#1f2c33;border:1px solid #26343b;color:var(--text);
+  border-radius:12px;padding:10px 12px;min-height:46px;max-height:160px;resize:vertical;outline:none
+}
+.send{background:#00a884;border:0;color:#062a23;font-weight:700;border-radius:12px;padding:11px 16px;cursor:pointer}
+.send:hover{filter:brightness(1.05)}
+
+/* MOBILE */
+@media (max-width:980px){
+  .app{grid-template-columns:1fr}
+  .left{position:fixed;inset:0 30% 0 0;transform:translateX(-100%);transition:.2s;z-index:5}
+  .app.show-left .left{transform:none}
+  .overlay{display:none}
+  .app.show-left .overlay{display:block;position:fixed;inset:0;background:rgba(0,0,0,.35);backdrop-filter:blur(1px);z-index:4}
+}
+</style>
 </head>
 <body>
 <div class="app" id="app">
   <div class="overlay" id="overlay"></div>
+
   <aside class="left">
     <div class="top">
       <div class="brand">Inbox</div>
-      <input id="search" placeholder="Buscar...">
-      <button class="btn" id="refresh" title="Refrescar">⟳</button>
+      <input class="input" id="search" placeholder="Buscar chat…">
+      <button class="btn ghost" id="refresh" title="Refrescar">⟳</button>
       <button class="btn" id="logout" title="Salir">Salir</button>
     </div>
     <div class="list" id="list"></div>
@@ -130,21 +114,21 @@
 
   <main class="right">
     <div class="header">
-      <button class="btn" id="toggleLeft" title="Chats">☰</button>
+      <button class="btn ghost" id="toggleLeft" title="Chats">☰</button>
       <div class="title" id="title">Selecciona un chat</div>
       <span id="status" class="pill" style="display:none"></span>
       <div class="actions">
-        <button class="btn" id="takeHuman">⏸️ Pausar</button>
-        <button class="btn" id="resumeBot">▶️ Bot ON</button>
-        <button class="btn" id="markRead">✓ Leído</button>
+        <button class="btn ghost" id="takeHuman">⏸️ Pausar</button>
+        <button class="btn ghost" id="resumeBot">▶️ Bot ON</button>
+        <button class="btn ghost" id="markRead">✓ Leído</button>
       </div>
     </div>
 
     <section class="chat">
       <div class="msgs" id="msgs"></div>
-      <div class="input">
-        <textarea id="box" placeholder="Escribe como asesor… (Enter para enviar, Shift+Enter salto de línea)"></textarea>
-        <button class="btn pri" id="send">Enviar</button>
+      <div class="composer">
+        <textarea id="box" placeholder="Escribe como asesor… (Enter envía, Shift+Enter salto)"></textarea>
+        <button class="send" id="send">Enviar</button>
       </div>
     </section>
   </main>
@@ -161,7 +145,7 @@ const api = {
   async handoff(to,mode){ const r=await fetch('/wa/agent/handoff',{method:'POST',headers:this.headers(),body:JSON.stringify({to,mode})}); if(!r.ok) throw 0; return r.json(); }
 };
 
-(function bootstrap(){
+(function(){
   if(!api.token){
     const t = prompt('Token de agente');
     if(!t) return;
@@ -175,102 +159,82 @@ const api = {
   const elMsgs = document.getElementById('msgs');
   const elTitle= document.getElementById('title');
   const elStatus= document.getElementById('status');
-  const box = document.getElementById('box');
-
+  const box    = document.getElementById('box');
   let current = null;
   let allConvos = [];
 
-  function fmtTime(ts){
-    if(!ts) return '';
-    const d=new Date(ts);
-    return d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
-  }
-  function fmtDate(ts){
-    const d = new Date(ts);
-    return d.toLocaleDateString();
-  }
+  function esc(s=''){ return String(s).replace(/[&<>"']/g, c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;', "'":'&#39;' }[c])); }
+  const fmtTime = ts => new Date(ts||Date.now()).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+  const fmtDate = ts => new Date(ts||Date.now()).toLocaleDateString();
 
-  // render list
   function renderList(filter=''){
     elList.innerHTML='';
     const q = (filter||'').toLowerCase();
     for(const c of allConvos){
-      if(q && !String(c.name).toLowerCase().includes(q) && !String(c.id).includes(q)) continue;
+      if(q && !String(c.name||'').toLowerCase().includes(q) && !String(c.id).includes(q)) continue;
       const row = document.createElement('div');
       row.className = 'item'+(current && current.id===c.id?' active':'');
-      row.onclick = async ()=>{ await openChat(c.id); };
+      row.onclick = ()=> openChat(c.id);
       const last = (c.last||'').replace(/\n/g,' · ');
       row.innerHTML = `
         <div>
-          <div class="name">${escapeHtml(c.name||c.id)}</div>
-          <div class="sub">${escapeHtml(last).slice(0,90)}</div>
+          <div class="name">${esc(c.name||c.id)}</div>
+          <div class="sub">${esc(last).slice(0,90)}</div>
         </div>
-        <div style="display:flex;gap:6px;align-items:center">
+        <div class="meta">
           ${c.human?'<span class="pill human">HUMANO</span>':''}
           ${c.unread?`<span class="pill">${c.unread}</span>`:''}
-        </div>
-      `;
+        </div>`;
       elList.appendChild(row);
     }
   }
 
-  // render messages with date separators + badges
+  function parseBadgesText(text){
+    const badges=[];
+    text = text.replace(/\s*〔Botones〕/ig, ()=>{ badges.push({label:'Botones'}); return '' });
+    text = text.replace(/\s*〔Lista:\s*([^\〕]+)\〕/ig, (_,t)=>{ badges.push({label:'Lista: '+t}); return '' });
+    if(/^✅\s+/.test(text)) badges.push({label:'Selección', kind:'green'});
+    return {text:text.trim(), badges};
+  }
+
   function renderMsgs(mem){
     elMsgs.innerHTML='';
-    let lastDate = '';
-    mem = mem || [];
-    for(const m of mem){
-      const dstr = fmtDate(m.ts||Date.now());
-      if(dstr !== lastDate){
-        const sep = document.createElement('div');
-        sep.className = 'date-sep';
-        sep.textContent = dstr;
+    let lastDate='';
+    (mem||[]).forEach(m=>{
+      const d = fmtDate(m.ts);
+      if(d!==lastDate){
+        const sep=document.createElement('div');
+        sep.className='date';
+        sep.textContent=d;
         elMsgs.appendChild(sep);
-        lastDate = dstr;
+        lastDate=d;
       }
-      const wrap = document.createElement('div');
-      const side = m.role==='user' ? 'u'
-                 : m.role==='agent' ? 'a'
-                 : m.role==='bot'   ? 'b' : 'sys';
-      wrap.className = 'msg '+(side==='u'?'left':'right')+' '+side;
-
+      const side = m.role==='agent' ? 'me' : 'other';
+      const row = document.createElement('div');
+      row.className = 'row '+side;
       const bubble = document.createElement('div');
-      bubble.className = 'bubble';
-      const parsed = parseTags(m.content||'');
-      bubble.innerHTML = escapeHtml(parsed.text) + (parsed.badges.length? ' ' + parsed.badges.map(b=>`<span class="badge ${b.kind||''}">${escapeHtml(b.label)}</span>`).join('') : '');
-      wrap.appendChild(bubble);
+      bubble.className='bubble';
+      const parsed = parseBadgesText(m.content||'');
+      bubble.innerHTML = esc(parsed.text) + (parsed.badges.length?' '+parsed.badges.map(b=>`<span class="badge ${b.kind||''}">${esc(b.label)}</span>`).join(''):'');
+      row.appendChild(bubble);
 
-      const meta = document.createElement('div');
-      meta.className = 'meta';
-      meta.textContent = fmtTime(m.ts||Date.now());
-      wrap.appendChild(meta);
+      const meta=document.createElement('div');
+      meta.className='time';
+      meta.innerHTML = esc(fmtTime(m.ts)) + (side==='me' ? ' <span class="check">✓✓</span>' : '');
+      row.appendChild(meta);
 
-      elMsgs.appendChild(wrap);
-    }
+      elMsgs.appendChild(row);
+    });
     elMsgs.scrollTop = elMsgs.scrollHeight;
   }
-
-  function parseTags(text){
-    const badges = [];
-    // nuestros tags: 〔Botones〕 , 〔Lista: X〕
-    text = text.replace(/\s*〔Botones〕/ig, (m)=>{ badges.push({label:'Botones'}); return '' });
-    text = text.replace(/\s*〔Lista:\s*([^\〕]+)\〕/ig, (m, t)=>{ badges.push({label:'Lista: '+t}); return '' });
-    // si viene "✅ selección"
-    if(/^✅\s+/.test(text)) badges.push({label:'Selección', kind:'green'});
-    return { text: text.trim(), badges };
-  }
-
-  // small helper to avoid HTML injection
-  function escapeHtml(s=''){ return String(s).replace(/[&<>"']/g, c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c])); }
 
   async function refresh(){
     try{
       const {convos} = await api.convos();
       allConvos = convos||[];
       renderList(document.getElementById('search').value);
-      // si no hay actual, abre el primero
-      if(!current && allConvos.length){ await openChat(allConvos[0].id); }
-    }catch(e){ /* noop */ }
+      if(!current && allConvos.length) openChat(allConvos[0].id);
+    }catch(e){}
   }
 
   async function openChat(id){
@@ -278,60 +242,57 @@ const api = {
       current = await api.history(id);
       elTitle.textContent = `${current.name||current.id} · ${current.id}`;
       elStatus.style.display = current.human ? 'inline-block' : 'none';
-      elStatus.className = 'pill ' + (current.human?'human':'');
+      elStatus.className='pill '+(current.human?'human':'');
       elStatus.textContent = current.human ? 'HUMANO' : '';
       renderMsgs(current.memory||[]);
-      try{ await api.read(current.id); }catch(e){}
-      await refresh(); // actualizar contadores
-      if (window.innerWidth<980) app.classList.remove('show-left');
+      await api.read(current.id);
+      await refresh();
+      if(window.innerWidth<980) app.classList.remove('show-left');
       sessionStorage.setItem('history:'+id, JSON.stringify(current.memory||[])); // cache local
     }catch(e){
-      // Fallback a cache local si hay
       const cache = sessionStorage.getItem('history:'+id);
-      if(cache){ renderMsgs(JSON.parse(cache)); }
+      if(cache) renderMsgs(JSON.parse(cache));
     }
   }
 
-  // Acciones
+  // send
   document.getElementById('send').onclick = async ()=>{
     const txt = box.value.trim(); if(!txt || !current) return;
-    const optimistic = { role:'agent', content:txt, ts:Date.now() };
+    const optimistic = {role:'agent', content:txt, ts:Date.now()};
     current.memory = (current.memory||[]).concat([optimistic]);
     renderMsgs(current.memory);
+    sessionStorage.setItem('history:'+current.id, JSON.stringify(current.memory));
     box.value='';
-    try{ await api.send(current.id, txt); }catch(e){ /* si falla, se queda el optimista */ }
+    try{ await api.send(current.id, txt); }catch(e){}
   };
-  box.addEventListener('keydown', (e)=>{
-    if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); document.getElementById('send').click(); }
-  });
+  box.addEventListener('keydown',(e)=>{ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); document.getElementById('send').click(); } });
 
+  // actions
   document.getElementById('markRead').onclick = async ()=>{ if(!current) return; await api.read(current.id); await refresh(); };
-  document.getElementById('takeHuman').onclick = async ()=>{ if(!current) return; await api.handoff(current.id,'human'); elStatus.style.display='inline-block'; elStatus.textContent='HUMANO'; elStatus.className='pill human'; };
+  document.getElementById('takeHuman').onclick = async ()=>{ if(!current) return; await api.handoff(current.id,'human'); elStatus.style.display='inline-block'; elStatus.className='pill human'; elStatus.textContent='HUMANO'; };
   document.getElementById('resumeBot').onclick = async ()=>{ if(!current) return; await api.handoff(current.id,'bot'); elStatus.style.display='none'; };
 
-  // UI menores
+  // left pane & search
   document.getElementById('refresh').onclick = refresh;
   document.getElementById('logout').onclick = ()=>{ localStorage.removeItem('AGENT_TOKEN'); location.reload(); };
   document.getElementById('search').oninput = (e)=> renderList(e.target.value);
   document.getElementById('toggleLeft').onclick = ()=> app.classList.toggle('show-left');
   overlay.onclick = ()=> app.classList.remove('show-left');
 
-  // SSE
+  // SSE live updates
   try{
     const sse = new EventSource('/wa/agent/stream?token='+encodeURIComponent(api.token));
     sse.addEventListener('msg', (ev)=>{
       const data = JSON.parse(ev.data||'{}');
-      // si es el chat abierto, append + scroll
       if(current && data.id===current.id){
         current.memory = (current.memory||[]).concat([{role:data.role, content:data.content, ts:data.ts}]);
         renderMsgs(current.memory);
         sessionStorage.setItem('history:'+current.id, JSON.stringify(current.memory));
       }
-      refresh(); // reordena y actualiza contadores
+      refresh();
     });
   }catch(e){}
 
-  // Primer carga
   refresh();
 })();
 </script>
