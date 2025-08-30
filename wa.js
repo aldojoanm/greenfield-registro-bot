@@ -186,7 +186,7 @@ const ub64u = s => Buffer.from(String(s).replace(/-/g,'+').replace(/_/g,'/'), 'b
 function remember(id, role, content){
   const s=S(id);
   s.memory.push({role,content,ts:Date.now()});
-  if(s.memory.length>200) s.memory=s.memory.slice(-200); // más líneas para el Inbox
+  if(s.memory.length>500) s.memory=s.memory.slice(-500); // más líneas para el Inbox
   s.meta = s.meta || {};
   s.meta.lastMsg = { role, content, ts: Date.now() };
   s.meta.lastAt  = Date.now();
@@ -920,6 +920,13 @@ router.post('/wa/webhook', async (req,res)=>{
       const br = msg.interactive?.button_reply;
       const lr = msg.interactive?.list_reply;
       const id = br?.id || lr?.id;
+
+      const selTitle = br?.title || lr?.title || null;
+      if (selTitle) {
+        remember(from, 'user', `✅ ${selTitle}`);
+      } else {
+        remember(from, 'user', `✅ ${id}`);
+      }
 
       if(id==='QR_FINALIZAR'){
         try {

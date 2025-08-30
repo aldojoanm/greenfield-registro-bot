@@ -123,7 +123,6 @@ function buildWaLinkTo(numberDigits, message) {
   return to ? `https://wa.me/${to}?text=${text}` : '';
 }
 
-// Link “compartir” (elige contacto o grupo al abrir)
 function buildShareLink(message) {
   return `https://wa.me/?text=${encodeURIComponent(message)}`;
 }

@@ -2,75 +2,157 @@
 <html lang="es">
 <head>
   <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
   <title>Inbox New Chem</title>
   <style>
-    :root{--bg:#0f172a;--panel:#111827;--card:#0b1220;--muted:#9ca3af;--txt:#e5e7eb;--accent:#22c55e;}
-    *{box-sizing:border-box} body{margin:0;background:#0a0f1e;color:var(--txt);font:14px system-ui,Segoe UI,Roboto,Ubuntu,Arial}
-    .app{display:grid;grid-template-columns:320px 1fr;height:100vh}
-    .left{border-right:1px solid #1f2937;background:var(--panel);display:flex;flex-direction:column}
-    .right{display:flex;flex-direction:column}
-    .top{padding:12px;border-bottom:1px solid #1f2937;display:flex;gap:8px;align-items:center}
-    .top input{flex:1;background:#0b1220;border:1px solid #1f2937;color:var(--txt);padding:10px 12px;border-radius:10px}
-    .btn{background:#0b1220;border:1px solid #1f2937;color:var(--txt);padding:10px 12px;border-radius:10px;cursor:pointer}
-    .btn:hover{border-color:#374151}
+    :root{
+      --bg:#0b1020;
+      --panel:#0e152b;
+      --card:#0c1226;
+      --muted:#9aa4b2;
+      --txt:#e7ebf3;
+      --accent:#22c55e;
+      --accent2:#16a34a;
+      --danger:#ef4444;
+      --ring:#1f2a44;
+      --shadow: 0 10px 30px rgba(0,0,0,.35);
+      --radius: 14px;
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{
+      margin:0;background:radial-gradient(1200px 600px at 100% -10%,rgba(34,197,94,.15),transparent),
+      radial-gradient(750px 450px at -10% 0%,rgba(59,130,246,.12),transparent),
+      var(--bg);
+      color:var(--txt);
+      font:14px/1.4 system-ui,Segoe UI,Roboto,Ubuntu,Arial;
+    }
+    .app{display:grid;grid-template-columns:360px 1fr; height:100dvh; overflow:hidden}
+    /* LEFT */
+    .left{
+      border-right:1px solid var(--ring);
+      background:linear-gradient(180deg, rgba(255,255,255,.02), rgba(255,255,255,0)) , var(--panel);
+      display:flex;flex-direction:column;min-width:280px
+    }
+    .top{
+      padding:12px 14px;border-bottom:1px solid var(--ring);
+      display:flex;gap:8px;align-items:center;backdrop-filter:saturate(120%) blur(6px)
+    }
+    .brand{font-weight:800;letter-spacing:.2px}
+    .top input{
+      flex:1;background:#0b1224;border:1px solid var(--ring);color:var(--txt);
+      padding:10px 12px;border-radius:12px;outline:none
+    }
+    .btn{
+      background:linear-gradient(180deg,#0f1630,#0b1124);
+      border:1px solid var(--ring);color:var(--txt);
+      padding:10px 12px;border-radius:12px;cursor:pointer; transition:.15s;
+    }
+    .btn:hover{border-color:#2a365a; transform:translateY(-1px)}
+    .btn.pri{
+      background:linear-gradient(180deg,var(--accent),var(--accent2));
+      border-color:transparent; color:#05240f; font-weight:700;
+    }
     .list{overflow:auto}
-    .item{padding:12px 14px;border-bottom:1px solid #1f2937;cursor:pointer;display:flex;gap:10px;align-items:center}
-    .item:hover{background:#0b1220}
-    .item.active{background:#0b1220;border-left:3px solid var(--accent)}
-    .name{font-weight:600}
-    .sub{color:var(--muted);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-    .pill{margin-left:auto;background:#1f2937;color:#cbd5e1;font-size:12px;border-radius:999px;padding:2px 8px}
-    .pill.human{background:#7c3aed}
-    .chat{flex:1;display:flex;flex-direction:column;background:#0b1220}
-    .msgs{flex:1;overflow:auto;padding:18px;display:flex;flex-direction:column;gap:8px}
-    .bubble{max-width:70%;padding:10px 12px;border-radius:14px;line-height:1.3;white-space:pre-wrap}
-    .u{background:#1f2937;align-self:flex-start;border-bottom-left-radius:4px}
-    .b{background:#111827;align-self:flex-end;border-bottom-right-radius:4px}
-    .a{background:#064e3b;align-self:flex-end;border-bottom-right-radius:4px}
-    .sys{background:#0b1220;border:1px dashed #334155;color:#93c5fd;align-self:center}
-    .input{display:flex;gap:8px;padding:12px;border-top:1px solid #1f2937;background:#0a0f1e}
-    .input textarea{flex:1;background:#0b1220;border:1px solid #1f2937;color:var(--txt);padding:10px 12px;border-radius:10px;min-height:44px;max-height:140px}
-    .row{display:flex;gap:8px}
-    .sm{padding:8px 10px}
-    @media (max-width:900px){ .app{grid-template-columns:1fr} .left{display:none} .app.show-left .left{display:flex} .app.show-left .right{display:none} }
+    .item{
+      padding:12px 14px;border-bottom:1px solid var(--ring);cursor:pointer;
+      display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center
+    }
+    .item:hover{background:#0b1222}
+    .item.active{background:#0e1731; position:relative}
+    .name{font-weight:700}
+    .sub{color:var(--muted);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;opacity:.9}
+    .pill{justify-self:end;background:#1b2440;color:#cbd5e1;font-size:11px;border-radius:999px;padding:2px 8px}
+    .pill.human{background:#5b21b6}
+    /* RIGHT */
+    .right{display:flex;flex-direction:column;min-width:0}
+    .header{
+      position:sticky;top:0;z-index:2;background:linear-gradient(180deg,rgba(10,15,30,.85),rgba(10,15,30,.6));
+      border-bottom:1px solid var(--ring);
+      display:flex;gap:10px;align-items:center;padding:10px 12px;backdrop-filter:blur(6px)
+    }
+    .title{font-weight:800}
+    .actions{display:flex;gap:8px;margin-left:auto}
+    .chat{flex:1;display:flex;flex-direction:column;background:linear-gradient(180deg,rgba(255,255,255,.02),transparent), var(--card)}
+    .msgs{flex:1;overflow:auto;padding:20px 14px;display:flex;flex-direction:column;gap:8px}
+    .date-sep{
+      align-self:center;font-size:12px;color:#c8d1de;background:#0e1731;
+      padding:4px 10px;border-radius:999px;border:1px solid var(--ring);margin:10px 0
+    }
+    .msg{display:flex;gap:8px;max-width:86%}
+    .msg.right{align-self:flex-end; flex-direction:row-reverse}
+    .bubble{
+      padding:10px 12px;border-radius:var(--radius);box-shadow:var(--shadow); white-space:pre-wrap; word-break:break-word
+    }
+    .u .bubble{background:#172036;border:1px solid #1f2a48}
+    .b .bubble{background:#0e1b2f;border:1px solid #1a2a4a}
+    .a .bubble{background:#083c2e;border:1px solid #0b5a43}
+    .sys .bubble{background:#10192c;border:1px dashed #2b3d63;color:#93c5fd}
+    .meta{font-size:11px;color:#a9b5c7;margin-top:4px;opacity:.9}
+    .badge{
+      display:inline-block;font-size:11px;color:#cde7ff;background:#183154;border:1px solid #224778;
+      padding:2px 6px;border-radius:999px;margin-left:6px
+    }
+    .badge.green{background:#0d3a2a;border-color:#145a43;color:#bff3d5}
+    .input{
+      display:flex;gap:10px;padding:12px;border-top:1px solid var(--ring);
+      background:linear-gradient(180deg,rgba(10,15,30,.6),rgba(10,15,30,.9))
+    }
+    .input textarea{
+      flex:1;background:#0b1224;border:1px solid var(--ring);color:var(--txt);
+      padding:12px;border-radius:12px;min-height:44px;max-height:160px;outline:none; resize:vertical
+    }
+    .ghost{opacity:.65}
+    /* MOBILE */
+    @media (max-width:980px){
+      .app{grid-template-columns:1fr}
+      .left{position:fixed;inset:0 35% 0 0;transform:translateX(-100%);transition:.2s;z-index:5}
+      .app.show-left .left{transform:none}
+      .overlay{display:none}
+      .app.show-left .overlay{display:block;position:fixed;inset:0;background:rgba(0,0,0,.35);backdrop-filter:blur(1px);z-index:4}
+      .header .brand{display:none}
+      .msgs{padding-bottom:80px}
+    }
   </style>
 </head>
 <body>
 <div class="app" id="app">
-  <div class="left">
+  <div class="overlay" id="overlay"></div>
+  <aside class="left">
     <div class="top">
+      <div class="brand">Inbox</div>
       <input id="search" placeholder="Buscar...">
-      <button class="btn sm" id="refresh">⟳</button>
-      <button class="btn sm" id="logout">Salir</button>
+      <button class="btn" id="refresh" title="Refrescar">⟳</button>
+      <button class="btn" id="logout" title="Salir">Salir</button>
     </div>
     <div class="list" id="list"></div>
-  </div>
-  <div class="right">
-    <div class="top">
-      <button class="btn sm" id="toggleLeft">☰</button>
-      <div id="title" style="font-weight:700">Inbox</div>
-      <span id="status" class="pill" style="margin-left:auto;display:none"></span>
-      <div class="row">
-        <button class="btn sm" id="takeHuman">⏸️ Pausar bot</button>
-        <button class="btn sm" id="resumeBot">▶️ Bot ON</button>
-        <button class="btn sm" id="markRead">✓ Leído</button>
+  </aside>
+
+  <main class="right">
+    <div class="header">
+      <button class="btn" id="toggleLeft" title="Chats">☰</button>
+      <div class="title" id="title">Selecciona un chat</div>
+      <span id="status" class="pill" style="display:none"></span>
+      <div class="actions">
+        <button class="btn" id="takeHuman">⏸️ Pausar</button>
+        <button class="btn" id="resumeBot">▶️ Bot ON</button>
+        <button class="btn" id="markRead">✓ Leído</button>
       </div>
     </div>
-    <div class="chat">
+
+    <section class="chat">
       <div class="msgs" id="msgs"></div>
       <div class="input">
-        <textarea id="box" placeholder="Escribe como asesor..."></textarea>
-        <button class="btn" id="send">Enviar</button>
+        <textarea id="box" placeholder="Escribe como asesor… (Enter para enviar, Shift+Enter salto de línea)"></textarea>
+        <button class="btn pri" id="send">Enviar</button>
       </div>
-    </div>
-  </div>
+    </section>
+  </main>
 </div>
 
 <script>
 const api = {
   token: localStorage.getItem('AGENT_TOKEN') || '',
-  base: '',
   headers(){ return { 'Authorization':'Bearer '+this.token, 'Content-Type':'application/json' }; },
   async convos(){ const r=await fetch('/wa/agent/convos',{headers:this.headers()}); if(!r.ok) throw 0; return r.json(); },
   async history(id){ const r=await fetch('/wa/agent/history/'+encodeURIComponent(id),{headers:this.headers()}); if(!r.ok) throw 0; return r.json(); },
@@ -79,7 +161,7 @@ const api = {
   async handoff(to,mode){ const r=await fetch('/wa/agent/handoff',{method:'POST',headers:this.headers(),body:JSON.stringify({to,mode})}); if(!r.ok) throw 0; return r.json(); }
 };
 
-(async function bootstrap(){
+(function bootstrap(){
   if(!api.token){
     const t = prompt('Token de agente');
     if(!t) return;
@@ -87,99 +169,170 @@ const api = {
     api.token = t;
   }
 
+  const app = document.getElementById('app');
+  const overlay = document.getElementById('overlay');
   const elList = document.getElementById('list');
   const elMsgs = document.getElementById('msgs');
   const elTitle= document.getElementById('title');
   const elStatus= document.getElementById('status');
   const box = document.getElementById('box');
+
   let current = null;
   let allConvos = [];
 
-  function fmt(ts){ if(!ts) return ''; const d=new Date(ts); return d.toLocaleString(); }
+  function fmtTime(ts){
+    if(!ts) return '';
+    const d=new Date(ts);
+    return d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+  }
+  function fmtDate(ts){
+    const d = new Date(ts);
+    return d.toLocaleDateString();
+  }
+
+  // render list
   function renderList(filter=''){
     elList.innerHTML='';
     const q = (filter||'').toLowerCase();
     for(const c of allConvos){
       if(q && !String(c.name).toLowerCase().includes(q) && !String(c.id).includes(q)) continue;
-      const div = document.createElement('div');
-      div.className = 'item'+(current && current.id===c.id?' active':'');
-      div.onclick = async ()=>{ await openChat(c.id); };
-      div.innerHTML = `
+      const row = document.createElement('div');
+      row.className = 'item'+(current && current.id===c.id?' active':'');
+      row.onclick = async ()=>{ await openChat(c.id); };
+      const last = (c.last||'').replace(/\n/g,' · ');
+      row.innerHTML = `
         <div>
-          <div class="name">${c.name||c.id}</div>
-          <div class="sub">${(c.last||'').replace(/\n/g,' · ').slice(0,80)}</div>
+          <div class="name">${escapeHtml(c.name||c.id)}</div>
+          <div class="sub">${escapeHtml(last).slice(0,90)}</div>
         </div>
-        ${c.human?'<span class="pill human">HUMANO</span>':''}
-        ${c.unread?`<span class="pill">${c.unread}</span>`:''}
+        <div style="display:flex;gap:6px;align-items:center">
+          ${c.human?'<span class="pill human">HUMANO</span>':''}
+          ${c.unread?`<span class="pill">${c.unread}</span>`:''}
+        </div>
       `;
-      elList.appendChild(div);
+      elList.appendChild(row);
     }
   }
+
+  // render messages with date separators + badges
+  function renderMsgs(mem){
+    elMsgs.innerHTML='';
+    let lastDate = '';
+    mem = mem || [];
+    for(const m of mem){
+      const dstr = fmtDate(m.ts||Date.now());
+      if(dstr !== lastDate){
+        const sep = document.createElement('div');
+        sep.className = 'date-sep';
+        sep.textContent = dstr;
+        elMsgs.appendChild(sep);
+        lastDate = dstr;
+      }
+      const wrap = document.createElement('div');
+      const side = m.role==='user' ? 'u'
+                 : m.role==='agent' ? 'a'
+                 : m.role==='bot'   ? 'b' : 'sys';
+      wrap.className = 'msg '+(side==='u'?'left':'right')+' '+side;
+
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble';
+      const parsed = parseTags(m.content||'');
+      bubble.innerHTML = escapeHtml(parsed.text) + (parsed.badges.length? ' ' + parsed.badges.map(b=>`<span class="badge ${b.kind||''}">${escapeHtml(b.label)}</span>`).join('') : '');
+      wrap.appendChild(bubble);
+
+      const meta = document.createElement('div');
+      meta.className = 'meta';
+      meta.textContent = fmtTime(m.ts||Date.now());
+      wrap.appendChild(meta);
+
+      elMsgs.appendChild(wrap);
+    }
+    elMsgs.scrollTop = elMsgs.scrollHeight;
+  }
+
+  function parseTags(text){
+    const badges = [];
+    // nuestros tags: 〔Botones〕 , 〔Lista: X〕
+    text = text.replace(/\s*〔Botones〕/ig, (m)=>{ badges.push({label:'Botones'}); return '' });
+    text = text.replace(/\s*〔Lista:\s*([^\〕]+)\〕/ig, (m, t)=>{ badges.push({label:'Lista: '+t}); return '' });
+    // si viene "✅ selección"
+    if(/^✅\s+/.test(text)) badges.push({label:'Selección', kind:'green'});
+    return { text: text.trim(), badges };
+  }
+
+  // small helper to avoid HTML injection
+  function escapeHtml(s=''){ return String(s).replace(/[&<>"']/g, c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c])); }
+
   async function refresh(){
     try{
       const {convos} = await api.convos();
       allConvos = convos||[];
       renderList(document.getElementById('search').value);
+      // si no hay actual, abre el primero
+      if(!current && allConvos.length){ await openChat(allConvos[0].id); }
     }catch(e){ /* noop */ }
   }
-  function renderMsgs(mem){
-    elMsgs.innerHTML = '';
-    for(const m of mem){
-      const div = document.createElement('div');
-      let cls='sys';
-      if(m.role==='user') cls='u';
-      else if(m.role==='bot') cls='b';
-      else if(m.role==='agent') cls='a';
-      div.className = 'bubble '+cls;
-      div.textContent = m.content;
-      elMsgs.appendChild(div);
-    }
-    elMsgs.scrollTop = elMsgs.scrollHeight;
-  }
+
   async function openChat(id){
     try{
       current = await api.history(id);
-      elTitle.textContent = `${current.name||current.id} (${current.id})`;
+      elTitle.textContent = `${current.name||current.id} · ${current.id}`;
       elStatus.style.display = current.human ? 'inline-block' : 'none';
+      elStatus.className = 'pill ' + (current.human?'human':'');
       elStatus.textContent = current.human ? 'HUMANO' : '';
       renderMsgs(current.memory||[]);
-      await api.read(current.id);      // marcar leído al abrir
-      await refresh();                 // refrescar contadores
-      if (window.innerWidth<900) document.getElementById('app').classList.remove('show-left');
-    }catch(e){}
+      try{ await api.read(current.id); }catch(e){}
+      await refresh(); // actualizar contadores
+      if (window.innerWidth<980) app.classList.remove('show-left');
+      sessionStorage.setItem('history:'+id, JSON.stringify(current.memory||[])); // cache local
+    }catch(e){
+      // Fallback a cache local si hay
+      const cache = sessionStorage.getItem('history:'+id);
+      if(cache){ renderMsgs(JSON.parse(cache)); }
+    }
   }
 
   // Acciones
   document.getElementById('send').onclick = async ()=>{
     const txt = box.value.trim(); if(!txt || !current) return;
-    box.value=''; await api.send(current.id, txt);
+    const optimistic = { role:'agent', content:txt, ts:Date.now() };
+    current.memory = (current.memory||[]).concat([optimistic]);
+    renderMsgs(current.memory);
+    box.value='';
+    try{ await api.send(current.id, txt); }catch(e){ /* si falla, se queda el optimista */ }
   };
+  box.addEventListener('keydown', (e)=>{
+    if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); document.getElementById('send').click(); }
+  });
+
   document.getElementById('markRead').onclick = async ()=>{ if(!current) return; await api.read(current.id); await refresh(); };
-  document.getElementById('takeHuman').onclick = async ()=>{ if(!current) return; await api.handoff(current.id,'human'); elStatus.style.display='inline-block'; elStatus.textContent='HUMANO'; };
+  document.getElementById('takeHuman').onclick = async ()=>{ if(!current) return; await api.handoff(current.id,'human'); elStatus.style.display='inline-block'; elStatus.textContent='HUMANO'; elStatus.className='pill human'; };
   document.getElementById('resumeBot').onclick = async ()=>{ if(!current) return; await api.handoff(current.id,'bot'); elStatus.style.display='none'; };
 
   // UI menores
   document.getElementById('refresh').onclick = refresh;
   document.getElementById('logout').onclick = ()=>{ localStorage.removeItem('AGENT_TOKEN'); location.reload(); };
   document.getElementById('search').oninput = (e)=> renderList(e.target.value);
-  document.getElementById('toggleLeft').onclick = ()=> document.getElementById('app').classList.toggle('show-left');
+  document.getElementById('toggleLeft').onclick = ()=> app.classList.toggle('show-left');
+  overlay.onclick = ()=> app.classList.remove('show-left');
 
   // SSE
   try{
     const sse = new EventSource('/wa/agent/stream?token='+encodeURIComponent(api.token));
     sse.addEventListener('msg', (ev)=>{
       const data = JSON.parse(ev.data||'{}');
+      // si es el chat abierto, append + scroll
       if(current && data.id===current.id){
         current.memory = (current.memory||[]).concat([{role:data.role, content:data.content, ts:data.ts}]);
         renderMsgs(current.memory);
+        sessionStorage.setItem('history:'+current.id, JSON.stringify(current.memory));
       }
-      // cada mensaje puede cambiar contadores/orden
-      refresh();
+      refresh(); // reordena y actualiza contadores
     });
   }catch(e){}
 
   // Primer carga
-  await refresh();
+  refresh();
 })();
 </script>
 </body>
