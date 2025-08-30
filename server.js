@@ -1,4 +1,3 @@
-// server.js (o el archivo donde inicias tu app)
 import 'dotenv/config';
 import express from 'express';
 import path from 'path';
@@ -16,14 +15,14 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
 
 // Estáticos
-app.use('/image', express.static(path.join(__dirname, 'image')));   // ya lo tenías
-app.use(express.static(path.join(__dirname, 'public')));            // <-- sirve /public
+app.use('/image', express.static(path.join(__dirname, 'image')));   
+app.use(express.static(path.join(__dirname, 'public')));           
 
 // Health
 app.get('/', (_req, res) => res.send('OK'));
 app.get('/healthz', (_req, res) => res.json({ ok: true }));
 
-// Política de privacidad (ruta “bonita”)
+// Política de privacidad
 app.get('/privacidad', (_req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'privacidad.html'));
 });

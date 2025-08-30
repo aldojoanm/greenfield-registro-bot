@@ -1,20 +1,41 @@
+// wa.js
 import 'dotenv/config';
 import express from 'express';
 import fs from 'fs';
-import path from 'path';             // ★ para persistencia disco
-import { appendFromSession } from './sheets.js'; 
+import path from 'path';
+import { appendFromSession } from './sheets.js';
 
 const router = express.Router();
 router.use(express.json());
 
 // ===== ENV =====
-const VERIFY_TOKEN = process.env.VERIFY_TOKEN || 'VERIFY_123';
-const WA_TOKEN     = process.env.WHATSAPP_TOKEN || '';
-const WA_PHONE_ID  = process.env.WHATSAPP_PHONE_ID || '';
-const CATALOG_URL  = process.env.CATALOG_URL || 'https://tinyurl.com/PORTAFOLIO-NEWCHEM';
-const STORE_LAT    = process.env.STORE_LAT || '-17.7580406';
-const STORE_LNG    = process.env.STORE_LNG || '-63.1532503';
-const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || '').replace(/\/+$/,'');
+const VERIFY_TOKEN    = process.env.VERIFY_TOKEN || 'VERIFY_123';
+const WA_TOKEN        = process.env.WHATSAPP_TOKEN || '';
+const WA_PHONE_ID     = process.env.WHATSAPP_PHONE_ID || '';
+const CATALOG_URL     = process.env.CATALOG_URL || 'https://tinyurl.com/PORTAFOLIO-NEWCHEM';
+const STORE_LAT       = process.env.STORE_LAT || '-17.7580406';
+const STORE_LNG       = process.env.STORE_LNG || '-63.1532503';
+const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || '').replace(/\/+$/, '');
+const AGENT_TOKEN     = process.env.AGENT_TOKEN || '';
+
+// ===== AGENT STREAM (SSE) =====
+const agentClients = new Set();
+function sseSend(res, event, payload){
+  try{
+    res.write(`event: ${event}\n`);
+    res.write(`data: ${JSON.stringify(payload)}\n\n`);
+  }catch{}
+}
+function broadcastAgent(event, payload){
+  for (const res of agentClients) sseSend(res, event, payload);
+}
+function agentAuth(req,res,next){
+  const header = req.headers.authorization || '';
+  const bearer = header.replace(/^Bearer\s+/i,'').trim();
+  const token  = bearer || String(req.query.token||'');
+  if(!AGENT_TOKEN || token!==AGENT_TOKEN) return res.sendStatus(401);
+  next();
+}
 
 // ===== DATA =====
 function loadJSON(p){ try { return JSON.parse(fs.readFileSync(p,'utf8')); } catch { return {}; } }
@@ -61,13 +82,12 @@ const humanOff = (id)=> humanSilence.delete(id);
 const isHuman  = (id)=> (humanSilence.get(id)||0) > Date.now();
 
 // ===== SESIONES (persistencia 5 días, disco + GC) =====
-// ★ Persistimos sesiones en ./data/sessions (ligero para server $5)
-const SESSION_TTL_MS = 5*24*60*60*1000;     // 5 días
+const SESSION_TTL_MS = 5*24*60*60*1000; // 5 días
 const SESSION_DIR = path.resolve('./data/sessions');
 fs.mkdirSync(SESSION_DIR, { recursive: true });
 
 const sessions = new Map();
-const sessionTouched = new Map();           // id -> last ts (para GC RAM)
+const sessionTouched = new Map(); // id -> last ts (para GC RAM)
 function sessionPath(id){ return path.join(SESSION_DIR, `${id}.json`); }
 function loadSessionFromDisk(id){
   try{
@@ -86,7 +106,7 @@ function persistSessionToDisk(id, s){
       asked: s.asked,
       vars: s.vars,
       profileName: s.profileName,
-      memory: s.memory,           // ya capado a 12 líneas
+      memory: s.memory,           // se expandirá vía Inbox (hasta 200)
       lastPrompt: s.lastPrompt,
       lastPromptTs: s.lastPromptTs,
       meta: s.meta,
@@ -162,10 +182,17 @@ const upperNoDia = (t='') => t.normalize('NFD').replace(/\p{Diacritic}/gu,'').to
 const b64u = s => Buffer.from(String(s),'utf8').toString('base64').replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
 const ub64u = s => Buffer.from(String(s).replace(/-/g,'+').replace(/_/g,'/'), 'base64').toString('utf8');
 
+// ===== Inbox-aware remember (amplía memoria + notifica SSE) =====
 function remember(id, role, content){
-  const s=S(id); s.memory.push({role,content,ts:Date.now()});
-  if(s.memory.length>12) s.memory=s.memory.slice(-12);
-  persistS(id); // ★ persistimos minibuffer
+  const s=S(id);
+  s.memory.push({role,content,ts:Date.now()});
+  if(s.memory.length>200) s.memory=s.memory.slice(-200); // más líneas para el Inbox
+  s.meta = s.meta || {};
+  s.meta.lastMsg = { role, content, ts: Date.now() };
+  s.meta.lastAt  = Date.now();
+  if (role==='user') s.meta.unread = (s.meta.unread||0)+1;
+  persistS(id);
+  broadcastAgent('msg', { id, role, content, ts: Date.now() });
 }
 
 // ===== BÚSQUEDA / PARSERS =====
@@ -207,17 +234,14 @@ function splitIAText(ia=''){
   const t = canonIA(ia);
   return t.split(/[,\+\/;]| y | con /g).map(s=>s.trim()).filter(w=>w.length>=3);
 }
-// IA SOLO por nombre (ignora números). No dispara con mensajes que parecen cantidad.
-// Búsqueda por IA SOLO por nombre (ignora números). No se activa con cantidades.
+
+// IA: busca por ingrediente, ignora cantidades
 function findProductsByIA(text){
   const q = String(text || '');
-  if (!/[a-z]/i.test(q) || isLikelyQuantity(q)) return [];  // sin letras o parece cantidad
-
+  if (!/[a-z]/i.test(q) || isLikelyQuantity(q)) return [];
   const qAlpha = alphaIA(q);
   if (!qAlpha || qAlpha.length < 3) return [];
-
   const qTokens = qAlpha.split(' ').filter(t => t.length >= 3);
-
   const hits = [];
   for (const p of (CATALOG || [])){
     const iaAlpha = alphaIA(p?.ingrediente_activo || p?.formulacion || '');
@@ -227,8 +251,6 @@ function findProductsByIA(text){
   }
   return hits;
 }
-
-
 
 function levenshtein(a='', b=''){
   const m=a.length, n=b.length;
@@ -396,23 +418,20 @@ function isLikelyQuantity(text=''){
 // Escapa texto para regex
 function escRe(s=''){ return String(s).replace(/[.*+?^${}()|[\]\\]/g,'\\$&'); }
 
-// Normaliza aplicando sinónimos y dejando solo letras (sin números / unidades / formulaciones)
+// Normaliza aplicando sinónimos y dejando solo letras
 function alphaIA(str=''){
-  // 1) minus/diacríticos + sinónimos
   let x = norm(str);
   for (const [k,v] of Object.entries(IA_SYNONYMS)){
-    const re = new RegExp(`\\b${escRe(k)}\\b`, 'g'); // mapea palabra completa
+    const re = new RegExp(`\\b${escRe(k)}\\b`, 'g');
     x = x.replace(re, v);
   }
-  // 2) quita números y formulaciones/unidades típicas
   return x
-    .replace(/\d+(?:[.,]\d+)?/g, ' ')                              // números
-    .replace(/\b(l|lt|lts|litros?|kg|kilos?|g|gr|ha|wg|wp|sc|sl|ec|ew|cs|od|gr)\b/g,' ') // unidades/formulaciones
-    .replace(/[^a-z\s]/g,' ')                                      // solo letras/espacios
+    .replace(/\d+(?:[.,]\d+)?/g, ' ')
+    .replace(/\b(l|lt|lts|litros?|kg|kilos?|g|gr|ha|wg|wp|sc|sl|ec|ew|cs|od|gr)\b/g,' ')
+    .replace(/[^a-z\s]/g,' ')
     .replace(/\s+/g,' ')
     .trim();
 }
-
 
 // ===== IMÁGENES =====
 function productImageSource(prod){
@@ -449,28 +468,38 @@ async function waSendQ(to, payload){
   sendQueues.set(to, next);
   return next;
 }
-const toText = (to, body) => waSendQ(to,{
-  messaging_product:'whatsapp', to, type:'text',
-  text:{ body: String(body).slice(0,4096), preview_url: true }
-});
-const toButtons = (to, body, buttons=[]) => waSendQ(to,{
-  messaging_product:'whatsapp', to, type:'interactive',
-  interactive:{ type:'button', body:{ text: String(body).slice(0,1024) },
-    action:{ buttons: buttons.slice(0,3).map(b=>({ type:'reply', reply:{ id:b.payload || b.id, title: clamp(b.title) }})) }
-  }
-});
-const toList = (to, body, title, rows=[]) => waSendQ(to,{
-  messaging_product:'whatsapp', to, type:'interactive',
-  interactive:{ type:'list', body:{ text:String(body).slice(0,1024) }, action:{
-    button: title.slice(0,20),
-    sections:[{ title, rows: rows.slice(0,10).map(r=>{
-      const id = r.payload || r.id;
-      const t  = clampN(r.title ?? '', LIST_TITLE_MAX);
-      const d  = r.description ? clampN(r.description, LIST_DESC_MAX) : undefined;
-      return d ? { id, title: t, description: d } : { id, title: t };
-    }) }]
-  }}
-});
+// Log de salidas del bot para el Inbox:
+const toText = (to, body) => {
+  remember(to,'bot', String(body));
+  return waSendQ(to,{
+    messaging_product:'whatsapp', to, type:'text',
+    text:{ body: String(body).slice(0,4096), preview_url: true }
+  });
+};
+const toButtons = (to, body, buttons=[]) => {
+  remember(to,'bot', `${String(body)} [botones]`);
+  return waSendQ(to,{
+    messaging_product:'whatsapp', to, type:'interactive',
+    interactive:{ type:'button', body:{ text: String(body).slice(0,1024) },
+      action:{ buttons: buttons.slice(0,3).map(b=>({ type:'reply', reply:{ id:b.payload || b.id, title: clamp(b.title) }})) }
+    }
+  });
+};
+const toList = (to, body, title, rows=[]) => {
+  remember(to,'bot', `${String(body)} [lista: ${title}]`);
+  return waSendQ(to,{
+    messaging_product:'whatsapp', to, type:'interactive',
+    interactive:{ type:'list', body:{ text:String(body).slice(0,1024) }, action:{
+      button: title.slice(0,20),
+      sections:[{ title, rows: rows.slice(0,10).map(r=>{
+        const id = r.payload || r.id;
+        const t  = clampN(r.title ?? '', LIST_TITLE_MAX);
+        const d  = r.description ? clampN(r.description, LIST_DESC_MAX) : undefined;
+        return d ? { id, title: t, description: d } : { id, title: t };
+      }) }]
+    }}
+  });
+};
 
 // Upload local file to WhatsApp Cloud and return media id
 async function waUploadMediaFromFile(filePath){
@@ -494,6 +523,15 @@ async function toImage(to, source){
     const id = await waUploadMediaFromFile(source.path);
     if(id) return waSendQ(to,{ messaging_product:'whatsapp', to, type:'image', image:{ id } });
   }
+}
+
+// Enviar como humano (agente)
+async function toAgentText(to, body){
+  await waSendQ(to,{
+    messaging_product:'whatsapp', to, type:'text',
+    text:{ body: String(body).slice(0,4096), preview_url: true }
+  });
+  remember(to,'agent', String(body));
 }
 
 // ===== PREGUNTAS ATÓMICAS =====
@@ -826,6 +864,9 @@ router.post('/wa/webhook', async (req,res)=>{
     if (seenWamid(msg.id)) { res.sendStatus(200); return; }
 
     const s = S(from);
+    s.meta = s.meta || {};
+    if (msg.id) { s.meta.last_wamid = msg.id; persistS(from); } // para "marcar leído"
+
     const textRaw = (msg.type==='text' ? (msg.text?.body || '').trim() : '');
 
     if (isHuman(from)) {
@@ -859,9 +900,8 @@ router.post('/wa/webhook', async (req,res)=>{
     }
 
     const isLeadMsg = msg.type==='text' && !!parseMessengerLead(msg.text?.body);
-// --- SALUDO (evitar duplicado) ---
+    // --- SALUDO (evitar duplicado) ---
     if(!s.greeted){
-      // marcar ANTES de enviar para evitar carreras si llegan varios mensajes
       s.greeted = true; 
       persistS(from);
 
@@ -874,7 +914,6 @@ router.post('/wa/webhook', async (req,res)=>{
         return;
       }
     }
-
 
     // ===== INTERACTIVOS =====
     if(msg.type==='interactive'){
@@ -1006,15 +1045,14 @@ router.post('/wa/webhook', async (req,res)=>{
       remember(from,'user',text);
       const tnorm = norm(text);
 
-    if (S(from).pending==='nombre'){
-      const looksLikeIntent = /[?¿]|(tiene|tienes|hay|precio|glifo|glifosato|producto|cat[aá]logo|insecticida|herbicida|fungicida|acaricida)/i.test(text);
-      if(!looksLikeIntent){
-        S(from).profileName = title(text.toLowerCase());
-        S(from).pending=null; S(from).lastPrompt=null; persistS(from);
-        await nextStep(from); res.sendStatus(200); return;
-      } else {
+      if (S(from).pending==='nombre'){
+        const looksLikeIntent = /[?¿]|(tiene|tienes|hay|precio|glifo|glifosato|producto|cat[aá]logo|insecticida|herbicida|fungicida|acaricida)/i.test(text);
+        if(!looksLikeIntent){
+          S(from).profileName = title(text.toLowerCase());
+          S(from).pending=null; S(from).lastPrompt=null; persistS(from);
+          await nextStep(from); res.sendStatus(200); return;
+        }
       }
-    }
       if (S(from).pending==='cultivo_text'){
         S(from).vars.cultivos = [title(text)];
         S(from).pending=null; S(from).lastPrompt=null; persistS(from);
@@ -1109,7 +1147,7 @@ router.post('/wa/webhook', async (req,res)=>{
       // Producto exacto
       const prodExact = findProduct(text);
 
-      // ★ Búsqueda por Ingrediente Activo
+      // Búsqueda por Ingrediente Activo
       const iaHits = findProductsByIA(text);
 
       if (prodExact){
@@ -1126,7 +1164,6 @@ router.post('/wa/webhook', async (req,res)=>{
         const catFromProd = normalizeCatLabel(prod.categoria||''); if (catFromProd) S(from).vars.category = catFromProd;
         S(from).stage='product'; S(from).vars.catOffset=0; persistS(from);
       } else if (iaHits.length > 1){
-        // varios productos con ese IA → listar y salir
         await listByIA(from, iaHits, text);
         res.sendStatus(200); return;
       }
@@ -1159,7 +1196,7 @@ router.post('/wa/webhook', async (req,res)=>{
         }
       }
 
-      // Campaña si el usuario escribió directamente "verano"/"invierno"
+      // Campaña si el usuario escribió "verano"/"invierno"
       if(!S(from).vars.campana){
         if(/\bverano\b/i.test(text)) S(from).vars.campana='Verano';
         else if(/\binvierno\b/i.test(text)) S(from).vars.campana='Invierno';
@@ -1203,6 +1240,124 @@ router.post('/wa/webhook', async (req,res)=>{
   }catch(e){
     console.error('WA webhook error', e);
     res.sendStatus(500);
+  }
+});
+
+// ====== INBOX API ======
+
+// a) SSE tiempo real
+router.get('/wa/agent/stream', agentAuth, (req,res)=>{
+  res.writeHead(200, {
+    'Content-Type':'text/event-stream',
+    'Cache-Control':'no-cache',
+    'Connection':'keep-alive',
+    'X-Accel-Buffering':'no'
+  });
+  res.write(':\n\n');
+  agentClients.add(res);
+  const ping = setInterval(()=> sseSend(res,'ping',{t:Date.now()}), 25000);
+  req.on('close', ()=>{ clearInterval(ping); agentClients.delete(res); });
+});
+
+// utilidades para listar conversaciones
+function loadAllSessionIds(){
+  const ids = new Set([...sessions.keys()]);
+  try{
+    for(const f of fs.readdirSync(SESSION_DIR)){
+      if (f.endsWith('.json')) ids.add(f.replace(/\.json$/,''));
+    }
+  }catch{}
+  return [...ids];
+}
+function convoSummaryFrom(id){
+  const s = S(id);
+  const name = s.profileName || id;
+  const last = s.meta?.lastMsg?.content || (s.memory?.[s.memory.length-1]?.content) || '';
+  const lastTs = s.meta?.lastAt || 0;
+  return {
+    id, name,
+    human: isHuman(id),
+    unread: s.meta?.unread || 0,
+    last, lastTs
+  };
+}
+
+// b) Listado de conversaciones
+router.get('/wa/agent/convos', agentAuth, (_req,res)=>{
+  const list = loadAllSessionIds().map(convoSummaryFrom)
+    .sort((a,b)=> (b.lastTs||0)-(a.lastTs||0));
+  res.json({convos:list});
+});
+
+// c) Historial
+router.get('/wa/agent/history/:id', agentAuth, (req,res)=>{
+  const id = req.params.id;
+  const s = S(id);
+  res.json({
+    id,
+    name: s.profileName || id,
+    human: isHuman(id),
+    unread: s.meta?.unread || 0,
+    memory: s.memory || []
+  });
+});
+
+// d) Enviar como humano (pausa bot 4h)
+router.post('/wa/agent/send', agentAuth, async (req,res)=>{
+  try{
+    const { to, text } = req.body || {};
+    if(!to || !text) return res.status(400).json({error:'to y text son requeridos'});
+    humanOn(to, 4);
+    await toAgentText(to, text);
+    res.json({ ok:true });
+  }catch(e){
+    console.error('agent/send', e);
+    res.status(500).json({ok:false});
+  }
+});
+
+// e) Marcar leído (resetea contador + status:read)
+router.post('/wa/agent/read', agentAuth, async (req,res)=>{
+  try{
+    const { to } = req.body || {};
+    if(!to) return res.status(400).json({error:'to requerido'});
+    const s = S(to);
+    s.meta = s.meta || {};
+    s.meta.unread = 0; persistS(to);
+    if (s.meta.last_wamid){
+      const url = `https://graph.facebook.com/v20.0/${WA_PHONE_ID}/messages`;
+      const r = await fetch(url,{
+        method:'POST',
+        headers:{ 'Authorization':`Bearer ${WA_TOKEN}`, 'Content-Type':'application/json' },
+        body: JSON.stringify({ messaging_product:'whatsapp', status:'read', message_id: s.meta.last_wamid })
+      });
+      if(!r.ok) console.error('mark read error', await r.text());
+    }
+    broadcastAgent('convos', { id: to });
+    res.json({ok:true});
+  }catch(e){
+    console.error('agent/read', e);
+    res.status(500).json({ok:false});
+  }
+});
+
+// f) Handoff (pausar/reanudar bot)
+router.post('/wa/agent/handoff', agentAuth, async (req,res)=>{
+  try{
+    const { to, mode } = req.body || {};
+    if(!to || !mode) return res.status(400).json({error:'to y mode son requeridos'});
+    if (mode==='human'){
+      humanOn(to, 4);
+      remember(to,'system','⏸️ Bot pausado por agente (4h).');
+    } else if (mode==='bot'){
+      humanOff(to);
+      remember(to,'system','▶️ Bot reactivado por agente.');
+      await toText(to,'He reactivado el *asistente automático*.');
+    } else return res.status(400).json({error:'mode debe ser human|bot'});
+    res.json({ok:true});
+  }catch(e){
+    console.error('agent/handoff', e);
+    res.status(500).json({ok:false});
   }
 });
 

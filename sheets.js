@@ -195,7 +195,6 @@ function buildRowFromSession(s, fromPhone, estado = 'NUEVO') {
   // Teléfono: solo dígitos
   const phoneDigitsOnly = onlyDigits(fromPhone);
 
-  // === ORDEN EXACTO DE COLUMNAS (renombradas) ===
   // Fecha | Teléfono | Nombre Completo | Ubicación | Cultivo | Hectáreas | Campaña | Producto | Presentacion | Cantidad | Estado | Contacto Cliente | Resumen Pedido | Seguimiento | cotizacion_id | calendar_event_id
   return [
     fechaDisplay,         // 0  Fecha (legible local)
@@ -236,7 +235,6 @@ export async function appendFromSession(s, fromPhone, estado = 'NUEVO') {
     requestBody: { values },
   });
 
-  // devuelve cotizacion_id (columna 15, índice 14)
   return values[0][14];
 }
 
