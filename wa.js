@@ -81,8 +81,8 @@ const humanOn  = (id, hours=4)=> humanSilence.set(id, Date.now()+HOURS(hours));
 const humanOff = (id)=> humanSilence.delete(id);
 const isHuman  = (id)=> (humanSilence.get(id)||0) > Date.now();
 
-// ===== SESIONES (persistencia 5 días, disco + GC) =====
-const SESSION_TTL_MS = 5*24*60*60*1000; // 5 días
+const SESSION_TTL_DAYS = parseInt(process.env.SESSION_TTL_DAYS || '7', 10);
+const SESSION_TTL_MS   = SESSION_TTL_DAYS * 24 * 60 * 60 * 1000;
 const SESSION_DIR = path.resolve('./data/sessions');
 fs.mkdirSync(SESSION_DIR, { recursive: true });
 
@@ -106,11 +106,12 @@ function persistSessionToDisk(id, s){
       asked: s.asked,
       vars: s.vars,
       profileName: s.profileName,
-      memory: s.memory,           // se expandirá vía Inbox (hasta 200)
+      memory: s.memory,          
       lastPrompt: s.lastPrompt,
       lastPromptTs: s.lastPromptTs,
       meta: s.meta,
       _savedToSheet: s._savedToSheet,
+      _closedAt: s._closedAt || null,
       _expiresAt: Date.now() + SESSION_TTL_MS
     };
     const tmp = sessionPath(id)+'.tmp';
@@ -182,19 +183,18 @@ const upperNoDia = (t='') => t.normalize('NFD').replace(/\p{Diacritic}/gu,'').to
 const b64u = s => Buffer.from(String(s),'utf8').toString('base64').replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
 const ub64u = s => Buffer.from(String(s).replace(/-/g,'+').replace(/_/g,'/'), 'base64').toString('utf8');
 
-// ===== Inbox-aware remember (amplía memoria + notifica SSE) =====
 function remember(id, role, content){
-  const s=S(id);
-  s.memory.push({role,content,ts:Date.now()});
-  if(s.memory.length>500) s.memory=s.memory.slice(-500); // más líneas para el Inbox
+  const s = S(id);
+  if (role === 'user' && s._closedAt) delete s._closedAt; // solo user reabre
+  s.memory.push({ role, content, ts: Date.now() });
+  if (s.memory.length > 500) s.memory = s.memory.slice(-500);
   s.meta = s.meta || {};
   s.meta.lastMsg = { role, content, ts: Date.now() };
   s.meta.lastAt  = Date.now();
-  if (role==='user') s.meta.unread = (s.meta.unread||0)+1;
+  if (role === 'user') s.meta.unread = (s.meta.unread || 0) + 1;
   persistS(id);
   broadcastAgent('msg', { id, role, content, ts: Date.now() });
 }
-
 // ===== BÚSQUEDA / PARSERS =====
 const normalizeCatLabel = (c='')=>{
   const t=norm(c);
@@ -870,6 +870,7 @@ router.post('/wa/webhook', async (req,res)=>{
     const textRaw = (msg.type==='text' ? (msg.text?.body || '').trim() : '');
 
     if (isHuman(from)) {
+      if (textRaw) remember(from, 'user', textRaw);
       if (textRaw && wantsBotBack(textRaw)) {
         humanOff(from);
         const quien = s.profileName ? `, ${s.profileName}` : '';
@@ -937,7 +938,15 @@ router.post('/wa/webhook', async (req,res)=>{
         } catch (err) { console.error('Sheets append error:', err); }
         await toText(from,'¡Gracias por escribirnos! Nuestro encargado de negocios te enviará la cotización en breve. Si requieres más información, estamos a tu disposición.');
         await toText(from,'Para volver a activar el asistente, por favor, escribe *Asistente New Chem*.');
-        humanOn(from, 4); clearS(from); res.sendStatus(200); return;
+
+        humanOn(from, 4);
+        s._closedAt = Date.now();         
+        s.stage = 'closed';
+        persistS(from);
+        broadcastAgent('convos', { id: from }); 
+        res.sendStatus(200); 
+        return;
+
       }
       if(id==='QR_SEGUIR'){ await toText(from,'Perfecto, vamos a añadir un nuevo producto 🙌.'); await askCategory(from); res.sendStatus(200); return; }
       if(id==='ADD_MORE'){ s.vars.catOffset=0; s.vars.last_product=null; s.vars.last_sku=null; s.vars.last_presentacion=null; s.vars.cantidad=null; s.asked.cantidad=false; persistS(from); await toButtons(from,'Dime el *nombre del otro producto* o elige una categoría 👇', CAT_QR.map(c=>({title:c.title,payload:c.payload}))); res.sendStatus(200); return; }
@@ -1136,7 +1145,13 @@ router.post('/wa/webhook', async (req,res)=>{
       }
       if(wantsClose(text)){
         await toText(from,'¡Gracias por escribirnos! Si más adelante te surge algo, aquí estoy para ayudarte. 👋');
-        humanOn(from, 4); clearS(from); res.sendStatus(200); return;
+        humanOn(from, 4);
+        s._closedAt = Date.now();
+        s.stage = 'closed';
+        persistS(from);
+        broadcastAgent('convos', { id: from });
+        res.sendStatus(200); 
+        return;
       }
       if(wantsAnother(text)){ await askAddMore(from); res.sendStatus(200); return; }
 
@@ -1285,7 +1300,8 @@ function convoSummaryFrom(id){
     id, name,
     human: isHuman(id),
     unread: s.meta?.unread || 0,
-    last, lastTs
+    last, lastTs,
+    closed: !!s._closedAt
   };
 }
 
