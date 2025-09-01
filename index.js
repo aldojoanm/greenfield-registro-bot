@@ -97,7 +97,34 @@ const wantsLocation = t => /(ubicaci[oó]n|direcci[oó]n|mapa|d[oó]nde est[aá]
 const wantsClose    = t => /(no gracias|gracias|eso es todo|listo|nada m[aá]s|ok gracias|est[aá] bien|finalizar)/i.test(norm(t));
 const asksPrice     = t => /(precio|cu[aá]nto vale|cu[aá]nto cuesta|cotizar|costo|proforma|cotizaci[oó]n)/i.test(t);
 const wantsAgent    = t => /asesor|humano|ejecutivo|vendedor|representante|agente|contact(a|o|arme)|whats?app|wasap|wsp|wpp|n[uú]mero|telefono|tel[eé]fono|celular/i.test(norm(t));
-const isGreeting    = t => /(hola|buen[oa]s (d[ií]as|tardes|noches)|hey|hello)/i.test(t);
+// Reemplazo robusto de isGreeting (tolera errores, acentos, repeticiones y sin espacios)
+const isGreeting = (t='') => {
+  const s = String(t || '')
+    .toLowerCase()
+    .normalize('NFD').replace(/\p{Diacritic}/gu,'')   // quita acentos (días -> dias)
+    .replace(/[^a-z\s]/g,' ')                        // quita símbolos/emoji
+    .replace(/([a-z])\1{1,}/g,'$1')                  // "holaaa" -> "hola", "buenass" -> "buenas"
+    .replace(/\s+/g,' ')                              // colapsa espacios
+    .trim();
+
+  if (!s) return false;
+
+  const sNoSpace = s.replace(/\s+/g,'');
+
+  // hola/holi/holis/hello/hey/hi/wena/wenas/wuenas
+  // + buenos/buenas días/tardes/noches con errores típicos (ncohes, noche, noxes…)
+  const reWithSpace = /\b(?:ola|hola|holi|holis|holu|hello|helo|hey|hi|wena|wenas|wuenas|buen(?:os|as)?(?:\s*(?:d(?:ia|ias)|tard(?:e|es)|n(?:och|coh)e?s?))?)\b/;
+  const reNoSpace   = /^(?:hola|holi|holis|hello|hey|hi|wenas|wuenas|buen(?:os|as)?(?:d(?:ia|ias)|tard(?:e|es)|n(?:och|coh)e?s?)|bn(?:d(?:ia|ias)|tard(?:e|es)|n(?:och|coh)e?s?)|bns(?:d(?:ia|ias)|tard(?:e|es)|n(?:och|coh)e?s?))$/;
+
+  // abreviaturas tipo "bn dias/bns noches/bnoches"
+  if (/^(?:bn|bns)\b/.test(s)) {
+    const rest = s.replace(/^(?:bn|bns)\b\s*/,'');
+    if (/^(?:d(?:ia|ias)|tard(?:e|es)|n(?:och|coh)e?s?)$/.test(rest) || rest==='') return true;
+  }
+
+  return reWithSpace.test(s) || reNoSpace.test(sNoSpace);
+};
+
 const asksProducts  = t => /(qu[eé] productos tienen|que venden|productos disponibles|l[ií]nea de productos)/i.test(t);
 const asksShipping  = t => /(env[ií]os?|env[ií]an|hacen env[ií]os|delivery|entrega|env[ií]an hasta|mandan|env[ií]o a)/i.test(norm(t));
 
@@ -443,9 +470,8 @@ router.post('/webhook', async (req,res)=>{
         }
 
         // === CAPTURA DE NOMBRE ===
-        // >>> ÚNICO CAMBIO: antes intentaba capturar nombre también cuando !s.profileName && !wantsCatalog && !wantsLocation
-        // >>> Ahora SOLO si realmente estamos pidiendo el nombre:
-        if (s.pending === 'nombre'){
+        if(s.pending==='nombre' || (!s.profileName && !wantsCatalog(text) && !wantsLocation(text))){
+          if(s.pending!=='nombre') s.pending='nombre';
           const cleaned = title(text.replace(/\s+/g,' ').trim());
           if (cleaned.length >= 2){
             s.profileName = cleaned; s.pending=null;
