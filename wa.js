@@ -874,12 +874,6 @@ router.post('/wa/webhook', async (req,res)=>{
       persistS(from); res.sendStatus(200); return;
     }
 
-    const contactName = value?.contacts?.[0]?.profile?.name;
-      if (contactName) {
-      s.profileName = preferFullName(s.profileName, contactName);
-      persistS(from);
-    }
-
     const referral = msg?.referral;
     if (referral && !s.meta.referralHandled){
       s.meta.referralHandled = true;
@@ -1079,7 +1073,10 @@ router.post('/wa/webhook', async (req,res)=>{
       if (lead){
         s.meta.origin = 'messenger'; s.greeted = true; persistS(from);
         if (lead.name) {
-          s.profileName = preferFullName(s.profileName, lead.name);
+          s.profileName = canonName(lead.name);   
+          s.asked.nombre = true;                        
+          if (s.pending === 'nombre') s.pending = null; 
+          if (s.lastPrompt === 'nombre') s.lastPrompt = null;
         }
         if (lead.dptoZ){
           const dep = detectDepartamento(lead.dptoZ) || title(lead.dptoZ.split('/')[0]||'');
