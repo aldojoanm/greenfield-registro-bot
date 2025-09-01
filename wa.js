@@ -1,4 +1,3 @@
-// wa.js
 import 'dotenv/config';
 import express from 'express';
 import fs from 'fs';
@@ -8,7 +7,6 @@ import { appendFromSession } from './sheets.js';
 const router = express.Router();
 router.use(express.json());
 
-// ===== ENV =====
 const VERIFY_TOKEN    = process.env.VERIFY_TOKEN || 'VERIFY_123';
 const WA_TOKEN        = process.env.WHATSAPP_TOKEN || '';
 const WA_PHONE_ID     = process.env.WHATSAPP_PHONE_ID || '';
@@ -18,7 +16,6 @@ const STORE_LNG       = process.env.STORE_LNG || '-63.1532503';
 const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || '').replace(/\/+$/, '');
 const AGENT_TOKEN     = process.env.AGENT_TOKEN || '';
 
-// ===== AGENT STREAM (SSE) =====
 const agentClients = new Set();
 function sseSend(res, event, payload){
   try{
@@ -70,7 +67,6 @@ const CAMP_BTNS = [
 ];
 const linkMaps  = () => `https://www.google.com/maps?q=${encodeURIComponent(`${STORE_LAT},${STORE_LNG}`)}`;
 
-// Límites visuales de WhatsApp List
 const LIST_TITLE_MAX = 24;
 const LIST_DESC_MAX  = 72;
 
@@ -87,7 +83,7 @@ const SESSION_DIR = path.resolve('./data/sessions');
 fs.mkdirSync(SESSION_DIR, { recursive: true });
 
 const sessions = new Map();
-const sessionTouched = new Map(); // id -> last ts (para GC RAM)
+const sessionTouched = new Map(); 
 function sessionPath(id){ return path.join(SESSION_DIR, `${id}.json`); }
 function loadSessionFromDisk(id){
   try{
@@ -121,14 +117,14 @@ function persistSessionToDisk(id, s){
 }
 function deleteSessionFromDisk(id){ try{ fs.unlinkSync(sessionPath(id)); }catch{} }
 
-setInterval(()=>{ // GC RAM
+setInterval(()=>{ 
   const now = Date.now();
   for(const [id, ts] of sessionTouched){
     if (now - ts > SESSION_TTL_MS) { sessions.delete(id); sessionTouched.delete(id); }
   }
 }, 10*60*1000);
 
-setInterval(()=>{ // GC DISCO
+setInterval(()=>{ 
   try{
     const now = Date.now();
     for(const f of fs.readdirSync(SESSION_DIR)){
@@ -151,20 +147,20 @@ function S(id){
         departamento:null, subzona:null, category:null,
         cultivos: [],
         hectareas:null,
-        campana:null, // Verano/Invierno/Otra
+        campana:null, 
         last_product:null, last_sku:null, last_presentacion:null,
         cantidad:null, phone:null,
         last_detail_sku:null, last_detail_ts:0,
         candidate_sku:null,
         catOffset:0,
-        cart: [] // {sku,nombre,presentacion?,cantidad}
+        cart: [] 
       },
       profileName: null,
       memory: [],
       lastPrompt: null,
       lastPromptTs: 0,
       meta: { origin:null, referral:null, referralHandled:false },
-      _savedToSheet: false // ← ★ bandera anti-doble escritura
+      _savedToSheet: false 
     });
   }
   sessionTouched.set(id, Date.now());
@@ -173,7 +169,6 @@ function S(id){
 function persistS(id){ persistSessionToDisk(id, S(id)); }
 function clearS(id){ sessions.delete(id); sessionTouched.delete(id); deleteSessionFromDisk(id); }
 
-// ===== HELPERS =====
 const norm  = (t='') => t.toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu,'');
 const title = s => String(s||'').replace(/\w\S*/g, w => w[0].toUpperCase()+w.slice(1).toLowerCase());
 const clamp = (t, n=20) => (String(t).length<=n? String(t) : String(t).slice(0,n-1)+'…');
@@ -195,7 +190,7 @@ function remember(id, role, content){
   persistS(id);
   broadcastAgent('msg', { id, role, content, ts: Date.now() });
 }
-// ===== BÚSQUEDA / PARSERS =====
+
 const normalizeCatLabel = (c='')=>{
   const t=norm(c);
   if(t.includes('fungicida')) return 'Fungicida';
@@ -235,7 +230,6 @@ function splitIAText(ia=''){
   return t.split(/[,\+\/;]| y | con /g).map(s=>s.trim()).filter(w=>w.length>=3);
 }
 
-// IA: busca por ingrediente, ignora cantidades
 function findProductsByIA(text){
   const q = String(text || '');
   if (!/[a-z]/i.test(q) || isLikelyQuantity(q)) return [];
@@ -330,7 +324,6 @@ const wantsAgentPlus = t => /asesor(a)?|agente|ejecutiv[oa]|vendedor(a)?|represe
 const wantsAnother  = t => /(otro|agregar|añadir|sumar|incluir).*(producto|art[ií]culo|item)|cotizar otro/i.test(norm(t));
 const wantsBotBack = t => /([Aa]sistente [Nn]ew [Cc]hem)/i.test(t);
 
-// ===== REFERAL FB / LEAD =====
 function parseMessengerLead(text){
   const t = String(text || '');
   if(!/\b(v[ií]a|via)\s*messenger\b/i.test(t)) return null;
@@ -410,15 +403,12 @@ function summaryText(s){
     '*La entrega de tu pedido se realiza en nuestro almacén*.'
   ].join('\n');
 }
-// Detecta si el texto parece una cantidad (con o sin unidad)
 function isLikelyQuantity(text=''){
   return /^\s*\d{1,6}(?:[.,]\d{1,2})?\s*(l|lt|lts|litro?s|kg|kilos?|unid|unidad(?:es)?)?\s*$/i.test(text);
 }
 
-// Escapa texto para regex
 function escRe(s=''){ return String(s).replace(/[.*+?^${}()|[\]\\]/g,'\\$&'); }
 
-// Normaliza aplicando sinónimos y dejando solo letras
 function alphaIA(str=''){
   let x = norm(str);
   for (const [k,v] of Object.entries(IA_SYNONYMS)){
@@ -468,7 +458,7 @@ async function waSendQ(to, payload){
   sendQueues.set(to, next);
   return next;
 }
-// Log de salidas del bot para el Inbox:
+
 const toText = (to, body) => {
   remember(to,'bot', String(body));
   return waSendQ(to,{
@@ -501,7 +491,6 @@ const toList = (to, body, title, rows=[]) => {
   });
 };
 
-// Upload local file to WhatsApp Cloud and return media id
 async function waUploadMediaFromFile(filePath){
   const url = `https://graph.facebook.com/v20.0/${encodeURIComponent(WA_PHONE_ID)}/media`;
   const ext = (filePath.split('.').pop() || '').toLowerCase();
@@ -525,7 +514,6 @@ async function toImage(to, source){
   }
 }
 
-// Enviar como humano (agente)
 async function toAgentText(to, body){
   await waSendQ(to,{
     messaging_product:'whatsapp', to, type:'text',
@@ -539,13 +527,13 @@ async function markPrompt(s, key){ s.lastPrompt = key; s.lastPromptTs = Date.now
 async function askNombre(to){
   const s=S(to); if (s.lastPrompt==='nombre' || s.asked.nombre) return;
   await markPrompt(s,'nombre'); s.pending='nombre'; s.asked.nombre=true;
-  persistS(to); // ★
+  persistS(to); 
   await toText(to,'Para personalizar tu atención, ¿cuál es tu *nombre completo*?');
 }
 async function askDepartamento(to){
   const s=S(to); if (s.lastPrompt==='departamento') return;
   await markPrompt(s,'departamento'); s.pending='departamento'; s.asked.departamento=true;
-  persistS(to); // ★
+  persistS(to); 
   await toList(to,'📍 Cuéntanos, ¿desde qué *departamento* de Bolivia nos escribes?','Elegir departamento',
     DEPARTAMENTOS.map(d=>({ title:d, payload:`DPTO_${d.toUpperCase().replace(/\s+/g,'_')}` }))
   );
@@ -553,7 +541,7 @@ async function askDepartamento(to){
 async function askSubzonaSCZ(to){
   const s=S(to); if (s.lastPrompt==='subzona') return;
   await markPrompt(s,'subzona'); s.pending='subzona'; s.asked.subzona=true;
-  persistS(to); // ★
+  persistS(to); 
   await toList(to,'Gracias. ¿En qué *zona de Santa Cruz*?','Elegir zona',
     [{title:'Norte',payload:'SUBZ_NORTE'},{title:'Este',payload:'SUBZ_ESTE'},{title:'Sur',payload:'SUBZ_SUR'},{title:'Valles',payload:'SUBZ_VALLES'},{title:'Chiquitania',payload:'SUBZ_CHIQUITANIA'}]
   );
@@ -561,14 +549,14 @@ async function askSubzonaSCZ(to){
 async function askSubzonaLibre(to){
   const s=S(to); if (s.lastPrompt==='subzona_libre') return;
   await markPrompt(s,'subzona_libre'); s.pending='subzona_libre'; s.asked.subzona=true;
-  persistS(to); // ★
+  persistS(to); 
   const dep = s.vars.departamento || 'tu departamento';
   await toText(to, `Perfecto. ¿En qué *zona* de *${dep}* trabajas?`);
 }
 async function askCultivo(to){
   const s=S(to); if (s.lastPrompt==='cultivo') return;
   await markPrompt(s,'cultivo'); s.pending='cultivo'; s.asked.cultivo=true;
-  persistS(to); // ★
+  persistS(to); 
 
   const rows = [...CROP_OPTIONS, { title:'Otro', payload:'CROP_OTRO' }];
   await toList(to,'📋 ¿Para qué *cultivo* necesitas el producto?','Elegir cultivo', rows);
@@ -577,36 +565,35 @@ async function askCultivo(to){
 async function askCultivoLibre(to){
   const s=S(to); if (s.lastPrompt==='cultivo_text') return;
   await markPrompt(s,'cultivo_text'); s.pending='cultivo_text';
-  persistS(to); // ★
+  persistS(to); 
   await toText(to,'Que *cultivo* manejas?');
 }
 
 async function askHectareas(to){
   const s=S(to); if (s.lastPrompt==='hectareas') return;
   await markPrompt(s,'hectareas'); s.pending='hectareas'; s.asked.hectareas=true;
-  persistS(to); // ★
+  persistS(to); 
   await toText(to,'¿Cuántas *hectáreas* vas a tratar? (ej. 50 ha)');
 }
 async function askCampana(to){
   const s=S(to); if (s.lastPrompt==='campana') return;
   await markPrompt(s,'campana'); s.pending='campana'; s.asked.campana=true;
-  persistS(to); // ★
+  persistS(to); 
   await toButtons(to,'¿En qué *campaña* te encuentras? ', CAMP_BTNS);
 }
 async function askCampanaLibre(to){
   const s=S(to); if (s.lastPrompt==='campana_text') return;
   await markPrompt(s,'campana_text'); s.pending='campana_text';
-  persistS(to); // ★
+  persistS(to); 
   await toText(to,'Podrias decirme que *campaña*?');
 }
 async function askCategory(to){
   const s=S(to); if (s.lastPrompt==='categoria') return;
   s.stage='product'; await markPrompt(s,'categoria'); s.pending='categoria'; s.asked.categoria=true;
-  persistS(to); // ★
+  persistS(to); 
   await toButtons(to,'¿Qué tipo de producto necesitas?', CAT_QR.map(c=>({ title:c.title, payload:c.payload })));
 }
 
-// ===== Presentaciones =====
 function productHasMultiPres(prod){
   const pres = Array.isArray(prod?.presentaciones) ? prod.presentaciones.filter(Boolean) : [];
   return pres.length > 1;
@@ -625,7 +612,6 @@ async function askPresentacion(to, prod){
   await toList(to, `¿En qué *presentación* deseas *${prod.nombre}*?`, 'Elegir presentación', rows);
 }
 
-// ===== Fila de producto con ingrediente activo (para listas)
 function productListRow(p){
   const nombre = p?.nombre || '';
   const ia     = p?.ingrediente_activo || p?.formulacion || p?.categoria || '';
@@ -636,14 +622,12 @@ function productListRow(p){
   };
 }
 
-// ★ Listado por IA (cuando el usuario pide un ingrediente)
 async function listByIA(to, products, iaText){
   const rows = products.slice(0,9).map(productListRow);
   await toList(to, `Productos con IA: ${title(iaText)}`, 'Elegir producto', rows);
   await toText(to, `Decime cuál te interesa y te paso el detalle. *Compra mínima: US$ 3.000*`);
 }
 
-// ===== Listado por categoría (paginado) =====
 async function listByCategory(to){
   const s=S(to);
   const all = getProductsByCategory(s.vars.category||'');
@@ -666,8 +650,8 @@ async function showProduct(to, prod){
   const s=S(to);
   s.vars.last_product = prod.nombre;
   s.vars.last_sku = prod.sku;
-  s.vars.last_presentacion = null; // reset presentación al cambiar de producto
-  persistS(to); // ★
+  s.vars.last_presentacion = null; 
+  persistS(to); 
 
   const catNorm = normalizeCatLabel(prod.categoria||'');
   if(catNorm && !s.vars.category) s.vars.category = catNorm;
@@ -694,7 +678,6 @@ async function showProduct(to, prod){
     markDetailShown(s, prod.sku);
   }
 
-  // Si solo hay una presentación, la fijamos; si hay varias, preguntamos
   const single = productSinglePres(prod);
   if(single && !s.vars.last_presentacion){
     s.vars.last_presentacion = single;
@@ -747,9 +730,7 @@ async function afterSummary(to, variant='cart'){
   }
 }
 
-// ===== Orquestador (guard anti re-entradas) =====
-const busy = new Set(); // ★ evita condiciones de carrera por usuario
-
+const busy = new Set(); 
 async function nextStep(to){
   if (busy.has(to)) return;
   busy.add(to);
@@ -830,12 +811,11 @@ async function nextStep(to){
       return;
     }
   } finally {
-    persistS(to); // ★ guarda avance
+    persistS(to); 
     busy.delete(to);
   }
 }
 
-// ===== VERIFY =====
 router.get('/wa/webhook',(req,res)=>{
   const mode=req.query['hub.mode'];
   const token=req.query['hub.verify_token'];
@@ -844,8 +824,7 @@ router.get('/wa/webhook',(req,res)=>{
   return res.sendStatus(403);
 });
 
-// ===== DEDUPE por wamid (evita dobles) =====
-const processed = new Map(); // wamid -> ts
+const processed = new Map(); 
 const PROCESSED_TTL = 5 * 60 * 1000;
 setInterval(()=>{ const now=Date.now(); for(const [k,ts] of processed){ if(now-ts>PROCESSED_TTL) processed.delete(k); } }, 60*1000);
 function seenWamid(id){ if(!id) return false; const now=Date.now(); const old=processed.get(id); processed.set(id,now); return !!old && (now-old)<PROCESSED_TTL; }
@@ -859,8 +838,6 @@ router.post('/wa/webhook', async (req,res)=>{
     const msg    = value?.messages?.[0];
     const from   = msg?.from;
     if(!msg || !from){ res.sendStatus(200); return; }
-
-    // ★ dedupe
     if (seenWamid(msg.id)) { res.sendStatus(200); return; }
 
     const s = S(from);
@@ -1135,7 +1112,6 @@ router.post('/wa/webhook', async (req,res)=>{
         humanOn(from, 4); persistS(from); res.sendStatus(200); return;
       }
 
-      // Globales
       if(/horario|atienden|abren|cierran/i.test(tnorm)){ await toText(from, `Atendemos ${FAQS?.horarios || 'Lun–Vie 8:00–17:00'} 🙂`); res.sendStatus(200); return; }
       if(wantsLocation(text)){ await toText(from, `Nuestra ubicación en Google Maps 👇\nVer ubicación: ${linkMaps()}`); await toButtons(from,'¿Hay algo más en lo que pueda ayudarte?',[{title:'Seguir',payload:'QR_SEGUIR'},{title:'Finalizar',payload:'QR_FINALIZAR'}]); res.sendStatus(200); return; }
       if(wantsCatalog(text)){
@@ -1155,7 +1131,6 @@ router.post('/wa/webhook', async (req,res)=>{
       }
       if(wantsAnother(text)){ await askAddMore(from); res.sendStatus(200); return; }
 
-      // CAPTURA PASIVA
       const ha   = parseHectareas(text); if(ha && !S(from).vars.hectareas){ S(from).vars.hectareas = ha; persistS(from); }
       const phone= parsePhone(text);     if(phone){ S(from).vars.phone = phone; persistS(from); }
 
@@ -1165,13 +1140,8 @@ router.post('/wa/webhook', async (req,res)=>{
         if(mOnly){ const unit = inferUnitFromProduct(S(from)).toLowerCase(); cant = `${mOnly[1].replace(',','.') } ${unit}`; }
       }
       if(cant){ S(from).vars.cantidad = cant; persistS(from); }
-
-      // Producto exacto
       const prodExact = findProduct(text);
-
-      // Búsqueda por Ingrediente Activo
       const iaHits = findProductsByIA(text);
-
       if (prodExact){
         S(from).vars.last_product = prodExact.nombre;
         S(from).vars.last_sku = prodExact.sku;
@@ -1190,7 +1160,6 @@ router.post('/wa/webhook', async (req,res)=>{
         res.sendStatus(200); return;
       }
 
-      // Categoría por texto
       const catTyped2 = detectCategory(text);
       if(catTyped2){
         S(from).vars.category=catTyped2; S(from).vars.catOffset=0; S(from).asked.categoria=true; S(from).stage='product';
@@ -1198,13 +1167,11 @@ router.post('/wa/webhook', async (req,res)=>{
         if (mentionsAcaricida(text) && catTyped2==='Insecticida') await toText(from,'Te muestro Insecticidas que cubren ácaros.');
       }
 
-      // Ubicación
       const depTyped = detectDepartamento(text);
       const subOnly  = detectSubzona(text);
       if(depTyped){ S(from).vars.departamento = depTyped; S(from).vars.subzona=null; persistS(from); }
       if((S(from).vars.departamento==='Santa Cruz' || depTyped==='Santa Cruz') && subOnly){ S(from).vars.subzona = subOnly; persistS(from); }
 
-      // Cultivo por texto (mapeo a opciones)
       if (S(from).pending==='cultivo'){
         const picked = Object.keys(CROP_SYN).find(k=>tnorm.includes(k));
         if (picked){
@@ -1218,19 +1185,16 @@ router.post('/wa/webhook', async (req,res)=>{
         }
       }
 
-      // Campaña si el usuario escribió "verano"/"invierno"
       if(!S(from).vars.campana){
         if(/\bverano\b/i.test(text)) S(from).vars.campana='Verano';
         else if(/\binvierno\b/i.test(text)) S(from).vars.campana='Invierno';
       }
 
-      // COTIZACIÓN
       if(asksPrice(text)){
         if (mentionsAcaricida(text)) await toText(from, 'Te muestro Insecticidas que cubren ácaros.');
         await toText(from,'Con gusto te preparo una *cotización* con un precio a medida. Solo necesito que me compartas unos datos para poder recomendarte la mejor opción para tu zona y cultivo');
       }
 
-      // Si llegó la cantidad y hay producto → carrito + “otro”
       if(S(from).vars.cantidad && S(from).vars.last_sku){
         addCurrentToCart(S(from)); persistS(from);
         await askAddMore(from);
@@ -1264,10 +1228,7 @@ router.post('/wa/webhook', async (req,res)=>{
     res.sendStatus(500);
   }
 });
-
-// ====== INBOX API ======
-
-// a) SSE tiempo real
+// ===== AGENT =====
 router.get('/wa/agent/stream', agentAuth, (req,res)=>{
   res.writeHead(200, {
     'Content-Type':'text/event-stream',
@@ -1281,7 +1242,6 @@ router.get('/wa/agent/stream', agentAuth, (req,res)=>{
   req.on('close', ()=>{ clearInterval(ping); agentClients.delete(res); });
 });
 
-// utilidades para listar conversaciones
 function loadAllSessionIds(){
   const ids = new Set([...sessions.keys()]);
   try{
@@ -1291,6 +1251,7 @@ function loadAllSessionIds(){
   }catch{}
   return [...ids];
 }
+
 function convoSummaryFrom(id){
   const s = S(id);
   const name = s.profileName || id;
@@ -1339,7 +1300,7 @@ router.post('/wa/agent/send', agentAuth, async (req,res)=>{
   }
 });
 
-// e) Marcar leído (resetea contador + status:read)
+// e) Marcar leído
 router.post('/wa/agent/read', agentAuth, async (req,res)=>{
   try{
     const { to } = req.body || {};

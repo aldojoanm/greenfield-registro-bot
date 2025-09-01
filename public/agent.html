@@ -25,7 +25,7 @@
 
     /* LAYOUT */
     .app{display:grid;grid-template-columns:320px 1fr;height:100dvh;overflow:hidden}
-    .left,.right,.chat,.list,.msgs{min-height:0} /* ← CLAVE para que scroll funcione en flex */
+    .left,.right,.chat,.list,.msgs{min-height:0}
 
     /* LEFT */
     .left{
@@ -81,12 +81,10 @@
     }
     @media (max-width:1100px){ .msgs{padding:14px 24px} }
 
-    /* scrollbars lindos */
     .msgs::-webkit-scrollbar,.list::-webkit-scrollbar{width:10px}
     .msgs::-webkit-scrollbar-thumb,.list::-webkit-scrollbar-thumb{background:#22323a;border-radius:8px}
     .msgs::-webkit-scrollbar-track,.list::-webkit-scrollbar-track{background:transparent}
 
-    /* Burbujas */
     .bubble{
       position:relative;max-width:74%;
       padding:10px 12px;border-radius:var(--radius);
@@ -111,7 +109,6 @@
     }
     .send:hover{background:var(--accent-2)}
 
-    /* MOBILE */
     @media (max-width:900px){
       .app{grid-template-columns:1fr}
       .left{position:fixed;inset:0 30% 0 0;transform:translateX(-100%);transition:.2s;z-index:5}
@@ -155,158 +152,221 @@
 </div>
 
 <script>
+/* ====== AUTH (token por recarga y TTL diario) ====== */
+const TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // 24h
+let sse = null; // EventSource activo (para poder reconectar)
+
+/** Pide y valida token. No se persiste en storage. */
+async function requestToken(force = false){
+  if (!force && api.token) return true;
+
+  // bucle simple hasta que ponga algo o cancele
+  while (true){
+    const t = prompt('Token de agente'); // <- pedir siempre en recarga
+    if (!t) { alert('Se requiere token para continuar.'); return false; }
+    api.token   = t.trim();
+    api.tokenAt = Date.now();
+
+    // Validar con una llamada ligera
+    try{
+      const r = await fetch('/wa/agent/convos', { headers: { 'Authorization':'Bearer '+api.token }});
+      if (r.status === 401){ alert('Token inválido. Intenta de nuevo.'); api.token=''; continue; }
+      if (!r.ok){ alert('No pude validar el token. Reintenta.'); api.token=''; continue; }
+      // OK
+      startSSE();     // (re)conectar stream con el token nuevo
+      return true;
+    }catch{
+      alert('Error de red validando token. Reintenta.'); api.token='';
+    }
+  }
+}
+
+/** Cierra y abre el SSE con el token vigente */
+function startSSE(){
+  try{ if (sse) sse.close(); }catch{}
+  if (!api.token) return;
+  sse = new EventSource('/wa/agent/stream?token=' + encodeURIComponent(api.token));
+  sse.addEventListener('msg', (ev)=>{
+    const data = JSON.parse(ev.data||'{}');
+    const msgId = normId(data.id);
+    if(current && sameId(msgId,current.id)){
+      current.memory = (current.memory||[]).concat([{role:data.role, content:data.content, ts:data.ts}]);
+      renderMsgs(current.memory);
+    }
+    refresh(false);
+  });
+}
+
+/** Fuerza reautenticación (caducidad) */
+async function forceReauth(){
+  try{ if (sse) sse.close(); }catch{}
+  api.token = '';
+  api.tokenAt = 0;
+  alert('Tu sesión de agente caducó. Ingresa el token nuevamente.');
+  const ok = await requestToken(true);
+  if (ok){ await refresh(true); }
+}
+
+/* ====== API con reintento en 401 ====== */
 const api = {
-  token: localStorage.getItem('AGENT_TOKEN') || '',
+  token: '',
+  tokenAt: 0,
   headers(){ return { 'Authorization':'Bearer '+this.token, 'Content-Type':'application/json' }; },
-  async convos(){ const r=await fetch('/wa/agent/convos',{headers:this.headers()}); if(!r.ok) throw 0; return r.json(); },
-  async history(id){ const r=await fetch('/wa/agent/history/'+encodeURIComponent(id),{headers:this.headers()}); if(!r.ok) throw 0; return r.json(); },
-  async send(to,text){ const r=await fetch('/wa/agent/send',{method:'POST',headers:this.headers(),body:JSON.stringify({to,text})}); if(!r.ok) throw 0; return r.json(); },
-  async read(to){ const r=await fetch('/wa/agent/read',{method:'POST',headers:this.headers(),body:JSON.stringify({to})}); if(!r.ok) throw 0; return r.json(); },
-  async handoff(to,mode){ const r=await fetch('/wa/agent/handoff',{method:'POST',headers:this.headers(),body:JSON.stringify({to,mode})}); if(!r.ok) throw 0; return r.json(); }
+  isExpired(){ return !this.tokenAt || (Date.now() - this.tokenAt) > TOKEN_TTL_MS; },
+
+  async convos(){
+    const r = await fetch('/wa/agent/convos',{headers:this.headers()});
+    if (r.status===401){ await forceReauth(); return this.convos(); }
+    if (!r.ok) throw 0; return r.json();
+  },
+  async history(id){
+    const r = await fetch('/wa/agent/history/'+encodeURIComponent(id),{headers:this.headers()});
+    if (r.status===401){ await forceReauth(); return this.history(id); }
+    if (!r.ok) throw 0; return r.json();
+  },
+  async send(to,text){
+    const r = await fetch('/wa/agent/send',{method:'POST',headers:this.headers(),body:JSON.stringify({to,text})});
+    if (r.status===401){ await forceReauth(); return this.send(to,text); }
+    if (!r.ok) throw 0; return r.json();
+  },
+  async read(to){
+    const r = await fetch('/wa/agent/read',{method:'POST',headers:this.headers(),body:JSON.stringify({to})});
+    if (r.status===401){ await forceReauth(); return this.read(to); }
+    if (!r.ok) throw 0; return r.json();
+  },
+  async handoff(to,mode){
+    const r = await fetch('/wa/agent/handoff',{method:'POST',headers:this.headers(),body:JSON.stringify({to,mode})});
+    if (r.status===401){ await forceReauth(); return this.handoff(to,mode); }
+    if (!r.ok) throw 0; return r.json();
+  }
 };
 
-(function bootstrap(){
-  if(!api.token){
-    const t = prompt('Token de agente'); if(!t) return;
-    localStorage.setItem('AGENT_TOKEN', t); api.token = t;
+/* ====== App ====== */
+const app = document.getElementById('app');
+const elList = document.getElementById('list');
+const elMsgs = document.getElementById('msgs');
+const elTitle= document.getElementById('title');
+const elStatus= document.getElementById('status');
+const box = document.getElementById('box');
+
+let current = null;
+let allConvos = [];
+let openLock = false;
+
+const normId = v => String(v ?? '');
+const sameId = (a,b)=> normId(a) === normId(b);
+
+function renderList(filter=''){
+  elList.innerHTML='';
+  const q = (filter||'').toLowerCase();
+  for(const c0 of (allConvos||[])){
+    const c = {...c0, id: normId(c0.id)};
+    if(q && !String(c.name||'').toLowerCase().includes(q) && !c.id.includes(q)) continue;
+
+    const row = document.createElement('div');
+    const isActive = current && sameId(c.id, current.id);
+    row.className = 'item'+(isActive?' active':'');
+    row.onclick = ()=> openChat(c.id);
+
+    const last = String(c.last||'').replace(/\n/g,' · ');
+    row.innerHTML = `
+      <div>
+        <div class="name">${c.name||c.id}</div>
+        <div class="sub">${last.slice(0,90)}</div>
+      </div>
+      <div style="display:flex;gap:6px;align-items:center">
+        ${c.human?'<span class="pill human">HUMANO</span>':''}
+        ${c.unread?`<span class="pill">${c.unread}</span>`:''}
+      </div>
+    `;
+    elList.appendChild(row);
   }
+}
 
-  const app = document.getElementById('app');
-  const elList = document.getElementById('list');
-  const elMsgs = document.getElementById('msgs');
-  const elTitle= document.getElementById('title');
-  const elStatus= document.getElementById('status');
-  const box = document.getElementById('box');
-
-  let current = null;         // { id, name, memory, human }
-  let allConvos = [];
-  let openLock = false;       // evita reentradas/doble chat
-
-  const normId = v => String(v ?? '');
-  const sameId = (a,b)=> normId(a) === normId(b);
-
-  function renderList(filter=''){
-    elList.innerHTML='';
-    const q = (filter||'').toLowerCase();
-    for(const c0 of (allConvos||[])){
-      const c = {...c0, id: normId(c0.id)};
-      if(q && !String(c.name||'').toLowerCase().includes(q) && !c.id.includes(q)) continue;
-
-      const row = document.createElement('div');
-      const isActive = current && sameId(c.id, current.id);
-      row.className = 'item'+(isActive?' active':'');
-      row.onclick = ()=> openChat(c.id);
-
-      const last = String(c.last||'').replace(/\n/g,' · ');
-      row.innerHTML = `
-        <div>
-          <div class="name">${c.name||c.id}</div>
-          <div class="sub">${last.slice(0,90)}</div>
-        </div>
-        <div style="display:flex;gap:6px;align-items:center">
-          ${c.human?'<span class="pill human">HUMANO</span>':''}
-          ${c.unread?`<span class="pill">${c.unread}</span>`:''}
-        </div>
-      `;
-      elList.appendChild(row);
-    }
-  }
-
-  async function refresh(openFirstIfNeeded=false){
-    try{
-      const {convos} = await api.convos();
-      allConvos = (convos||[]).map(c=>({...c,id:normId(c.id)}));
-      renderList(document.getElementById('search').value);
-
-      // abrir último chat recordado si no hay uno activo
-      if(openFirstIfNeeded && !current && allConvos.length){
-        const last = sessionStorage.getItem('lastChatId');
-        const fallback = last && allConvos.find(c=>sameId(c.id,last)) ? last : allConvos[0].id;
-        openChat(fallback);
-      }
-    }catch(e){ /* noop */ }
-  }
-
-  function renderMsgs(mem){
-    elMsgs.innerHTML = '';
-    for(const m of (mem||[])){
-      const div = document.createElement('div');
-      let cls='bubble sys';
-      if(m.role==='user') cls='bubble u';
-      else if(m.role==='bot') cls='bubble b';
-      else if(m.role==='agent') cls='bubble a';
-      div.className = cls;
-      div.textContent = m.content ?? '';
-      elMsgs.appendChild(div);
-    }
-    elMsgs.scrollTop = elMsgs.scrollHeight;
-  }
-
-  async function openChat(id){
-    if(openLock) return; openLock = true;
-    try{
-      const res = await api.history(normId(id));
-      // normalizamos id y evitamos inconsistencias
-      current = {...res, id:normId(res.id)};
-      elTitle.textContent = `${current.name||current.id} (${current.id})`;
-      elStatus.style.display = current.human ? 'inline-block' : 'none';
-      elStatus.textContent = current.human ? 'HUMANO' : '';
-      renderMsgs(current.memory||[]);
-      sessionStorage.setItem('lastChatId', current.id);
-
-      // marcar leído sin bloquear UI
-      api.read(current.id).catch(()=>{});
-      // refrescar contadores sin reabrir chats
-      refresh(false);
-      if (window.innerWidth<900) app.classList.remove('show-left');
-    }catch(e){
-      // fallback simple si algo falla
-      elTitle.textContent = normId(id);
-      elStatus.style.display='none';
-    }finally{
-      openLock = false;
-    }
-  }
-
-  // Acciones
-  document.getElementById('send').onclick = async ()=>{
-    const txt = box.value.trim(); if(!txt || !current) return;
-    box.value='';
-    await api.send(current.id, txt);
-    // no duplicamos: esperamos SSE para pintar
-  };
-  box.addEventListener('keydown', (e)=>{
-    if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); document.getElementById('send').click(); }
-  });
-
-  document.getElementById('markRead').onclick = async ()=>{ if(!current) return; await api.read(current.id); refresh(false); };
-  document.getElementById('takeHuman').onclick = async ()=>{ if(!current) return; await api.handoff(current.id,'human'); elStatus.style.display='inline-block'; elStatus.textContent='HUMANO'; };
-  document.getElementById('resumeBot').onclick = async ()=>{ if(!current) return; await api.handoff(current.id,'bot'); elStatus.style.display='none'; };
-
-  // UI menores
-  document.getElementById('refresh').onclick = ()=>refresh(true);
-  document.getElementById('logout').onclick = ()=>{ localStorage.removeItem('AGENT_TOKEN'); location.reload(); };
-  document.getElementById('search').oninput = (e)=> renderList(e.target.value);
-  document.getElementById('toggleLeft').onclick = ()=> app.classList.toggle('show-left');
-
-  // SSE (evita “dos chats” y conserva IDs como string)
+async function refresh(openFirstIfNeeded=false){
   try{
-    const sse = new EventSource('/wa/agent/stream?token='+encodeURIComponent(api.token));
-    sse.addEventListener('msg', (ev)=>{
-      const data = JSON.parse(ev.data||'{}');
-      const msgId = normId(data.id);
-      // si es el chat abierto, append y scroll
-      if(current && sameId(msgId,current.id)){
-        current.memory = (current.memory||[]).concat([{role:data.role, content:data.content, ts:data.ts}]);
-        renderMsgs(current.memory);
-      }
-      // reordenar/contadores sin reabrir
-      refresh(false);
-    });
-  }catch(e){}
+    const {convos} = await api.convos();
+    allConvos = (convos||[]).map(c=>({...c,id:normId(c.id)}));
+    renderList(document.getElementById('search').value);
 
-  // Primera carga
-  refresh(true);
+    if(openFirstIfNeeded && !current && allConvos.length){
+      const last = sessionStorage.getItem('lastChatId');
+      const fallback = last && allConvos.find(c=>sameId(c.id,last)) ? last : allConvos[0].id;
+      openChat(fallback);
+    }
+  }catch(e){ /* noop */ }
+}
+
+function renderMsgs(mem){
+  elMsgs.innerHTML = '';
+  for(const m of (mem||[])){
+    const div = document.createElement('div');
+    let cls='bubble sys';
+    if(m.role==='user') cls='bubble u';
+    else if(m.role==='bot') cls='bubble b';
+    else if(m.role==='agent') cls='bubble a';
+    div.className = cls;
+    div.textContent = m.content ?? '';
+    elMsgs.appendChild(div);
+  }
+  elMsgs.scrollTop = elMsgs.scrollHeight;
+}
+
+async function openChat(id){
+  if(openLock) return; openLock = true;
+  try{
+    const res = await api.history(normId(id));
+    current = {...res, id:normId(res.id)};
+    elTitle.textContent = `${current.name||current.id} (${current.id})`;
+    elStatus.style.display = current.human ? 'inline-block' : 'none';
+    elStatus.textContent = current.human ? 'HUMANO' : '';
+    renderMsgs(current.memory||[]);
+    sessionStorage.setItem('lastChatId', current.id);
+
+    api.read(current.id).catch(()=>{});
+    refresh(false);
+    if (window.innerWidth<900) app.classList.remove('show-left');
+  }catch(e){
+    elTitle.textContent = normId(id);
+    elStatus.style.display='none';
+  }finally{
+    openLock = false;
+  }
+}
+
+/* ====== acciones UI ====== */
+document.getElementById('send').onclick = async ()=>{
+  const txt = box.value.trim(); if(!txt || !current) return;
+  box.value='';
+  await api.send(current.id, txt);
+};
+box.addEventListener('keydown', (e)=>{
+  if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); document.getElementById('send').click(); }
+});
+
+document.getElementById('markRead').onclick = async ()=>{ if(!current) return; await api.read(current.id); refresh(false); };
+document.getElementById('takeHuman').onclick = async ()=>{ if(!current) return; await api.handoff(current.id,'human'); elStatus.style.display='inline-block'; elStatus.textContent='HUMANO'; };
+document.getElementById('resumeBot').onclick = async ()=>{ if(!current) return; await api.handoff(current.id,'bot'); elStatus.style.display='none'; };
+
+document.getElementById('refresh').onclick = ()=>refresh(true);
+document.getElementById('logout').onclick = ()=>{
+  try{ if (sse) sse.close(); }catch{}
+  api.token=''; api.tokenAt=0;
+  location.reload();
+};
+document.getElementById('search').oninput = (e)=> renderList(e.target.value);
+document.getElementById('toggleLeft').onclick = ()=> app.classList.toggle('show-left');
+
+/* ====== bootstrap ====== */
+(async function bootstrap(){
+  const ok = await requestToken(true);
+  if (!ok) return;
+  await refresh(true);
+
+  // watchdog de caducidad diaria (por si la pestaña queda abierta)
+  setInterval(()=>{
+    if (api.isExpired()) forceReauth();
+  }, 60*1000);
 })();
 </script>
 </body>

@@ -1,4 +1,3 @@
-// index.js (Messenger Router) — flujo robusto con aperturas de vendedor + producto desde catálogo + política de envíos
 import 'dotenv/config';
 import express from 'express';
 import fs from 'fs';
@@ -6,7 +5,6 @@ import fs from 'fs';
 const router = express.Router();
 router.use(express.json());
 
-// ===== ENV =====
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
 const CATALOG_URL = process.env.CATALOG_URL || 'https://tinyurl.com/PORTAFOLIO-NEWCHEM';
@@ -14,16 +12,13 @@ const WA_SELLER_NUMBER = (process.env.WA_SELLER_NUMBER || '').replace(/\D/g,'');
 const STORE_LAT = process.env.STORE_LAT || '-17.7580406';
 const STORE_LNG = process.env.STORE_LNG || '-63.1532503';
 
-// ===== DATA =====
 function loadJSON(p){ try { return JSON.parse(fs.readFileSync(p,'utf8')); } catch { return {}; } }
 let FAQS = loadJSON('./knowledge/faqs.json');
-let CATALOG = loadJSON('./knowledge/catalog.json'); // para reconocer productos
+let CATALOG = loadJSON('./knowledge/catalog.json');
 
-// ===== CONSTANTES =====
 const DEPARTAMENTOS = ['Santa Cruz','Cochabamba','La Paz','Chuquisaca','Tarija','Oruro','Potosí','Beni','Pando'];
 const SUBZONAS_SCZ  = ['Norte','Este','Sur','Valles','Chiquitania'];
 
-// sinónimos para texto libre
 const DPTO_SYNONYMS = {
   'Santa Cruz' : ['scz','sta cruz','santa cruz de la sierra','santa-cruz','santacruz'],
   'Cochabamba' : ['cbba','cbb','cba'],
@@ -41,11 +36,11 @@ const sessions = new Map();
 function getSession(psid){
   if(!sessions.has(psid)){
     sessions.set(psid,{
-      pending: null,  // 'nombre' | 'departamento' | 'subzona' | 'subzona_free' | 'prod_from_catalog'
+      pending: null,  
       vars: {
         departamento:null, subzona:null,
         hectareas:null, phone:null,
-        productIntent:null, // << producto de interés
+        productIntent:null, 
         intent:null
       },
       profileName: null,
@@ -91,7 +86,29 @@ function parsePhone(text){
   return m ? m[1].replace(/[^\d+]/g,'') : null;
 }
 
-// Intenciones globales
+const NAME_STOPWORDS = new Set([
+  'hola','buenas','buenos','noches','tardes','días','dias','gracias','ok','okay','vale','listo','si','sí','no',
+  'buenasnoches','buenastardes','buenosdías','buenosdias','hello','hey'
+]);
+function isLikelyName(raw=''){
+  const txt = String(raw || '').trim();
+  if (!txt) return false;
+  if (/[0-9@#\?\!\(\)\[\]\{\}<>]|https?:\/\//i.test(txt)) return false;
+  const tokens = txt
+    .replace(/\s+/g,' ')
+    .split(' ')
+    .filter(Boolean);
+  if (!tokens.length) return false;
+  if (tokens.length > 5) return false;
+  const plain = norm(tokens.join(''));
+  if (NAME_STOPWORDS.has(plain)) return false;
+  const badCombo = tokens.every(t => NAME_STOPWORDS.has(norm(t)));
+  if (badCombo) return false;
+  const reWord = /^[A-Za-zÁÉÍÓÚÜÑáéíóúüñ'’-]{2,20}$/;
+  if (!tokens.every(t => reWord.test(t))) return false;
+  return true;
+}
+
 const wantsCatalog  = t => /cat[aá]logo|portafolio|lista de precios/i.test(t) || /portafolio[- _]?newchem/i.test(norm(t));
 const wantsLocation = t => /(ubicaci[oó]n|direcci[oó]n|mapa|d[oó]nde est[aá]n|donde estan)/i.test(t);
 const wantsClose    = t => /(no gracias|gracias|eso es todo|listo|nada m[aá]s|ok gracias|est[aá] bien|finalizar)/i.test(norm(t));
@@ -101,14 +118,13 @@ const isGreeting    = t => /(hola|buen[oa]s (d[ií]as|tardes|noches)|hey|hello)/
 const asksProducts  = t => /(qu[eé] productos tienen|que venden|productos disponibles|l[ií]nea de productos)/i.test(t);
 const asksShipping  = t => /(env[ií]os?|env[ií]an|hacen env[ií]os|delivery|entrega|env[ií]an hasta|mandan|env[ií]o a)/i.test(norm(t));
 
-// Reconocer producto (catálogo)
 function findProduct(text){
   const q = norm(text).replace(/[^a-z0-9\s]/g,' ').replace(/\s+/g,' ').trim();
   if(!CATALOG || !Array.isArray(CATALOG)) return null;
   let best=null, bestScore=0;
   for(const p of CATALOG){
     const name = norm(p.nombre||'').trim(); if(!name) continue;
-    if(q.includes(name)) return p; // contains
+    if(q.includes(name)) return p; 
     const qTok = new Set(q.split(' '));
     const nTok = new Set(name.split(' '));
     const inter = [...qTok].filter(x=>nTok.has(x)).length;
@@ -118,7 +134,6 @@ function findProduct(text){
   return bestScore>=0.6 ? best : null;
 }
 
-// ===== FB SENDERS =====
 async function httpFetchAny(...args){ const f=globalThis.fetch||(await import('node-fetch')).default; return f(...args); }
 async function sendText(psid, text){
   const url=`https://graph.facebook.com/v20.0/me/messages?access_token=${encodeURIComponent(PAGE_ACCESS_TOKEN)}`;
@@ -156,12 +171,11 @@ async function sendButtons(psid, text, buttons=[]){
   if(!r.ok) console.error('sendButtons', await r.text());
 }
 
-// ===== PREGUNTAS ATÓMICAS =====
 async function askName(psid){
   const s=getSession(psid);
   if (s.pending==='nombre') return;
   s.pending='nombre';
-  await sendText(psid, 'Antes de continuar, ¿Cuál es tu nombre completo? ✍️');
+  await sendText(psid, 'Antes de continuar, ¿cuál es tu *nombre y apellido*? ✍️ (solo el nombre, sin saludos)');
 }
 async function askDepartamento(psid){
   const s=getSession(psid);
@@ -192,7 +206,6 @@ async function askSubzonaLibre(psid){
   await sendText(psid, `Perfecto. ¿En qué *zona / municipio* de *${s.vars.departamento}* te encuentras? ✍️`);
 }
 
-// ===== RESUMEN / WHATSAPP / AYUDA =====
 function summaryTextForFinal(s){
   const nombre = s.profileName || 'Cliente';
   const dep = s.vars.departamento || 'ND';
@@ -257,7 +270,6 @@ async function showHelp(psid){
   ]);
 }
 
-// ===== Orquestador =====
 async function nextStep(psid){
   const s=getSession(psid);
   if(!s.profileName) return askName(psid);
@@ -267,14 +279,12 @@ async function nextStep(psid){
   return finishAndWhatsApp(psid);
 }
 
-// ===== VERIFY =====
 router.get('/webhook',(req,res)=>{
   const { ['hub.mode']:mode, ['hub.verify_token']:token, ['hub.challenge']:challenge } = req.query;
   if(mode==='subscribe' && token===VERIFY_TOKEN) return res.status(200).send(challenge);
   res.sendStatus(403);
 });
 
-// ===== Aperturas inteligentes (antes de pedir nombre) =====
 async function handleOpeningIntent(psid, text){
   const s = getSession(psid);
   const prod = findProduct(text);
@@ -397,7 +407,6 @@ router.post('/webhook', async (req,res)=>{
         if(!text) continue;
         remember(psid,'user',text);
 
-        // Saludo si el usuario escribió sin tocar “Empezar”
         if(!s.flags.greeted && isGreeting(text)){
           s.flags.greeted = true;
           await sendText(psid, '👋 ¡Hola! Bienvenido(a) a New Chem.\nTenemos agroquímicos al mejor precio y calidad para tu campaña. 🌱');
@@ -406,7 +415,6 @@ router.post('/webhook', async (req,res)=>{
           continue;
         }
 
-        // === PRODUCTO desde catálogo (captura antes del nombre)
         if(s.pending==='prod_from_catalog'){
           const prod = findProduct(text);
           if (prod){
@@ -421,17 +429,16 @@ router.post('/webhook', async (req,res)=>{
           }
         }
 
-        // === APERTURA INTELIGENTE cuando aún no tenemos nombre ===
         if(!s.profileName){
           const handled = await handleOpeningIntent(psid, text);
           if(handled) continue;
+          await askName(psid);
+          continue;
         }
 
-        // Captura pasiva
         const ha   = parseHectareas(text); if(ha) s.vars.hectareas = ha;
         const phone= parsePhone(text);     if(phone) s.vars.phone = phone;
 
-        // === PREGUNTAS DE ENVÍO (en cualquier etapa)
         if(asksShipping(text)){
           await sendText(psid,
             'Realizamos la **entrega en nuestro almacén de Santa Cruz de la Sierra**. ' +
@@ -442,20 +449,18 @@ router.post('/webhook', async (req,res)=>{
           continue;
         }
 
-        // === CAPTURA DE NOMBRE ===
-        if(s.pending==='nombre' || (!s.profileName && !wantsCatalog(text) && !wantsLocation(text))){
-          if(s.pending!=='nombre') s.pending='nombre';
-          const cleaned = title(text.replace(/\s+/g,' ').trim());
-          if (cleaned.length >= 2){
-            s.profileName = cleaned; s.pending=null;
-            await askDepartamento(psid);
-          }else{
-            await sendText(psid,'¿Me repites tu *nombre completo* por favor? ✍️');
+        if(s.pending==='nombre'){
+          const raw = text.replace(/\s+/g,' ').trim();
+          if (!isLikelyName(raw)){
+            await sendText(psid, 'Creo que eso no parece un nombre. Por favor escribe *solo tu nombre y apellido*, sin saludos (ej. "Juan Pérez").');
+            continue;
           }
+          const cleaned = title(raw.toLowerCase());
+          s.profileName = cleaned; s.pending=null;
+          await askDepartamento(psid);
           continue;
         }
 
-        // === DEPARTAMENTO (acepta texto aunque espere QR) ===
         if(!s.vars.departamento || s.pending==='departamento'){
           const depTyped = canonicalizeDepartamento(text);
           if(depTyped){
@@ -469,14 +474,12 @@ router.post('/webhook', async (req,res)=>{
           }
         }
 
-        // === SUBZONA SCZ (texto o QR) ===
         if(s.vars.departamento==='Santa Cruz' && (!s.vars.subzona || s.pending==='subzona')){
           const z = detectSubzonaSCZ(text);
           if(z){ s.vars.subzona = z; s.pending=null; await nextStep(psid); continue; }
           if(s.pending==='subzona'){ await askSubzonaSCZ(psid); continue; }
         }
 
-        // === SUBZONA libre para otros dptos ===
         if(s.pending==='subzona_free' && !s.vars.subzona){
           const z = title(text.trim());
           if (z){ s.vars.subzona = z; s.pending=null; await nextStep(psid); }
@@ -484,10 +487,9 @@ router.post('/webhook', async (req,res)=>{
           continue;
         }
 
-        // Intenciones globales (responden siempre)
         if(wantsLocation(text)){ await sendButtons(psid, 'Nuestra ubicación en Google Maps 👇', [{type:'web_url', url: linkMaps(), title:'Ver ubicación'}]); await showHelp(psid); continue; }
         if(wantsCatalog(text)){  await sendButtons(psid, 'Abrir catálogo completo', [{type:'web_url', url: CATALOG_URL, title:'Ver catálogo'}]); await sendText(psid,'¿Qué *producto* te interesó del catálogo?'); s.pending='prod_from_catalog'; await showHelp(psid); continue; }
-        if(asksPrice(text)){     // además podríamos atrapar nombre de producto aquí
+        if(asksPrice(text)){     
           const prodHit = findProduct(text);
           if (prodHit) s.vars.productIntent = prodHit.nombre;
           await sendText(psid, 'Con gusto te preparamos una *cotización*. Primero confirmemos tu ubicación para asignarte el asesor correcto.');
@@ -496,13 +498,10 @@ router.post('/webhook', async (req,res)=>{
         }
         if(wantsAgent(text)){    const wa = whatsappLinkFromSession(s); if (wa) await sendButtons(psid,'Te atiende un asesor por WhatsApp 👇',[{type:'web_url', url: wa, title:'📲 Abrir WhatsApp'}]); else await sendText(psid,'Compártenos un número de contacto y seguimos por WhatsApp.'); await showHelp(psid); continue; }
         if(wantsClose(text)){    await sendText(psid, '¡Gracias por escribirnos! Si más adelante te surge algo, aquí estoy para ayudarte. 👋'); clearSession(psid); continue; }
-
-        // Si hay etapa pendiente, re-pregunta en vez de quedarse callado
         if(s.pending==='departamento'){ await askDepartamento(psid); continue; }
         if(s.pending==='subzona'){ await askSubzonaSCZ(psid); continue; }
         if(s.pending==='subzona_free'){ await askSubzonaLibre(psid); continue; }
 
-        // Si nada aplica, ofrece ayuda amable
         await sendText(psid, 'Puedo ayudarte con *cotizaciones, catálogo, horarios, ubicación y envíos*.');
         await showHelp(psid);
       }

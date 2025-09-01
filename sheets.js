@@ -1,13 +1,12 @@
 // src/sheets.js
 import 'dotenv/config';
 import { google } from 'googleapis';
-
-let _sheets; // cache del cliente de Sheets
+let _sheets; 
 
 async function getSheets() {
   if (_sheets) return _sheets;
 
-  // 1) Credenciales inline (GOOGLE_CREDENTIALS_JSON)  2) keyFile (GOOGLE_APPLICATION_CREDENTIALS)
+  // 1) Credenciales
   let auth;
   const raw = process.env.GOOGLE_CREDENTIALS_JSON;
 
@@ -39,11 +38,8 @@ async function getSheets() {
 // ===== Helpers =====
 const onlyDigits = (s='') => String(s).replace(/[^\d]/g, '');
 const pad2 = n => String(n).padStart(2, '0');
-
-// Zona horaria local para formateo. Cambiable por env: LOCAL_TZ="America/La_Paz"
 const LOCAL_TZ = process.env.LOCAL_TZ || 'America/La_Paz';
 
-// Fecha legible en la zona horaria local (YYYY-MM-DD HH:MM)
 function formatDisplayDate(d){
   try{
     const parts = new Intl.DateTimeFormat('es-BO', {
@@ -56,7 +52,6 @@ function formatDisplayDate(d){
     const hh = get('hour'), mi = get('minute');
     return `${yyyy}-${mm}-${dd} ${hh}:${mi}`;
   }catch{
-    // Fallback simple si Intl fallara
     const yy = d.getFullYear();
     const mm = pad2(d.getMonth()+1);
     const dd = pad2(d.getDate());
@@ -73,8 +68,6 @@ function buildSummaryBullets(s, fechaDisplay) {
   const cultivo= (s?.vars?.cultivos && s.vars.cultivos[0]) || 'ND';
   const ha     = s?.vars?.hectareas || 'ND';
   const camp   = s?.vars?.campana || 'ND';
-
-  // productos: carrito o último producto
   const carrito = Array.isArray(s?.vars?.cart) ? s.vars.cart : [];
   const items = (carrito.length > 0) ? carrito : [{
     nombre: s?.vars?.last_product || '',
@@ -102,7 +95,6 @@ function buildSummaryBullets(s, fechaDisplay) {
   return base.join('\n');
 }
 
-// Mensaje corto para el CLIENTE (solo productos y cantidades)
 function buildClientMessage({ nombre, items }) {
   const quien = nombre || 'Hola';
   const lines = items.map(it => {
@@ -127,7 +119,6 @@ function buildShareLink(message) {
   return `https://wa.me/?text=${encodeURIComponent(message)}`;
 }
 
-// Mensaje para compartir en el grupo (incluye link al cliente CON SALUDO)
 function buildGroupShareMessage({ resumen, linkClienteConMensaje }) {
   return [
     `Resumen de solicitud:`,
@@ -139,7 +130,7 @@ function buildGroupShareMessage({ resumen, linkClienteConMensaje }) {
 
 function buildRowFromSession(s, fromPhone, estado = 'NUEVO') {
   const now = new Date();
-  const fechaDisplay = formatDisplayDate(now); // ← lo que se guardará en la celda "Fecha"
+  const fechaDisplay = formatDisplayDate(now); 
 
   const fullName = s?.fullName || s?.profileName || '';
   const dep = s?.vars?.departamento || '';
@@ -149,7 +140,6 @@ function buildRowFromSession(s, fromPhone, estado = 'NUEVO') {
   const hectareas = s?.vars?.hectareas || '';
   const campana = s?.vars?.campana || '';
 
-  // carrito o último producto
   const carrito = Array.isArray(s?.vars?.cart) ? s.vars.cart : [];
   const items = (carrito.length > 0)
     ? carrito
@@ -159,42 +149,29 @@ function buildRowFromSession(s, fromPhone, estado = 'NUEVO') {
         cantidad: s?.vars?.cantidad || ''
       }].filter(it => it.nombre);
 
-  // Multilínea para columnas
+
   const productoCell     = items.map(it => it?.nombre || '').join('\n');
   const presentacionCell = items.map(it => it?.presentacion || '').join('\n');
   const cantidadCell     = items.map(it => it?.cantidad || '').join('\n');
 
   // ID de cotización
   const cotizacion_id = `${Date.now()}-${String(fromPhone || '').slice(-7)}`;
-
-  // Resumen (texto) — incluye la fecha
   const resumenTxt = buildSummaryBullets(s, fechaDisplay);
-
-  // Link al CLIENTE con el mensaje corto (solo productos y cantidades)
   const clientMsg   = buildClientMessage({ nombre: fullName, items });
   const linkCliente = buildWaLinkTo(fromPhone, clientMsg);
 
-  // “Resumen Pedido” como LINK de compartir (para pegar en el grupo) usando el link con saludo
+  // “Resumen Pedido” 
   const groupMsg = buildGroupShareMessage({
     resumen: resumenTxt,
     linkClienteConMensaje: linkCliente
   });
   const resumenPedidoLink = buildShareLink(groupMsg);
-
-  // Estado a 3 valores
   const EST = String(estado || '').toUpperCase();
   const estadoFinal = (EST === 'NUEVO' || EST === 'PENDIENTE' || EST === 'CERRADO') ? EST : 'NUEVO';
-
-  // Seguimiento (lo llenará Apps Script si está vacío)
   const seguimiento = '';
-
-  // calendar_event_id (lo llenará Apps Script)
   const calId = '';
-
-  // Teléfono: solo dígitos
   const phoneDigitsOnly = onlyDigits(fromPhone);
 
-  // Fecha | Teléfono | Nombre Completo | Ubicación | Cultivo | Hectáreas | Campaña | Producto | Presentacion | Cantidad | Estado | Contacto Cliente | Resumen Pedido | Seguimiento | cotizacion_id | calendar_event_id
   return [
     fechaDisplay,         // 0  Fecha (legible local)
     phoneDigitsOnly,      // 1  Teléfono
