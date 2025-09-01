@@ -1,3 +1,4 @@
+// index.js (Messenger Router) — flujo robusto con aperturas de vendedor + producto desde catálogo + política de envíos
 import 'dotenv/config';
 import express from 'express';
 import fs from 'fs';
@@ -16,12 +17,11 @@ const STORE_LNG = process.env.STORE_LNG || '-63.1532503';
 // ===== DATA =====
 function loadJSON(p){ try { return JSON.parse(fs.readFileSync(p,'utf8')); } catch { return {}; } }
 let FAQS = loadJSON('./knowledge/faqs.json');
-let CATALOG = loadJSON('./knowledge/catalog.json');
+let CATALOG = loadJSON('./knowledge/catalog.json'); // para reconocer productos
 
 // ===== CONSTANTES =====
 const DEPARTAMENTOS = ['Santa Cruz','Cochabamba','La Paz','Chuquisaca','Tarija','Oruro','Potosí','Beni','Pando'];
 const SUBZONAS_SCZ  = ['Norte','Este','Sur','Valles','Chiquitania'];
-const WELCOME = '👋 ¡Hola! Bienvenido(a) a New Chem.\nTenemos agroquímicos al mejor precio y calidad para tu campaña. 🌱';
 
 // sinónimos para texto libre
 const DPTO_SYNONYMS = {
@@ -45,7 +45,7 @@ function getSession(psid){
       vars: {
         departamento:null, subzona:null,
         hectareas:null, phone:null,
-        productIntent:null,
+        productIntent:null, // << producto de interés
         intent:null
       },
       profileName: null,
@@ -89,27 +89,6 @@ function parseHectareas(text){
 function parsePhone(text){
   const m = String(text).match(/(\+?\d[\d\s\-]{6,17}\d)/);
   return m ? m[1].replace(/[^\d+]/g,'') : null;
-}
-
-// --- VALIDACIÓN DE NOMBRE
-const NAME_STOPWORDS = new Set([
-  'hola','buenas','buenos','noches','tardes','días','dias','gracias','ok','okay','vale','listo','si','sí','no',
-  'buenasnoches','buenastardes','buenosdías','buenosdias','hello','hey'
-]);
-function isLikelyName(raw=''){
-  const txt = String(raw || '').trim();
-  if (!txt) return false;
-  if (/[0-9@#\?\!\(\)\[\]\{\}<>]|https?:\/\//i.test(txt)) return false;
-  const tokens = txt.replace(/\s+/g,' ').split(' ').filter(Boolean);
-  if (!tokens.length) return false;
-  if (tokens.length > 5) return false;
-  const plain = norm(tokens.join(''));
-  if (NAME_STOPWORDS.has(plain)) return false;
-  const badCombo = tokens.every(t => NAME_STOPWORDS.has(norm(t)));
-  if (badCombo) return false;
-  const reWord = /^[A-Za-zÁÉÍÓÚÜÑáéíóúüñ'’-]{2,20}$/;
-  if (!tokens.every(t => reWord.test(t))) return false;
-  return true;
 }
 
 // Intenciones globales
@@ -182,8 +161,7 @@ async function askName(psid){
   const s=getSession(psid);
   if (s.pending==='nombre') return;
   s.pending='nombre';
-  // Mensaje breve y neutro
-  await sendText(psid, '¿Cuál es tu nombre completo? ✍️');
+  await sendText(psid, 'Antes de continuar, ¿Cuál es tu nombre completo? ✍️');
 }
 async function askDepartamento(psid){
   const s=getSession(psid);
@@ -361,7 +339,7 @@ router.post('/webhook', async (req,res)=>{
         // GET_STARTED
         if(ev.postback?.payload === 'GET_STARTED'){
           s.flags.greeted = true;
-          await sendText(psid, WELCOME);
+          await sendText(psid, '👋 ¡Hola! Bienvenido(a) a New Chem.\nTenemos agroquímicos al mejor precio y calidad para tu campaña. 🌱');
           await askName(psid);
           continue;
         }
@@ -422,7 +400,7 @@ router.post('/webhook', async (req,res)=>{
         // Saludo si el usuario escribió sin tocar “Empezar”
         if(!s.flags.greeted && isGreeting(text)){
           s.flags.greeted = true;
-          await sendText(psid, WELCOME);
+          await sendText(psid, '👋 ¡Hola! Bienvenido(a) a New Chem.\nTenemos agroquímicos al mejor precio y calidad para tu campaña. 🌱');
           const handled = await handleOpeningIntent(psid, text);
           if(!handled) await askName(psid);
           continue;
@@ -443,18 +421,13 @@ router.post('/webhook', async (req,res)=>{
           }
         }
 
-        // === APERTURA INTELIGENTE cuando aún no tenemos nombre
+        // === APERTURA INTELIGENTE cuando aún no tenemos nombre ===
         if(!s.profileName){
           const handled = await handleOpeningIntent(psid, text);
           if(handled) continue;
-          // Si no se entiende, manda al inicio y sigue flujo normal
-          s.flags.greeted = true;
-          await sendText(psid, WELCOME);
-          await askName(psid);
-          continue;
         }
 
-        // Captura pasiva (no afecta nombre)
+        // Captura pasiva
         const ha   = parseHectareas(text); if(ha) s.vars.hectareas = ha;
         const phone= parsePhone(text);     if(phone) s.vars.phone = phone;
 
@@ -469,23 +442,21 @@ router.post('/webhook', async (req,res)=>{
           continue;
         }
 
-        // === CAPTURA DE NOMBRE — SOLO si lo estamos pidiendo
-        if(s.pending==='nombre'){
-          const raw = text.replace(/\s+/g,' ').trim();
-          if (!isLikelyName(raw)){
-            // Nada de mensajes de “eso no parece un nombre”; volvemos a inicio y seguimos normal
-            s.flags.greeted = true;
-            await sendText(psid, WELCOME);
-            await askName(psid);
-            continue;
+        // === CAPTURA DE NOMBRE ===
+        // >>> ÚNICO CAMBIO: antes intentaba capturar nombre también cuando !s.profileName && !wantsCatalog && !wantsLocation
+        // >>> Ahora SOLO si realmente estamos pidiendo el nombre:
+        if (s.pending === 'nombre'){
+          const cleaned = title(text.replace(/\s+/g,' ').trim());
+          if (cleaned.length >= 2){
+            s.profileName = cleaned; s.pending=null;
+            await askDepartamento(psid);
+          }else{
+            await sendText(psid,'¿Me repites tu *nombre completo* por favor? ✍️');
           }
-          const cleaned = title(raw.toLowerCase());
-          s.profileName = cleaned; s.pending=null;
-          await askDepartamento(psid);
           continue;
         }
 
-        // === DEPARTAMENTO (acepta texto aunque espere QR)
+        // === DEPARTAMENTO (acepta texto aunque espere QR) ===
         if(!s.vars.departamento || s.pending==='departamento'){
           const depTyped = canonicalizeDepartamento(text);
           if(depTyped){
@@ -499,14 +470,14 @@ router.post('/webhook', async (req,res)=>{
           }
         }
 
-        // === SUBZONA SCZ (texto o QR)
+        // === SUBZONA SCZ (texto o QR) ===
         if(s.vars.departamento==='Santa Cruz' && (!s.vars.subzona || s.pending==='subzona')){
           const z = detectSubzonaSCZ(text);
           if(z){ s.vars.subzona = z; s.pending=null; await nextStep(psid); continue; }
           if(s.pending==='subzona'){ await askSubzonaSCZ(psid); continue; }
         }
 
-        // === SUBZONA libre para otros dptos
+        // === SUBZONA libre para otros dptos ===
         if(s.pending==='subzona_free' && !s.vars.subzona){
           const z = title(text.trim());
           if (z){ s.vars.subzona = z; s.pending=null; await nextStep(psid); }
@@ -517,23 +488,15 @@ router.post('/webhook', async (req,res)=>{
         // Intenciones globales (responden siempre)
         if(wantsLocation(text)){ await sendButtons(psid, 'Nuestra ubicación en Google Maps 👇', [{type:'web_url', url: linkMaps(), title:'Ver ubicación'}]); await showHelp(psid); continue; }
         if(wantsCatalog(text)){  await sendButtons(psid, 'Abrir catálogo completo', [{type:'web_url', url: CATALOG_URL, title:'Ver catálogo'}]); await sendText(psid,'¿Qué *producto* te interesó del catálogo?'); s.pending='prod_from_catalog'; await showHelp(psid); continue; }
-        if(asksPrice(text)){
+        if(asksPrice(text)){     // además podríamos atrapar nombre de producto aquí
           const prodHit = findProduct(text);
           if (prodHit) s.vars.productIntent = prodHit.nombre;
           await sendText(psid, 'Con gusto te preparamos una *cotización*. Primero confirmemos tu ubicación para asignarte el asesor correcto.');
           await nextStep(psid);
           continue;
         }
-        if(wantsAgent(text)){
-          const wa = whatsappLinkFromSession(s);
-          if (wa) await sendButtons(psid,'Te atiende un asesor por WhatsApp 👇',[{type:'web_url', url: wa, title:'📲 Abrir WhatsApp'}]);
-          else await sendText(psid,'Compártenos un número de contacto y seguimos por WhatsApp.');
-          await showHelp(psid); continue;
-        }
-        if(wantsClose(text)){
-          await sendText(psid, '¡Gracias por escribirnos! Si más adelante te surge algo, aquí estoy para ayudarte. 👋');
-          clearSession(psid); continue;
-        }
+        if(wantsAgent(text)){    const wa = whatsappLinkFromSession(s); if (wa) await sendButtons(psid,'Te atiende un asesor por WhatsApp 👇',[{type:'web_url', url: wa, title:'📲 Abrir WhatsApp'}]); else await sendText(psid,'Compártenos un número de contacto y seguimos por WhatsApp.'); await showHelp(psid); continue; }
+        if(wantsClose(text)){    await sendText(psid, '¡Gracias por escribirnos! Si más adelante te surge algo, aquí estoy para ayudarte. 👋'); clearSession(psid); continue; }
 
         // Si hay etapa pendiente, re-pregunta en vez de quedarse callado
         if(s.pending==='departamento'){ await askDepartamento(psid); continue; }
