@@ -175,7 +175,8 @@ async function askName(psid){
   const s=getSession(psid);
   if (s.pending==='nombre') return;
   s.pending='nombre';
-  await sendText(psid, 'Antes de continuar, ¿cuál es tu *nombre y apellido*? ✍️ (solo el nombre, sin saludos)');
+  await sendText(psid, '👋 ¡Hola! Bienvenido(a) a New Chem.\nTenemos agroquímicos al mejor precio y calidad para tu campaña. 🌱');
+  await sendText(psid, 'Antes de continuar, ¿Cuál es tu *nombre compelto*? ✍️');
 }
 async function askDepartamento(psid){
   const s=getSession(psid);
