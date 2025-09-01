@@ -174,6 +174,20 @@ const title = s => String(s||'').replace(/\w\S*/g, w => w[0].toUpperCase()+w.sli
 const clamp = (t, n=20) => (String(t).length<=n? String(t) : String(t).slice(0,n-1)+'…');
 const clampN = (t, n) => clamp(t, n);
 const upperNoDia = (t='') => t.normalize('NFD').replace(/\p{Diacritic}/gu,'').toUpperCase();
+// === Helpers para nombre completo (preferir el más "largo"/completo) ===
+const canonName = (s='') => title(String(s||'').trim().replace(/\s+/g,' ').toLowerCase());
+const tokenCount = (s='') => String(s||'').trim().split(/\s+/).filter(Boolean).length;
+const preferFullName = (current, candidate) => {
+  const a = canonName(current);
+  const b = canonName(candidate);
+  if (!b) return a || '';
+  if (!a) return b;
+  const ta = tokenCount(a), tb = tokenCount(b);
+  if (tb > ta) return b;                 // más palabras → mejor
+  if (tb === ta && b.length > a.length) return b; // misma #palabras pero más largo
+  return a;                              // conserva el mejor que ya teníamos
+};
+
 
 const b64u = s => Buffer.from(String(s),'utf8').toString('base64').replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
 const ub64u = s => Buffer.from(String(s).replace(/-/g,'+').replace(/_/g,'/'), 'base64').toString('utf8');
@@ -328,7 +342,9 @@ function parseMessengerLead(text){
   const t = String(text || '');
   if(!/\b(v[ií]a|via)\s*messenger\b/i.test(t)) return null;
   const pick = (re)=>{ const m=t.match(re); return m? m[1].trim() : null; };
-  const name  = pick(/Hola,\s*soy\s*([^(•\n]+?)(?=\s*\(|\s*\.|\s*Me|$)/i);
+  const nameHola = pick(/Hola,\s*soy\s*([^(•\n]+?)(?=\s*\(|\s*\.|\s*Me|$)/i);
+  const nameCampo = pick(/Nombre:\s*([^\n•]+)/i);
+  const name  = nameHola || nameCampo || null;
   const prod  = pick(/Producto:\s*([^•\n]+)/i);
   const qty   = pick(/Cantidad:\s*([^•\n]+)/i);
   const crops = pick(/Cultivos?:\s*([^•\n]+)/i);
@@ -336,6 +352,7 @@ function parseMessengerLead(text){
   const zona  = pick(/Zona:\s*([^•\n]+)/i);
   return { name, prod, qty, crops, dptoZ, zona };
 }
+
 function productFromReferral(ref){
   try{
     const bits = [ref?.headline, ref?.body, ref?.source_url, ref?.adgroup_name, ref?.campaign_name]
