@@ -102,9 +102,11 @@
       display:flex;gap:8px;padding:12px;border-top:1px solid var(--stroke);background:var(--panel);align-items:flex-end
     }
     .input textarea{
+      min-height: 44px;
       flex:1;background:var(--panel-2);border:1px solid var(--ring);color:var(--txt);
       padding:10px 12px;border-radius:12px;min-height:44px;max-height:140px;outline:none;resize:vertical
     }
+    .clip,.send{ height:44px; display:inline-flex; align-items:center }
     .send{
       background:var(--accent);border:0;color:#06372f;font-weight:700;
       padding:10px 14px;border-radius:12px;cursor:pointer;transition:.15s
@@ -157,8 +159,13 @@
       <div class="msgs" id="msgs"></div>
       <div class="input">
         <textarea id="box" placeholder="Escribe como asesor... (Enter envía, Shift+Enter salto)"></textarea>
-        <!-- 📎 Botón adjuntar + input oculto -->
-        <button class="clip" id="attachBtn" title="Adjuntar">📎</button>
+        <label class="clip" for="fileInput" title="Adjuntar archivos" aria-label="Adjuntar archivos">
+          <!-- Ícono upload (usa currentColor) -->
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M12 3l-4 4h3v6h2V7h3l-4-4z" fill="currentColor"/>
+            <path d="M5 19a2 2 0 002 2h10a2 2 0 002-2v-5h-2v5H7v-5H5v5z" fill="currentColor"/>
+          </svg>
+        </label>
         <input id="fileInput" type="file" multiple style="display:none"
           accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,image/*,video/*,audio/*">
         <button class="send" id="send">Enviar</button>
@@ -190,6 +197,27 @@ async function requestToken(force = false){
     }
   }
 }
+document.getElementById('markRead').onclick = async () => {
+  if (!current) return;
+  await api.read(current.id);
+  refresh(false);
+};
+
+document.getElementById('takeHuman').onclick = async () => {
+  if (!current) return;
+  await api.handoff(current.id, 'human');
+  const elStatus = document.getElementById('status');
+  elStatus.style.display = 'inline-block';
+  elStatus.textContent = 'HUMANO';
+};
+
+document.getElementById('resumeBot').onclick = async () => {
+  if (!current) return;
+  await api.handoff(current.id, 'bot');
+  const elStatus = document.getElementById('status');
+  elStatus.style.display = 'none';
+};
+
 
 function startSSE(){
   try{ if (sse) sse.close(); }catch{}
@@ -270,7 +298,6 @@ const elMsgs = document.getElementById('msgs');
 const elTitle= document.getElementById('title');
 const elStatus= document.getElementById('status');
 const box = document.getElementById('box');
-const attachBtn = document.getElementById('attachBtn');
 const fileInput = document.getElementById('fileInput');
 
 let current = null;
@@ -390,22 +417,19 @@ document.getElementById('logout').onclick = ()=>{
 document.getElementById('search').oninput = (e)=> renderList(e.target.value);
 document.getElementById('toggleLeft').onclick = ()=> app.classList.toggle('show-left');
 
-// === Adjuntar archivos ===
-attachBtn.onclick = ()=>{
-  if(!current){ alert('Abre un chat primero.'); return; }
-  fileInput.click();
-};
+
 fileInput.onchange = async (e)=>{
   const files = Array.from(e.target.files||[]);
   if(!files.length || !current) return;
   try{
-    await api.sendMedia(current.id, files, '');
-    const label = files.length===1 ? files[0].name : `${files.length} archivos`;
-    current.memory = (current.memory||[]).concat([{role:'agent', content:`📎 ${label}`, ts:Date.now()}]);
-    renderMsgs(current.memory);
-  }catch{ alert('Error subiendo archivo(s).'); }
+    const cap = ''; // ya no usamos caption
+    await api.sendMedia(current.id, files, cap);
+  }catch{
+    alert('Error subiendo archivo(s).');
+  }
   e.target.value = '';
 };
+
 
 (async function bootstrap(){
   const ok = await requestToken(true);
