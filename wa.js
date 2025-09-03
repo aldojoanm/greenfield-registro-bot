@@ -76,6 +76,25 @@ const CAMP_BTNS = [
   { title:'Invierno', payload:'CAMP_INVIERNO' },
   { title:'Otra',     payload:'CAMP_OTRA'     }
 ];
+
+// === HECTÁREAS (rango + otra) ===
+const HECTARE_OPTIONS = [
+  { title:'0–50 ha',     payload:'HA_0_50' },
+  { title:'51–100 ha',   payload:'HA_51_100' },
+  { title:'101–200 ha',  payload:'HA_101_200' },
+  { title:'201–500 ha',  payload:'HA_201_500' },
+  { title:'+1000 ha',    payload:'HA_1000_MAS' },
+  { title:'Otra cantidad',  payload:'HA_OTRA' }
+];
+
+const HA_LABEL = {
+  HA_0_50:       '0–50 ha',
+  HA_51_100:     '51–100 ha',
+  HA_101_200:    '101–200 ha',
+  HA_201_500:    '201–500 ha',
+  HA_1000_MAS:   '+1000 ha'
+};
+
 const linkMaps  = () => `https://www.google.com/maps?q=${encodeURIComponent(`${STORE_LAT},${STORE_LNG}`)}`;
 
 const LIST_TITLE_MAX = 24;
@@ -657,9 +676,22 @@ async function askCultivoLibre(to){
 async function askHectareas(to){
   const s=S(to); if (s.lastPrompt==='hectareas') return;
   await markPrompt(s,'hectareas'); s.pending='hectareas'; s.asked.hectareas=true;
-  persistS(to); 
-  await toText(to,'¿Cuántas *hectáreas* vas a tratar? (ej. 50 ha)');
+  persistS(to);
+  await toList(
+    to,
+    '¿Cuántas *hectáreas* vas a tratar?',
+    'Elegir hectáreas',
+    HECTARE_OPTIONS
+  );
 }
+
+async function askHectareasLibre(to){
+  const s=S(to); if (s.lastPrompt==='hectareas_text') return;
+  await markPrompt(s,'hectareas_text'); s.pending='hectareas_text';
+  persistS(to);
+  await toText(to,'Escribe el total de *hectáreas* (por ejemplo: 50).');
+}
+
 async function askCampana(to){
   const s=S(to); if (s.lastPrompt==='campana') return;
   await markPrompt(s,'campana'); s.pending='campana'; s.asked.campana=true;
@@ -1050,6 +1082,18 @@ router.post('/wa/webhook', async (req,res)=>{
         res.sendStatus(200); return;
       }
 
+      if (id === 'HA_OTRA'){
+        await askHectareasLibre(from);
+        res.sendStatus(200); return;
+      }
+      if (/^HA_/.test(id)){
+        // Guardamos el label del rango seleccionado
+        s.vars.hectareas = HA_LABEL[id] || (selTitle || '');
+        s.pending=null; s.lastPrompt=null; persistS(from);
+        await nextStep(from);
+        res.sendStatus(200); return;
+      }
+
       if(/^CROP_/.test(id)){
         const code = id.replace('CROP_','').toLowerCase();
         const map  = { soya:'Soya', maiz:'Maíz', trigo:'Trigo', arroz:'Arroz', girasol:'Girasol' };
@@ -1134,6 +1178,20 @@ router.post('/wa/webhook', async (req,res)=>{
         await askHectareas(from);
         res.sendStatus(200); return;
       }
+
+      // Hectáreas libre (activado desde HA_OTRA)
+if (S(from).pending==='hectareas_text'){
+  const ha = parseHectareas(text);
+  if (ha){
+    S(from).vars.hectareas = ha;
+    S(from).pending=null; S(from).lastPrompt=null; persistS(from);
+    await nextStep(from);
+  } else {
+    await toText(from,'Por favor escribe un número válido de *hectáreas* (ej. 50).');
+  }
+  res.sendStatus(200); return;
+}
+
 
       // Lead de Messenger
       const lead = parseMessengerLead(text);

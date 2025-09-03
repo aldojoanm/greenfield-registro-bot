@@ -1,4 +1,4 @@
-// index.js (Messenger Router) — flujo robusto con anti-dobles en apertura
+// index.js (Messenger Router) — flujo robusto con anti-dobles
 import 'dotenv/config';
 import express from 'express';
 import fs from 'fs';
@@ -49,7 +49,7 @@ function getSession(psid){
         intent:null
       },
       profileName: null,
-      flags: { greeted:false, finalShown:false, finalShownAt:0, justOpenedAt:0 },
+      flags: { greeted:false, finalShown:false, finalShownAt:0, justOpenedAt:0, helpShownAt:0 },
       memory: [],
       lastPrompt: null // { key, at }
     });
@@ -109,7 +109,7 @@ const wantsLocation = t => /(ubicaci[oó]n|direcci[oó]n|mapa|d[oó]nde est[aá]
 const wantsClose    = t => /(no gracias|gracias|eso es todo|listo|nada m[aá]s|ok gracias|est[aá] bien|finalizar)/i.test(norm(t));
 const asksPrice     = t => /(precio|cu[aá]nto vale|cu[aá]nto cuesta|cotizar|costo|proforma|cotizaci[oó]n)/i.test(t);
 const wantsAgent    = t => /asesor|humano|ejecutivo|vendedor|representante|agente|contact(a|o|arme)|whats?app|wasap|wsp|wpp|n[uú]mero|telefono|tel[eé]fono|celular/i.test(norm(t));
-// Reemplazo robusto de isGreeting
+// Saludos
 const isGreeting = (t='') => {
   const s = String(t || '')
     .toLowerCase()
@@ -128,6 +128,8 @@ const isGreeting = (t='') => {
   }
   return reWithSpace.test(s) || reNoSpace.test(sNoSpace);
 };
+// “Quiero seguir / otra duda”
+const wantsMoreHelp = t => /(otra\s+(duda|consulta|pregunta)|tengo\s+otra\s+duda|algo\s+m[aá]s|m[aá]s\s+ayuda|seguir|continuar)/i.test(norm(t));
 
 const asksProducts  = t => /(qu[eé] productos tienen|que venden|productos disponibles|l[ií]nea de productos)/i.test(t);
 const asksShipping  = t => /(env[ií]os?|env[ií]an|hacen env[ií]os|delivery|entrega|env[ií]an hasta|mandan|env[ií]o a)/i.test(norm(t));
@@ -249,7 +251,6 @@ Continuemos en WhatsApp para coordinar tu cotización.`;
 }
 function whatsappLinkFromSession(s){
   if(!WA_SELLER_NUMBER) return null;
-
   const nombre = s.profileName || 'Cliente';
   const dep    = s.vars.departamento || 'ND';
   const zona   = s.vars.subzona || 'ND';
@@ -285,7 +286,14 @@ async function finishAndWhatsApp(psid){
     { title:'Finalizar', payload:'QR_FINALIZAR' }
   ]);
 }
+
+// Debounce de showHelp para evitar dobles
 async function showHelp(psid){
+  const s = getSession(psid);
+  const COOLDOWN = 7000; // 7s
+  if (Date.now() - (s.flags.helpShownAt || 0) < COOLDOWN) return;
+  s.flags.helpShownAt = Date.now();
+
   await sendQR(psid, '¿En qué más te puedo ayudar?', [
     { title:'Catálogo',  payload:'OPEN_CATALOG'  },
     { title:'Ubicación', payload:'OPEN_LOCATION' },
@@ -371,8 +379,8 @@ router.post('/webhook', async (req,res)=>{
   try{
     if(req.body.object!=='page') return res.sendStatus(404);
 
-    for(const entry of req.body.entry||[]){
-      for(const ev of entry.messaging||[]){
+    for(const entry of (req.body.entry||[])){
+      for(const ev of (entry.messaging||[])){
         const psid = ev?.sender?.id; if(!psid) continue;
 
         // FB puede reintentar: de-dup por MID
@@ -457,8 +465,13 @@ router.post('/webhook', async (req,res)=>{
 
         // 2) Anti-spam de saludos durante la apertura (8s)
         if(!s.profileName && s.pending==='nombre' && isGreeting(text)){
-          // ignoramos saludos adicionales para no disparar respuestas dobles
           if (Date.now() - (s.flags.justOpenedAt||0) < 8000) continue;
+        }
+
+        // “Quiero seguir / otra duda” escrito como texto
+        if (wantsMoreHelp(text)){
+          await showHelp(psid);
+          continue;
         }
 
         // === PRODUCTO desde catálogo (captura antes del nombre)
@@ -501,16 +514,13 @@ router.post('/webhook', async (req,res)=>{
         if(s.pending==='nombre' || (!s.profileName && !wantsCatalog(text) && !wantsLocation(text))){
           if(s.pending!=='nombre') s.pending='nombre';
           const cleanedRaw = text.replace(/\s+/g,' ').trim();
-          if (isGreeting(cleanedRaw)) { // no respondemos doble, solo mantenemos la pregunta
-            await askName(psid); // se deduplica por TTL
-            continue;
-          }
+          if (isGreeting(cleanedRaw)) { await askName(psid); continue; }
           const cleaned = title(cleanedRaw);
           if (cleaned.length >= 2){
             s.profileName = cleaned; s.pending=null;
             await askDepartamento(psid);
           }else{
-            await askName(psid); // pregunta de nuevo con TTL
+            await askName(psid);
           }
           continue;
         }
@@ -523,7 +533,7 @@ router.post('/webhook', async (req,res)=>{
             if(depTyped==='Santa Cruz') await askSubzonaSCZ(psid); else await askSubzonaLibre(psid);
             continue;
           }else if(s.pending==='departamento'){
-            await askDepartamento(psid); // re-lanza con TTL
+            await askDepartamento(psid);
             continue;
           }
         }
