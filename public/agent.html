@@ -98,7 +98,9 @@
     .bubble.a::after{content:"";position:absolute;bottom:0;right:-6px;border:8px solid transparent;border-left-color:#0a8e7b}
     .bubble.sys{align-self:center;background:#0f1b24;color:#93c5fd;border:1px dashed #2a4054;border-radius:12px}
 
-    .input{display:flex;gap:8px;padding:12px;border-top:1px solid var(--stroke);background:var(--panel)}
+    .input{
+      display:flex;gap:8px;padding:12px;border-top:1px solid var(--stroke);background:var(--panel);align-items:flex-end
+    }
     .input textarea{
       flex:1;background:var(--panel-2);border:1px solid var(--ring);color:var(--txt);
       padding:10px 12px;border-radius:12px;min-height:44px;max-height:140px;outline:none;resize:vertical
@@ -108,6 +110,16 @@
       padding:10px 14px;border-radius:12px;cursor:pointer;transition:.15s
     }
     .send:hover{background:var(--accent-2)}
+
+    /* Botón clip dentro de la barra de entrada */
+    .clip{
+      background:var(--panel-2);
+      border:1px solid var(--ring);
+      border-radius:12px;
+      padding:10px 12px;
+      cursor:pointer;
+    }
+    .clip:hover{filter:brightness(1.05)}
 
     @media (max-width:900px){
       .app{grid-template-columns:1fr}
@@ -138,19 +150,17 @@
         <button class="btn sm" id="takeHuman">⏸️ Pausar bot</button>
         <button class="btn sm" id="resumeBot">▶️ Bot ON</button>
         <button class="btn sm" id="markRead">✓ Leído</button>
-        <!-- 📎 Botón adjuntar + input oculto -->
-        <button class="btn sm" id="attachBtn" title="Adjuntar">📎</button>
-        <input id="fileInput" type="file" multiple style="display:none"
-          accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,image/*,video/*,audio/*">
       </div>
     </div>
 
     <div class="chat">
       <div class="msgs" id="msgs"></div>
       <div class="input">
-        <!-- caption opcional para las cotizaciones/archivos -->
-        <input id="caption" placeholder="Añadir nota (opcional)" class="btn" style="flex:0 0 240px">
         <textarea id="box" placeholder="Escribe como asesor... (Enter envía, Shift+Enter salto)"></textarea>
+        <!-- 📎 Botón adjuntar + input oculto -->
+        <button class="clip" id="attachBtn" title="Adjuntar">📎</button>
+        <input id="fileInput" type="file" multiple style="display:none"
+          accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,image/*,video/*,audio/*">
         <button class="send" id="send">Enviar</button>
       </div>
     </div>
@@ -173,8 +183,7 @@ async function requestToken(force = false){
       const r = await fetch('/wa/agent/convos', { headers: { 'Authorization':'Bearer '+api.token }});
       if (r.status === 401){ alert('Token inválido. Intenta de nuevo.'); api.token=''; continue; }
       if (!r.ok){ alert('No pude validar el token. Reintenta.'); api.token=''; continue; }
-      // OK
-      startSSE();     
+      startSSE();
       return true;
     }catch{
       alert('Error de red validando token. Reintenta.'); api.token='';
@@ -237,7 +246,7 @@ const api = {
     if (r.status===401){ await forceReauth(); return this.handoff(to,mode); }
     if (!r.ok) throw 0; return r.json();
   },
-  // === NUEVO: enviar media multiparte ===
+  // Envío de media (multiparte)
   async sendMedia(to, files, caption=''){
     const fd = new FormData();
     fd.append('to', to);
@@ -245,7 +254,7 @@ const api = {
     for (const f of files) fd.append('files', f, f.name);
     const r = await fetch('/wa/agent/send-media', {
       method:'POST',
-      headers:{ 'Authorization':'Bearer '+this.token }, // NO poner Content-Type, lo pone el browser
+      headers:{ 'Authorization':'Bearer '+this.token }, // el browser setea boundary
       body: fd
     });
     if (r.status===401){ await forceReauth(); return this.sendMedia(to, files, caption); }
@@ -263,7 +272,6 @@ const elStatus= document.getElementById('status');
 const box = document.getElementById('box');
 const attachBtn = document.getElementById('attachBtn');
 const fileInput = document.getElementById('fileInput');
-const captionEl = document.getElementById('caption');
 
 let current = null;
 let allConvos = [];
@@ -382,7 +390,7 @@ document.getElementById('logout').onclick = ()=>{
 document.getElementById('search').oninput = (e)=> renderList(e.target.value);
 document.getElementById('toggleLeft').onclick = ()=> app.classList.toggle('show-left');
 
-// === NUEVO: adjuntar archivos ===
+// === Adjuntar archivos ===
 attachBtn.onclick = ()=>{
   if(!current){ alert('Abre un chat primero.'); return; }
   fileInput.click();
@@ -391,15 +399,12 @@ fileInput.onchange = async (e)=>{
   const files = Array.from(e.target.files||[]);
   if(!files.length || !current) return;
   try{
-    const cap = (captionEl?.value||'').trim();
-    captionEl.value = '';
-    await api.sendMedia(current.id, files, cap);
-    // feedback local
+    await api.sendMedia(current.id, files, '');
     const label = files.length===1 ? files[0].name : `${files.length} archivos`;
-    current.memory = (current.memory||[]).concat([{role:'agent', content:`📎 ${label}${cap?` — ${cap}`:''}`, ts:Date.now()}]);
+    current.memory = (current.memory||[]).concat([{role:'agent', content:`📎 ${label}`, ts:Date.now()}]);
     renderMsgs(current.memory);
   }catch{ alert('Error subiendo archivo(s).'); }
-  e.target.value = ''; // reset input
+  e.target.value = '';
 };
 
 (async function bootstrap(){
