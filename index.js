@@ -1,4 +1,4 @@
-// index.js (Messenger Router) — flujo robusto con aperturas de vendedor + producto desde catálogo + política de envíos
+// index.js (Messenger Router) — flujo robusto con anti-dobles en apertura
 import 'dotenv/config';
 import express from 'express';
 import fs from 'fs';
@@ -45,13 +45,13 @@ function getSession(psid){
       vars: {
         departamento:null, subzona:null,
         hectareas:null, phone:null,
-        productIntent:null, // << producto de interés
+        productIntent:null,
         intent:null
       },
       profileName: null,
-      flags: { greeted:false, finalShown:false, finalShownAt:0 },
+      flags: { greeted:false, finalShown:false, finalShownAt:0, justOpenedAt:0 },
       memory: [],
-      lastPrompt: null
+      lastPrompt: null // { key, at }
     });
   }
   return sessions.get(psid);
@@ -61,6 +61,18 @@ function remember(psid, role, content){
   const s=getSession(psid);
   s.memory.push({role,content,ts:Date.now()});
   if(s.memory.length>12) s.memory=s.memory.slice(-12);
+}
+
+// ===== De-dup de mensajes FB (message.mid) =====
+const seenMIDs = [];
+const seenSet = new Set();
+function alreadyProcessed(mid){
+  if(!mid) return false;
+  if(seenSet.has(mid)) return true;
+  seenSet.add(mid);
+  seenMIDs.push(mid);
+  if(seenMIDs.length>300){ const old = seenMIDs.shift(); seenSet.delete(old); }
+  return false;
 }
 
 // ===== HELPERS =====
@@ -97,31 +109,23 @@ const wantsLocation = t => /(ubicaci[oó]n|direcci[oó]n|mapa|d[oó]nde est[aá]
 const wantsClose    = t => /(no gracias|gracias|eso es todo|listo|nada m[aá]s|ok gracias|est[aá] bien|finalizar)/i.test(norm(t));
 const asksPrice     = t => /(precio|cu[aá]nto vale|cu[aá]nto cuesta|cotizar|costo|proforma|cotizaci[oó]n)/i.test(t);
 const wantsAgent    = t => /asesor|humano|ejecutivo|vendedor|representante|agente|contact(a|o|arme)|whats?app|wasap|wsp|wpp|n[uú]mero|telefono|tel[eé]fono|celular/i.test(norm(t));
-// Reemplazo robusto de isGreeting (tolera errores, acentos, repeticiones y sin espacios)
+// Reemplazo robusto de isGreeting
 const isGreeting = (t='') => {
   const s = String(t || '')
     .toLowerCase()
-    .normalize('NFD').replace(/\p{Diacritic}/gu,'')   // quita acentos (días -> dias)
-    .replace(/[^a-z\s]/g,' ')                        // quita símbolos/emoji
-    .replace(/([a-z])\1{1,}/g,'$1')                  // "holaaa" -> "hola", "buenass" -> "buenas"
-    .replace(/\s+/g,' ')                              // colapsa espacios
+    .normalize('NFD').replace(/\p{Diacritic}/gu,'')
+    .replace(/[^a-z\s]/g,' ')
+    .replace(/([a-z])\1{1,}/g,'$1')
+    .replace(/\s+/g,' ')
     .trim();
-
   if (!s) return false;
-
   const sNoSpace = s.replace(/\s+/g,'');
-
-  // hola/holi/holis/hello/hey/hi/wena/wenas/wuenas
-  // + buenos/buenas días/tardes/noches con errores típicos (ncohes, noche, noxes…)
   const reWithSpace = /\b(?:ola|hola|holi|holis|holu|hello|helo|hey|hi|wena|wenas|wuenas|buen(?:os|as)?(?:\s*(?:d(?:ia|ias)|tard(?:e|es)|n(?:och|coh)e?s?))?)\b/;
   const reNoSpace   = /^(?:hola|holi|holis|hello|hey|hi|wenas|wuenas|buen(?:os|as)?(?:d(?:ia|ias)|tard(?:e|es)|n(?:och|coh)e?s?)|bn(?:d(?:ia|ias)|tard(?:e|es)|n(?:och|coh)e?s?)|bns(?:d(?:ia|ias)|tard(?:e|es)|n(?:och|coh)e?s?))$/;
-
-  // abreviaturas tipo "bn dias/bns noches/bnoches"
   if (/^(?:bn|bns)\b/.test(s)) {
     const rest = s.replace(/^(?:bn|bns)\b\s*/,'');
     if (/^(?:d(?:ia|ias)|tard(?:e|es)|n(?:och|coh)e?s?)$/.test(rest) || rest==='') return true;
   }
-
   return reWithSpace.test(s) || reNoSpace.test(sNoSpace);
 };
 
@@ -183,17 +187,24 @@ async function sendButtons(psid, text, buttons=[]){
   if(!r.ok) console.error('sendButtons', await r.text());
 }
 
+// ===== Helper para no repetir prompts =====
+function shouldPrompt(s, key, ttlMs=8000){
+  if(s.lastPrompt && s.lastPrompt.key===key && (Date.now()-s.lastPrompt.at)<ttlMs) return false;
+  s.lastPrompt = { key, at: Date.now() };
+  return true;
+}
+
 // ===== PREGUNTAS ATÓMICAS =====
 async function askName(psid){
   const s=getSession(psid);
-  if (s.pending==='nombre') return;
-  s.pending='nombre';
+  if (s.pending!=='nombre') s.pending='nombre';
+  if (!shouldPrompt(s,'askName')) return;
   await sendText(psid, 'Antes de continuar, ¿Cuál es tu nombre completo? ✍️');
 }
 async function askDepartamento(psid){
   const s=getSession(psid);
-  if (s.pending==='departamento') return;
-  s.pending='departamento';
+  if (s.pending!=='departamento') s.pending='departamento';
+  if (!shouldPrompt(s,'askDepartamento')) return;
   const nombre = s.profileName ? `Gracias, ${s.profileName}. 😊\n` : '';
   await sendQR(psid,
     `${nombre}📍 Cuéntanos, ¿desde qué departamento de Bolivia nos escribes?`,
@@ -202,8 +213,8 @@ async function askDepartamento(psid){
 }
 async function askSubzonaSCZ(psid){
   const s=getSession(psid);
-  if (s.pending==='subzona') return;
-  s.pending='subzona';
+  if (s.pending!=='subzona') s.pending='subzona';
+  if (!shouldPrompt(s,'askSubzonaSCZ')) return;
   await sendQR(psid,'Gracias. ¿Qué *zona de Santa Cruz*?', [
     { title:'Norte',       payload:'SUBZ_NORTE'       },
     { title:'Este',        payload:'SUBZ_ESTE'        },
@@ -214,8 +225,8 @@ async function askSubzonaSCZ(psid){
 }
 async function askSubzonaLibre(psid){
   const s=getSession(psid);
-  if (s.pending==='subzona_free') return;
-  s.pending='subzona_free';
+  if (s.pending!=='subzona_free') s.pending='subzona_free';
+  if (!shouldPrompt(s,'askSubzonaLibre')) return;
   await sendText(psid, `Perfecto. ¿En qué *zona / municipio* de *${s.vars.departamento}* te encuentras? ✍️`);
 }
 
@@ -304,6 +315,10 @@ router.get('/webhook',(req,res)=>{
 // ===== Aperturas inteligentes (antes de pedir nombre) =====
 async function handleOpeningIntent(psid, text){
   const s = getSession(psid);
+
+  // Ignorar saludos vacíos aquí (para no disparar flujos dobles)
+  if (isGreeting(text)) return false;
+
   const prod = findProduct(text);
   if (prod){
     s.vars.productIntent = prod.nombre;
@@ -359,6 +374,11 @@ router.post('/webhook', async (req,res)=>{
     for(const entry of req.body.entry||[]){
       for(const ev of entry.messaging||[]){
         const psid = ev?.sender?.id; if(!psid) continue;
+
+        // FB puede reintentar: de-dup por MID
+        const mid = ev.message?.mid || ev.postback?.mid || null;
+        if (alreadyProcessed(mid)) continue;
+
         if(ev.message?.is_echo) continue;
 
         const s = getSession(psid);
@@ -366,6 +386,7 @@ router.post('/webhook', async (req,res)=>{
         // GET_STARTED
         if(ev.postback?.payload === 'GET_STARTED'){
           s.flags.greeted = true;
+          s.flags.justOpenedAt = Date.now();
           await sendText(psid, '👋 ¡Hola! Bienvenido(a) a New Chem.\nTenemos agroquímicos al mejor precio y calidad para tu campaña. 🌱');
           await askName(psid);
           continue;
@@ -424,13 +445,20 @@ router.post('/webhook', async (req,res)=>{
         if(!text) continue;
         remember(psid,'user',text);
 
-        // Saludo si el usuario escribió sin tocar “Empezar”
+        // 1) Saludo si el usuario escribió sin tocar “Empezar”
         if(!s.flags.greeted && isGreeting(text)){
           s.flags.greeted = true;
+          s.flags.justOpenedAt = Date.now();
           await sendText(psid, '👋 ¡Hola! Bienvenido(a) a New Chem.\nTenemos agroquímicos al mejor precio y calidad para tu campaña. 🌱');
-          const handled = await handleOpeningIntent(psid, text);
+          const handled = await handleOpeningIntent(psid, text); // ignorará si solo es “hola”
           if(!handled) await askName(psid);
           continue;
+        }
+
+        // 2) Anti-spam de saludos durante la apertura (8s)
+        if(!s.profileName && s.pending==='nombre' && isGreeting(text)){
+          // ignoramos saludos adicionales para no disparar respuestas dobles
+          if (Date.now() - (s.flags.justOpenedAt||0) < 8000) continue;
         }
 
         // === PRODUCTO desde catálogo (captura antes del nombre)
@@ -469,15 +497,20 @@ router.post('/webhook', async (req,res)=>{
           continue;
         }
 
-        // === CAPTURA DE NOMBRE ===
+        // === CAPTURA DE NOMBRE (sin aceptar saludos como nombre) ===
         if(s.pending==='nombre' || (!s.profileName && !wantsCatalog(text) && !wantsLocation(text))){
           if(s.pending!=='nombre') s.pending='nombre';
-          const cleaned = title(text.replace(/\s+/g,' ').trim());
+          const cleanedRaw = text.replace(/\s+/g,' ').trim();
+          if (isGreeting(cleanedRaw)) { // no respondemos doble, solo mantenemos la pregunta
+            await askName(psid); // se deduplica por TTL
+            continue;
+          }
+          const cleaned = title(cleanedRaw);
           if (cleaned.length >= 2){
             s.profileName = cleaned; s.pending=null;
             await askDepartamento(psid);
           }else{
-            await sendText(psid,'¿Me repites tu *nombre completo* por favor? ✍️');
+            await askName(psid); // pregunta de nuevo con TTL
           }
           continue;
         }
@@ -490,8 +523,7 @@ router.post('/webhook', async (req,res)=>{
             if(depTyped==='Santa Cruz') await askSubzonaSCZ(psid); else await askSubzonaLibre(psid);
             continue;
           }else if(s.pending==='departamento'){
-            await sendQR(psid,'No logré reconocer el *departamento*. Elige de la lista o escríbelo de nuevo 😊',
-              DEPARTAMENTOS.map(d => ({title:d, payload:`DPTO_${d.toUpperCase().replace(/\s+/g,'_')}`})));
+            await askDepartamento(psid); // re-lanza con TTL
             continue;
           }
         }
@@ -507,14 +539,14 @@ router.post('/webhook', async (req,res)=>{
         if(s.pending==='subzona_free' && !s.vars.subzona){
           const z = title(text.trim());
           if (z){ s.vars.subzona = z; s.pending=null; await nextStep(psid); }
-          else { await sendText(psid,'¿Podrías escribir el *nombre de tu zona o municipio*?'); }
+          else { await askSubzonaLibre(psid); }
           continue;
         }
 
         // Intenciones globales (responden siempre)
         if(wantsLocation(text)){ await sendButtons(psid, 'Nuestra ubicación en Google Maps 👇', [{type:'web_url', url: linkMaps(), title:'Ver ubicación'}]); await showHelp(psid); continue; }
         if(wantsCatalog(text)){  await sendButtons(psid, 'Abrir catálogo completo', [{type:'web_url', url: CATALOG_URL, title:'Ver catálogo'}]); await sendText(psid,'¿Qué *producto* te interesó del catálogo?'); s.pending='prod_from_catalog'; await showHelp(psid); continue; }
-        if(asksPrice(text)){     // además podríamos atrapar nombre de producto aquí
+        if(asksPrice(text)){
           const prodHit = findProduct(text);
           if (prodHit) s.vars.productIntent = prodHit.nombre;
           await sendText(psid, 'Con gusto te preparamos una *cotización*. Primero confirmemos tu ubicación para asignarte el asesor correcto.');
@@ -524,7 +556,7 @@ router.post('/webhook', async (req,res)=>{
         if(wantsAgent(text)){    const wa = whatsappLinkFromSession(s); if (wa) await sendButtons(psid,'Te atiende un asesor por WhatsApp 👇',[{type:'web_url', url: wa, title:'📲 Abrir WhatsApp'}]); else await sendText(psid,'Compártenos un número de contacto y seguimos por WhatsApp.'); await showHelp(psid); continue; }
         if(wantsClose(text)){    await sendText(psid, '¡Gracias por escribirnos! Si más adelante te surge algo, aquí estoy para ayudarte. 👋'); clearSession(psid); continue; }
 
-        // Si hay etapa pendiente, re-pregunta en vez de quedarse callado
+        // Si hay etapa pendiente, re-pregunta con TTL
         if(s.pending==='departamento'){ await askDepartamento(psid); continue; }
         if(s.pending==='subzona'){ await askSubzonaSCZ(psid); continue; }
         if(s.pending==='subzona_free'){ await askSubzonaLibre(psid); continue; }
