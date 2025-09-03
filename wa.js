@@ -689,7 +689,7 @@ async function askHectareasLibre(to){
   const s=S(to); if (s.lastPrompt==='hectareas_text') return;
   await markPrompt(s,'hectareas_text'); s.pending='hectareas_text';
   persistS(to);
-  await toText(to,'Escribe el total de *hectáreas* (por ejemplo: 50).');
+  await toText(to,'Podrias escribir el total de *hectáreas*.');
 }
 
 async function askCampana(to){

@@ -274,18 +274,30 @@ async function finishAndWhatsApp(psid){
   const s=getSession(psid);
   if (s.flags.finalShown && Date.now()-s.flags.finalShownAt < 60000) return; // anti-duplicados
   s.flags.finalShown = true; s.flags.finalShownAt = Date.now();
+
+  // 1) Resumen
   await sendText(psid, summaryTextForFinal(s));
+
+  // 2) NUEVO: texto amable ofreciendo ver el catálogo (con el link)
+  await sendText(psid, `Mientras tanto, si quieres ir viendo opciones, aquí está nuestro catálogo 📘:\n${CATALOG_URL}`);
+
+  // 3) Luego el link/botón de WhatsApp
   const wa = whatsappLinkFromSession(s);
   if (wa){
-    await sendButtons(psid, 'Enviar cotización', [{ type:'web_url', url: wa, title:'Enviar a Whatsapp' }]);
-  }else{
+    await sendButtons(psid, 'Enviar cotización', [
+      { type:'web_url', url: wa, title:'Enviar a WhatsApp' }
+    ]);
+  } else {
     await sendText(psid, 'Comparte un número de contacto y te escribimos por WhatsApp.');
   }
+
+  // 4) Ayuda adicional
   await sendQR(psid, '¿Necesitas ayuda en algo mas?', [
     { title:'Si, tengo otra duda', payload:'QR_CONTINUAR' },
     { title:'Finalizar', payload:'QR_FINALIZAR' }
   ]);
 }
+
 
 // Debounce de showHelp para evitar dobles
 async function showHelp(psid){
