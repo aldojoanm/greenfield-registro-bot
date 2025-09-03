@@ -7,6 +7,12 @@ import { appendFromSession } from './sheets.js';
 const router = express.Router();
 router.use(express.json());
 
+import multer from 'multer';
+const upload = multer({
+  dest: path.resolve('./data/tmp'),
+  limits: { fileSize: 100 * 1024 * 1024 }
+});
+
 const VERIFY_TOKEN    = process.env.VERIFY_TOKEN || 'VERIFY_123';
 const WA_TOKEN        = process.env.WHATSAPP_TOKEN || '';
 const WA_PHONE_ID     = process.env.WHATSAPP_PHONE_ID || '';
@@ -192,9 +198,17 @@ const preferFullName = (current, candidate) => {
 const b64u = s => Buffer.from(String(s),'utf8').toString('base64').replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
 const ub64u = s => Buffer.from(String(s).replace(/-/g,'+').replace(/_/g,'/'), 'base64').toString('utf8');
 
+function mediaKindFromMime(mime=''){
+  const m = String(mime).toLowerCase();
+  if (m.startsWith('image/')) return 'image';                 // jpg, png, webp
+  if (m.startsWith('video/')) return 'video';                 // mp4, 3gp
+  if (m.startsWith('audio/')) return 'audio';                 // mp3, aac, ogg(opus), amr
+  return 'document';
+}
+
 function remember(id, role, content){
   const s = S(id);
-  if (role === 'user' && s._closedAt) delete s._closedAt; // solo user reabre
+  if (role === 'user' && s._closedAt) delete s._closedAt;
   s.memory.push({ role, content, ts: Date.now() });
   if (s.memory.length > 500) s.memory = s.memory.slice(-500);
   s.meta = s.meta || {};
@@ -1364,5 +1378,47 @@ router.post('/wa/agent/handoff', agentAuth, async (req,res)=>{
     res.status(500).json({ok:false});
   }
 });
+
+// g) Enviar media como humano (multiparte)
+router.post('/wa/agent/send-media', agentAuth, upload.array('files', 10), async (req, res) => {
+  try{
+    const to = req.body?.to;
+    const caption = (req.body?.caption || '').slice(0, 1024); // límite prudente
+    const files = req.files || [];
+    if(!to || !files.length) return res.status(400).json({error:'to y files son requeridos'});
+
+    humanOn(to, 4); // pausa bot
+    for (const f of files){
+      const kind = mediaKindFromMime(f.mimetype);
+      const id = await waUploadMediaFromFile(f.path);  // usa tu función existente
+      if(!id) continue;
+
+      // Construir payload por tipo
+      const base = { messaging_product:'whatsapp', to, type: kind };
+      if (kind === 'image'){
+        await waSendQ(to, { ...base, image: { id, caption } });
+        remember(to,'agent', caption ? `🖼️ [imagen] ${caption}` : '🖼️ [imagen]');
+      } else if (kind === 'video'){
+        await waSendQ(to, { ...base, video: { id, caption } });
+        remember(to,'agent', caption ? `🎬 [video] ${caption}` : '🎬 [video]');
+      } else if (kind === 'audio'){
+        await waSendQ(to, { ...base, audio: { id } });
+        remember(to,'agent', '🎧 [audio]');
+      } else {
+        // documento: permite filename
+        const filename = (f.originalname || 'archivo.pdf').slice(0, 255);
+        await waSendQ(to, { ...base, document: { id, caption, filename } });
+        remember(to,'agent', caption ? `📎 ${filename} — ${caption}` : `📎 ${filename}`);
+      }
+      // limpiar tmp
+      try{ fs.unlinkSync(f.path); }catch{}
+    }
+    res.json({ ok:true, sent: files.length });
+  }catch(e){
+    console.error('agent/send-media', e);
+    res.status(500).json({ok:false});
+  }
+});
+
 
 export default router;

@@ -279,7 +279,7 @@ async function showHelp(psid){
     { title:'Catálogo',  payload:'OPEN_CATALOG'  },
     { title:'Ubicación', payload:'OPEN_LOCATION' },
     { title:'Horario',   payload:'OPEN_HORARIOS' },
-    { title:'Hablar con asesor', payload:'OPEN_WHATSAPP' },
+    { title:'Hablar con Asesor Comercial', payload:'OPEN_WHATSAPP' },
     { title:'Finalizar', payload:'QR_FINALIZAR' }
   ]);
 }

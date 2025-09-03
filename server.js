@@ -10,24 +10,19 @@ app.disable('x-powered-by');
 app.set('trust proxy', 1);
 app.use(express.json({ limit: '2mb' }));
 
-// __dirname para ESM
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
-
-// Estáticos
 app.use('/image', express.static(path.join(__dirname, 'image')));   
 app.use(express.static(path.join(__dirname, 'public')));           
-
-// Health
 app.get('/', (_req, res) => res.send('OK'));
 app.get('/healthz', (_req, res) => res.json({ ok: true }));
 
-// Política de privacidad
+
 app.get('/privacidad', (_req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'privacidad.html'));
 });
 
-// Routers
+
 app.use(messengerRouter);
 app.use(waRouter);
 
