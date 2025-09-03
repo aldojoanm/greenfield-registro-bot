@@ -7,11 +7,16 @@ import { appendFromSession } from './sheets.js';
 const router = express.Router();
 router.use(express.json());
 
+const TMP_DIR = path.resolve('./data/tmp');
+fs.mkdirSync(TMP_DIR, { recursive: true });
+
 import multer from 'multer';
 const upload = multer({
-  dest: path.resolve('./data/tmp'),
+  dest: TMP_DIR,
   limits: { fileSize: 100 * 1024 * 1024 }
 });
+
+
 
 const VERIFY_TOKEN    = process.env.VERIFY_TOKEN || 'VERIFY_123';
 const WA_TOKEN        = process.env.WHATSAPP_TOKEN || '';
@@ -198,13 +203,43 @@ const preferFullName = (current, candidate) => {
 const b64u = s => Buffer.from(String(s),'utf8').toString('base64').replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
 const ub64u = s => Buffer.from(String(s).replace(/-/g,'+').replace(/_/g,'/'), 'base64').toString('utf8');
 
-function mediaKindFromMime(mime=''){
+function mediaKindFromMime(mime = '') {
   const m = String(mime).toLowerCase();
-  if (m.startsWith('image/')) return 'image';                 // jpg, png, webp
-  if (m.startsWith('video/')) return 'video';                 // mp4, 3gp
-  if (m.startsWith('audio/')) return 'audio';                 // mp3, aac, ogg(opus), amr
-  return 'document';
+  if (m.startsWith('image/')) return 'image';
+  if (m.startsWith('video/')) return 'video';
+  if (m.startsWith('audio/')) return 'audio';
+  return 'document'; // pdf/doc/xls/etc.
 }
+
+function guessMimeByExt(filePath='') {
+  const ext = (filePath.split('.').pop() || '').toLowerCase();
+  const map = {
+    png: 'image/png',
+    jpg: 'image/jpeg',
+    jpeg:'image/jpeg',
+    webp:'image/webp',
+    gif: 'image/gif',
+    pdf: 'application/pdf',
+    doc: 'application/msword',
+    docx:'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    xls: 'application/vnd.ms-excel',
+    xlsx:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    ppt: 'application/vnd.ms-powerpoint',
+    pptx:'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    csv: 'text/csv',
+    txt: 'text/plain',
+    mp4: 'video/mp4',
+    m4v: 'video/mp4',
+    mov: 'video/quicktime',
+    mp3: 'audio/mpeg',
+    aac: 'audio/aac',
+    ogg: 'audio/ogg',
+    opus:'audio/ogg',
+    amr: 'audio/amr'
+  };
+  return map[ext] || 'application/octet-stream';
+}
+
 
 function remember(id, role, content){
   const s = S(id);
@@ -479,17 +514,27 @@ function productImageSource(prod){
 // ===== ENVÍO WA =====
 const sendQueues = new Map();
 const sleep = (ms=350)=>new Promise(r=>setTimeout(r,ms));
+// mejora waSendQ para devolver false si la API responde con error
 async function waSendQ(to, payload){
   const exec = async ()=>{
     const url = `https://graph.facebook.com/v20.0/${WA_PHONE_ID}/messages`;
-    const r = await fetch(url,{ method:'POST', headers:{ 'Authorization':`Bearer ${WA_TOKEN}`, 'Content-Type':'application/json' }, body:JSON.stringify(payload) });
-    if(!r.ok) console.error('WA send error', r.status, await r.text());
+    const r = await fetch(url,{
+      method:'POST',
+      headers:{ 'Authorization':`Bearer ${WA_TOKEN}`, 'Content-Type':'application/json' },
+      body: JSON.stringify(payload)
+    });
+    if(!r.ok){
+      console.error('WA send error', r.status, await r.text().catch(()=>''), 'payload=', JSON.stringify(payload).slice(0,500));
+      return false;
+    }
+    return true;
   };
-  const prev = sendQueues.get(to) || Promise.resolve();
-  const next = prev.then(exec).then(()=>sleep(350));
+  const prev = sendQueues.get(to) || Promise.resolve(true);
+  const next = prev.then(exec).then((ok)=>{ return sleep(350).then(()=>ok); });
   sendQueues.set(to, next);
   return next;
 }
+
 
 const toText = (to, body) => {
   remember(to,'bot', String(body));
@@ -523,21 +568,29 @@ const toList = (to, body, title, rows=[]) => {
   });
 };
 
-async function waUploadMediaFromFile(filePath){
+// usa el mime correcto al subir (si lo tienes desde multer, úsalo; si no, adivina por extensión)
+async function waUploadMediaFromFile(filePath, mimeHint){
   const url = `https://graph.facebook.com/v20.0/${encodeURIComponent(WA_PHONE_ID)}/media`;
-  const ext = (filePath.split('.').pop() || '').toLowerCase();
-  const mime = ext==='png' ? 'image/png' : (ext==='jpg'||ext==='jpeg') ? 'image/jpeg' : ext==='webp' ? 'image/webp' : 'application/octet-stream';
+  const mime = mimeHint || guessMimeByExt(filePath);
   const buf = fs.readFileSync(filePath);
   const blob = new Blob([buf], { type: mime });
+
   const form = new FormData();
   form.append('file', blob, filePath.split(/[\\/]/).pop());
   form.append('type', mime);
   form.append('messaging_product', 'whatsapp');
+
   const r = await fetch(url,{ method:'POST', headers:{ 'Authorization':`Bearer ${WA_TOKEN}` }, body: form });
-  if(!r.ok){ console.error('waUploadMediaFromFile', await r.text()); return null; }
-  const j = await r.json();
+
+  if(!r.ok){
+    const errTxt = await r.text().catch(()=> '');
+    console.error('waUploadMediaFromFile ERROR', r.status, errTxt);
+    return null;
+  }
+  const j = await r.json().catch(()=>null);
   return j?.id || null;
 }
+
 async function toImage(to, source){
   if(source?.url) return waSendQ(to,{ messaging_product:'whatsapp', to, type:'image', image:{ link: source.url } });
   if(source?.path){
@@ -1380,45 +1433,63 @@ router.post('/wa/agent/handoff', agentAuth, async (req,res)=>{
 });
 
 // g) Enviar media como humano (multiparte)
+// en el endpoint, pásale el mimetype de multer y NO registres en memoria si falla el envío
 router.post('/wa/agent/send-media', agentAuth, upload.array('files', 10), async (req, res) => {
   try{
     const to = req.body?.to;
-    const caption = (req.body?.caption || '').slice(0, 1024); // límite prudente
+    const caption = (req.body?.caption || '').slice(0, 1024);
     const files = req.files || [];
     if(!to || !files.length) return res.status(400).json({error:'to y files son requeridos'});
 
     humanOn(to, 4); // pausa bot
+
+    let sent = 0;
     for (const f of files){
       const kind = mediaKindFromMime(f.mimetype);
-      const id = await waUploadMediaFromFile(f.path);  // usa tu función existente
-      if(!id) continue;
-
-      // Construir payload por tipo
-      const base = { messaging_product:'whatsapp', to, type: kind };
-      if (kind === 'image'){
-        await waSendQ(to, { ...base, image: { id, caption } });
-        remember(to,'agent', caption ? `🖼️ [imagen] ${caption}` : '🖼️ [imagen]');
-      } else if (kind === 'video'){
-        await waSendQ(to, { ...base, video: { id, caption } });
-        remember(to,'agent', caption ? `🎬 [video] ${caption}` : '🎬 [video]');
-      } else if (kind === 'audio'){
-        await waSendQ(to, { ...base, audio: { id } });
-        remember(to,'agent', '🎧 [audio]');
-      } else {
-        // documento: permite filename
-        const filename = (f.originalname || 'archivo.pdf').slice(0, 255);
-        await waSendQ(to, { ...base, document: { id, caption, filename } });
-        remember(to,'agent', caption ? `📎 ${filename} — ${caption}` : `📎 ${filename}`);
+      const id = await waUploadMediaFromFile(f.path, f.mimetype);
+      if(!id){
+        console.error('Upload falló para', f.originalname);
+        try{ fs.unlinkSync(f.path); }catch{}
+        continue; // no intentes enviar si no hay id
       }
-      // limpiar tmp
+
+      const base = { messaging_product:'whatsapp', to, type: kind };
+      let ok = true;
+      let resp;
+
+      if (kind === 'image'){
+        resp = await waSendQ(to, { ...base, image: { id, caption } });
+      } else if (kind === 'video'){
+        resp = await waSendQ(to, { ...base, video: { id, caption } });
+      } else if (kind === 'audio'){
+        resp = await waSendQ(to, { ...base, audio: { id } });
+      } else {
+        const filename = (f.originalname || 'archivo.pdf').slice(0, 255);
+        resp = await waSendQ(to, { ...base, document: { id, caption, filename } });
+      }
+
+      // si waSendQ detecta error, marca ok=false (ver cambio abajo)
+      if (resp === false) ok = false;
+
+      if (ok){
+        sent++;
+        // registra solo si se envió con éxito
+        const filename = (f.originalname || '').trim();
+        const label = filename ? filename : (kind==='image'?'[imagen]': kind==='video'?'[video]': kind==='audio'?'[audio]':'[documento]');
+        const memo = (kind==='image'?'🖼️ ':'') + (kind==='video'?'🎬 ':'') + (kind==='audio'?'🎧 ':'') + (kind==='document'?'📎 ':'') + (filename || '') + (caption?` — ${caption}`:'');
+        remember(to,'agent', memo || label);
+      }
+
       try{ fs.unlinkSync(f.path); }catch{}
     }
-    res.json({ ok:true, sent: files.length });
+
+    res.json({ ok: sent>0, sent });
   }catch(e){
     console.error('agent/send-media', e);
     res.status(500).json({ok:false});
   }
 });
+
 
 
 export default router;
