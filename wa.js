@@ -27,6 +27,35 @@ const STORE_LNG       = process.env.STORE_LNG || '-63.1532503';
 const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || '').replace(/\/+$/, '');
 const AGENT_TOKEN     = process.env.AGENT_TOKEN || '';
 
+const DEBUG_LOGS = process.env.DEBUG_LOGS === '1';
+const dbg = (...args) => { if (DEBUG_LOGS) console.log(...args); };
+const ADVISOR_NAME = process.env.ADVISOR_NAME || 'Jonathan Arteaga';
+const ADVISOR_ROLE = process.env.ADVISOR_ROLE || 'Encargado de Negocios de New Chem Agroquímicos';
+
+function advisorProductList(s){
+  const items = (s.vars.cart && s.vars.cart.length)
+    ? s.vars.cart
+    : (s.vars.last_product ? [{
+        nombre: s.vars.last_product,
+        presentacion: s.vars.last_presentacion,
+        cantidad: s.vars.cantidad
+      }] : []);
+  return items
+    .filter(it => it && it.nombre)
+    .map(it => `• ${it.nombre}${it.presentacion ? ` (${it.presentacion})` : ''} — ${it.cantidad || 'ND'}`)
+    .join('\n');
+}
+
+// Mensaje prellenado que quieres en el link del asesor
+function buildAdvisorPresetText(s){
+  const quien = s.profileName || 'Cliente';
+  const lines = advisorProductList(s);
+  return [
+    `Hola ${quien}, soy ${ADVISOR_NAME}, ${ADVISOR_ROLE}.`,
+    `Te escribo por tu cotización con los siguientes productos:`,
+    lines
+  ].join('\n');
+}
 const agentClients = new Set();
 function sseSend(res, event, payload){
   try{
@@ -983,31 +1012,28 @@ function compileAdvisorAlert(s, customerWa){
   const dep     = s.vars.departamento || 'ND';
   const zona    = s.vars.subzona || 'ND';
   const cultivo = s.vars.cultivos?.[0] || 'ND';
-  const ha      = s.vars.hectareas || 'ND';
   const camp    = s.vars.campana || 'ND';
-
   const prod    = s.vars.last_product || (s.vars.cart?.[0]?.nombre || '—');
   const cant    = s.vars.cantidad || (s.vars.cart?.[0]?.cantidad || '—');
 
   const baseChat     = `https://wa.me/${customerWa}`;
-  const presetText   =
-    `Hola ${nombre}, soy asesor de New Chem 👋. ` +
-    `Recibimos tu consulta sobre ${prod} (${cant}) para ${cultivo} en ${dep}/${zona}. ` +
-    `¿Seguimos con tu cotización?`;
+  const presetText   = buildAdvisorPresetText(s);             // ← tu mensaje
   const replyWithMsg = `${baseChat}?text=${encodeURIComponent(presetText)}`;
 
   return [
     `🕒 ${stamp}`,
     `🆕 *Nuevo lead*`,
-    `• ${nombre} (${dep} / ${zona})`,
-    `• Cultivo: ${cultivo} — Ha: ${ha} — Campaña: ${camp}`,
-    `• Producto: ${prod} — Cantidad: ${cant}`,
+    `*Nombre:* ${nombre}`,
+    `*Ubicación:* ${dep} - ${zona}`,
+    `*Cultivo:* ${cultivo}`,
+    `*Campaña:* ${camp}`,
+    `*Producto:* ${prod}`,
+    `*Cantidad:* ${cant}`,
+    ``,
     `Abrir chat: ${baseChat}`,
     `Responder con mensaje: ${replyWithMsg}`
   ].join('\n');
 }
-
-
 
 const processed = new Map(); 
 const PROCESSED_TTL = 5 * 60 * 1000;
@@ -1024,12 +1050,8 @@ router.post('/wa/webhook', async (req,res)=>{
     const rawFrom = msg?.from || value?.contacts?.[0]?.wa_id || '';
     const fromId  = digits(rawFrom);
 
-    console.log('[HOOK]', {
-      rawFrom,
-      fromId,
-      advisors: ADVISOR_WA_NUMBERS,
-      sAdvisor: isAdvisor(fromId)
-    });
+  dbg('[HOOK]', { rawFrom, fromId, advisors: ADVISOR_WA_NUMBERS, isAdvisor: isAdvisor(fromId) });
+
 
     if(!msg || !fromId){ return res.sendStatus(200); }
 
