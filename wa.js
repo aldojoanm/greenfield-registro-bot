@@ -1027,20 +1027,12 @@ router.post('/wa/webhook', async (req,res)=>{
     console.log('[HOOK]', {
       rawFrom,
       fromId,
-      advisorEnv: ADVISOR_WA_NUMBER,
-      eq: fromId === ADVISOR_WA_NUMBER
+      advisors: ADVISOR_WA_NUMBERS,
+      sAdvisor: isAdvisor(fromId)
     });
 
     if(!msg || !fromId){ return res.sendStatus(200); }
 
- if (ADVISOR_WA_NUMBER && fromId === ADVISOR_WA_NUMBER) {
-      console.log('[HOOK] Mensaje del asesor — ignorando como bot y abriendo ventana 24h');
-      advisorWindowTs = Date.now();           // si querés conservar la “ventana”
-      persistS(fromId);
-      return res.sendStatus(200);
-    }
-
-    // 👇 recién acá, el resto del flujo
     if (seenWamid(msg.id)) { return res.sendStatus(200); }
 
     const s = S(fromId);
