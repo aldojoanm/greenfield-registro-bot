@@ -941,8 +941,8 @@ router.get('/wa/webhook',(req,res)=>{
   return res.sendStatus(403);
 });
 
-
-const ADVISOR_WA_NUMBER = (process.env.ADVISOR_WA_NUMBER || '').replace(/\D/g,'');
+const digits = s => String(s||'').replace(/[^\d]/g,'');
+const ADVISOR_WA_NUMBER = digits(process.env.ADVISOR_WA_NUMBER || '');
 if (!ADVISOR_WA_NUMBER) console.warn('ADVISOR_WA_NUMBER vacío. No se avisará al asesor.');
 
 let advisorWindowTs = 0;                 
@@ -1005,50 +1005,54 @@ const PROCESSED_TTL = 5 * 60 * 1000;
 setInterval(()=>{ const now=Date.now(); for(const [k,ts] of processed){ if(now-ts>PROCESSED_TTL) processed.delete(k); } }, 60*1000);
 function seenWamid(id){ if(!id) return false; const now=Date.now(); const old=processed.get(id); processed.set(id,now); return !!old && (now-old)<PROCESSED_TTL; }
 
-// ===== RECEIVE =====
 router.post('/wa/webhook', async (req,res)=>{
   try{
     const entry  = req.body?.entry?.[0];
     const change = entry?.changes?.[0];
     const value  = change?.value;
     const msg    = value?.messages?.[0];
-    const from   = msg?.from;
-    if(!msg || !from){ res.sendStatus(200); return; }
+
+    // 🔹 Normaliza el número UNA vez y úsalo en todo el handler
+    const fromId = digits(msg?.from || '');
+    if(!msg || !fromId){ res.sendStatus(200); return; }
     if (seenWamid(msg.id)) { res.sendStatus(200); return; }
 
-    const s = S(from);
+    const s = S(fromId);
     s.meta = s.meta || {};
-    if (msg.id) { s.meta.last_wamid = msg.id; persistS(from); } // para "marcar leído"
+    if (msg.id) { s.meta.last_wamid = msg.id; persistS(fromId); } // para "marcar leído"
 
     const textRaw = (msg.type==='text' ? (msg.text?.body || '').trim() : '');
 
-    if (isHuman(from)) {
-      if (textRaw) remember(from, 'user', textRaw);
+    // 🙋 Si la conversación está en modo humano, no responder salvo para reactivar bot
+    if (isHuman(fromId)) {
+      if (textRaw) remember(fromId, 'user', textRaw);
       if (textRaw && wantsBotBack(textRaw)) {
-        humanOff(from);
+        humanOff(fromId);
         const quien = s.profileName ? `, ${s.profileName}` : '';
-        await toText(from, `Listo${quien} 🙌. Reactivé el *asistente automático*. ¿En qué puedo ayudarte?`);
+        await toText(fromId, `Listo${quien} 🙌. Reactivé el *asistente automático*. ¿En qué puedo ayudarte?`);
       }
-      persistS(from); res.sendStatus(200); return;
+      persistS(fromId); res.sendStatus(200); return;
     }
 
-     if (ADVISOR_WA_NUMBER && from === ADVISOR_WA_NUMBER) {
+    // 👤 Si escribe el asesor, solo abrir ventana 24h y salir
+    if (ADVISOR_WA_NUMBER && fromId === ADVISOR_WA_NUMBER) {
       advisorWindowTs = Date.now();
-      persistS(from);
+      persistS(fromId);
       return res.sendStatus(200);
     }
 
+    // 🧲 Referral (Facebook Ads)
     const referral = msg?.referral;
     if (referral && !s.meta.referralHandled){
       s.meta.referralHandled = true;
       s.meta.origin = 'facebook';
       s.meta.referral = referral;
-      persistS(from);
+      persistS(fromId);
       const prod = productFromReferral(referral);
       if (prod){
         s.vars.candidate_sku = prod.sku;
-        persistS(from);
-        await toButtons(from, `Gracias por escribirnos desde Facebook. ¿La consulta es sobre *${prod.nombre}*?`, [
+        persistS(fromId);
+        await toButtons(fromId, `Gracias por escribirnos desde Facebook. ¿La consulta es sobre *${prod.nombre}*?`, [
           { title:`Sí, ${prod.nombre}`, payload:`REF_YES_${prod.sku}` },
           { title:'No, otro producto',  payload:'REF_NO' }
         ]);
@@ -1056,17 +1060,17 @@ router.post('/wa/webhook', async (req,res)=>{
       }
     }
 
+    // 👋 Saludo inicial (evitar duplicado)
     const isLeadMsg = msg.type==='text' && !!parseMessengerLead(msg.text?.body);
-    // --- SALUDO (evitar duplicado) ---
     if(!s.greeted){
       s.greeted = true; 
-      persistS(from);
+      persistS(fromId);
 
       if(!isLeadMsg){
-        await toText(from, PLAY?.greeting || '¡Qué gusto saludarte!, Soy el asistente virtual de *New Chem*. Estoy para ayudarte 🙂');
+        await toText(fromId, PLAY?.greeting || '¡Qué gusto saludarte!, Soy el asistente virtual de *New Chem*. Estoy para ayudarte 🙂');
       }
       if(!isLeadMsg && !s.asked.nombre){
-        await askNombre(from);
+        await askNombre(fromId);
         res.sendStatus(200); 
         return;
       }
@@ -1080,24 +1084,26 @@ router.post('/wa/webhook', async (req,res)=>{
 
       const selTitle = br?.title || lr?.title || null;
       if (selTitle) {
-        remember(from, 'user', `✅ ${selTitle}`);
+        remember(fromId, 'user', `✅ ${selTitle}`);
       } else {
-        remember(from, 'user', `✅ ${id}`);
+        remember(fromId, 'user', `✅ ${id}`);
       }
 
       if(id==='QR_FINALIZAR'){
         try {
           if (!s._savedToSheet) {
-            const cotId = await appendFromSession(s, from, 'nuevo');
-            s.vars.cotizacion_id = cotId; s._savedToSheet = true; persistS(from);
+            const cotId = await appendFromSession(s, fromId, 'nuevo');
+            s.vars.cotizacion_id = cotId; s._savedToSheet = true; persistS(fromId);
           }
         } catch (err) { console.error('Sheets append error:', err); }
-        await toText(from,'¡Gracias por escribirnos! Nuestro encargado de negocios te enviará la cotización en breve. Si requieres más información, estamos a tu disposición.');
-        await toText(from,'Para volver a activar el asistente, por favor, escribe *Asistente New Chem*.');
 
+        await toText(fromId,'¡Gracias por escribirnos! Nuestro encargado de negocios te enviará la cotización en breve. Si requieres más información, estamos a tu disposición.');
+        await toText(fromId,'Para volver a activar el asistente, por favor, escribe *Asistente New Chem*.');
+
+        // 🔔 Aviso al asesor (sin redefinir 'from' y usando fromId normalizado)
         if (ADVISOR_WA_NUMBER) {
           if (isAdvisorWindowOpen()) {
-            const txt = compileAdvisorAlert(S(from), from);
+            const txt = compileAdvisorAlert(S(fromId), fromId);
             const ok = await waSendQ(ADVISOR_WA_NUMBER, {
               messaging_product: 'whatsapp',
               to: ADVISOR_WA_NUMBER,
@@ -1111,19 +1117,18 @@ router.post('/wa/webhook', async (req,res)=>{
           }
         }
 
-
-
-        humanOn(from, 4);
+        humanOn(fromId, 4);
         s._closedAt = Date.now();         
         s.stage = 'closed';
-        persistS(from);
-        broadcastAgent('convos', { id: from }); 
+        persistS(fromId);
+        broadcastAgent('convos', { id: fromId }); 
         res.sendStatus(200); 
         return;
       }
-      if(id==='QR_SEGUIR'){ await toText(from,'Perfecto, vamos a añadir un nuevo producto 🙌.'); await askCategory(from); res.sendStatus(200); return; }
-      if(id==='ADD_MORE'){ s.vars.catOffset=0; s.vars.last_product=null; s.vars.last_sku=null; s.vars.last_presentacion=null; s.vars.cantidad=null; s.asked.cantidad=false; persistS(from); await toButtons(from,'Dime el *nombre del otro producto* o elige una categoría 👇', CAT_QR.map(c=>({title:c.title,payload:c.payload}))); res.sendStatus(200); return; }
-      if(id==='NO_MORE'){ await afterSummary(from, 'help'); res.sendStatus(200); return; }
+
+      if(id==='QR_SEGUIR'){ await toText(fromId,'Perfecto, vamos a añadir un nuevo producto 🙌.'); await askCategory(fromId); res.sendStatus(200); return; }
+      if(id==='ADD_MORE'){ s.vars.catOffset=0; s.vars.last_product=null; s.vars.last_sku=null; s.vars.last_presentacion=null; s.vars.cantidad=null; s.asked.cantidad=false; persistS(fromId); await toButtons(fromId,'Dime el *nombre del otro producto* o elige una categoría 👇', CAT_QR.map(c=>({title:c.title,payload:c.payload}))); res.sendStatus(200); return; }
+      if(id==='NO_MORE'){ await afterSummary(fromId, 'help'); res.sendStatus(200); return; }
 
       if(/^REF_YES_/.test(id)){
         const sku = id.replace('REF_YES_','');
@@ -1131,15 +1136,15 @@ router.post('/wa/webhook', async (req,res)=>{
         if(prod){
           s.vars.last_product = prod.nombre; s.vars.last_sku = prod.sku; s.vars.last_presentacion=null;
           const catNorm = normalizeCatLabel(prod.categoria||''); if(catNorm) s.vars.category = catNorm;
-          persistS(from);
-          await showProduct(from, prod);
-          await nextStep(from);
+          persistS(fromId);
+          await showProduct(fromId, prod);
+          await nextStep(fromId);
         }
         res.sendStatus(200); return;
       }
       if(id==='REF_NO'){
-        s.pending='product_name'; s.lastPrompt='product_name'; s.lastPromptTs=Date.now(); persistS(from);
-        await toText(from,'Claro, indícame por favor el *nombre del producto* que te interesa y te paso el detalle.');
+        s.pending='product_name'; s.lastPrompt='product_name'; s.lastPromptTs=Date.now(); persistS(fromId);
+        await toText(fromId,'Claro, indícame por favor el *nombre del producto* que te interesa y te paso el detalle.');
         res.sendStatus(200); return;
       }
 
@@ -1147,32 +1152,31 @@ router.post('/wa/webhook', async (req,res)=>{
         const depRaw = id.replace('DPTO_','').replace(/_/g,' ');
         const dep = (()=>{ const t=norm(depRaw); for(const d of DEPARTAMENTOS) if(norm(d)===t) return d; return title(depRaw); })();
         s.vars.departamento = dep; s.asked.departamento=true; s.pending=null; s.lastPrompt=null;
-        s.vars.subzona = null; persistS(from);
-        if(dep==='Santa Cruz'){ await askSubzonaSCZ(from); } else { await askSubzonaLibre(from); }
+        s.vars.subzona = null; persistS(fromId);
+        if(dep==='Santa Cruz'){ await askSubzonaSCZ(fromId); } else { await askSubzonaLibre(fromId); }
         res.sendStatus(200); return;
       }
       if(/^SUBZ_/.test(id)){
         const z = id.replace('SUBZ_','').toLowerCase();
         const mapa = { norte:'Norte', este:'Este', sur:'Sur', valles:'Valles', chiquitania:'Chiquitania' };
         if (s.vars.departamento==='Santa Cruz') s.vars.subzona = mapa[z] || null;
-        s.pending=null; s.lastPrompt=null; persistS(from);
-        await nextStep(from); res.sendStatus(200); return;
+        s.pending=null; s.lastPrompt=null; persistS(fromId);
+        await nextStep(fromId); res.sendStatus(200); return;
       }
 
       if (id === 'CROP_OTRO'){
-        await askCultivoLibre(from);
+        await askCultivoLibre(fromId);
         res.sendStatus(200); return;
       }
 
       if (id === 'HA_OTRA'){
-        await askHectareasLibre(from);
+        await askHectareasLibre(fromId);
         res.sendStatus(200); return;
       }
       if (/^HA_/.test(id)){
-        // Guardamos el label del rango seleccionado
         s.vars.hectareas = HA_LABEL[id] || (selTitle || '');
-        s.pending=null; s.lastPrompt=null; persistS(from);
-        await nextStep(from);
+        s.pending=null; s.lastPrompt=null; persistS(fromId);
+        await nextStep(fromId);
         res.sendStatus(200); return;
       }
 
@@ -1181,8 +1185,8 @@ router.post('/wa/webhook', async (req,res)=>{
         const map  = { soya:'Soya', maiz:'Maíz', trigo:'Trigo', arroz:'Arroz', girasol:'Girasol' };
         const val  = map[code] || null;
         if(val){
-          s.vars.cultivos = [val]; s.pending=null; s.lastPrompt=null; persistS(from);
-          await nextStep(from);
+          s.vars.cultivos = [val]; s.pending=null; s.lastPrompt=null; persistS(fromId);
+          await nextStep(fromId);
         }
         res.sendStatus(200); return;
       }
@@ -1191,20 +1195,20 @@ router.post('/wa/webhook', async (req,res)=>{
         const code = id.replace('CAMP_','').toLowerCase();
         if(code==='verano') s.vars.campana='Verano';
         else if(code==='invierno') s.vars.campana='Invierno';
-        else if(code==='otra'){ await askCampanaLibre(from); res.sendStatus(200); return; }
-        s.pending=null; s.lastPrompt=null; persistS(from);
-        await nextStep(from); res.sendStatus(200); return;
+        else if(code==='otra'){ await askCampanaLibre(fromId); res.sendStatus(200); return; }
+        s.pending=null; s.lastPrompt=null; persistS(fromId);
+        await nextStep(fromId); res.sendStatus(200); return;
       }
       if(/^CAT_/.test(id)){
         const key = id.replace('CAT_','').toLowerCase();
         s.vars.category = key==='herbicida' ? 'Herbicida' : key==='insecticida' ? 'Insecticida' : 'Fungicida';
-        s.vars.catOffset = 0; s.stage='product'; s.pending=null; s.lastPrompt=null; persistS(from);
-        await nextStep(from); res.sendStatus(200); return;
+        s.vars.catOffset = 0; s.stage='product'; s.pending=null; s.lastPrompt=null; persistS(fromId);
+        await nextStep(fromId); res.sendStatus(200); return;
       }
       if(/^CAT_MORE_/.test(id)){
         const next = parseInt(id.replace('CAT_MORE_',''),10) || 0;
-        s.vars.catOffset = next; persistS(from);
-        await listByCategory(from); res.sendStatus(200); return;
+        s.vars.catOffset = next; persistS(fromId);
+        await listByCategory(fromId); res.sendStatus(200); return;
       }
       if(/^PROD_/.test(id)){
         const sku = id.replace('PROD_','');
@@ -1212,13 +1216,13 @@ router.post('/wa/webhook', async (req,res)=>{
         if(prod){
           s.vars.last_product = prod.nombre; s.vars.last_sku = prod.sku; s.vars.last_presentacion=null;
           const catNorm = normalizeCatLabel(prod.categoria||''); if(catNorm) s.vars.category = catNorm;
-          persistS(from);
-          await showProduct(from, prod);
+          persistS(fromId);
+          await showProduct(fromId, prod);
           if(productHasMultiPres(prod)){
             // se pidió en showProduct
           } else if (!s.vars.cantidad && !s.asked.cantidad){
-            s.pending='cantidad'; s.lastPrompt='cantidad'; s.lastPromptTs=Date.now(); s.asked.cantidad=true; persistS(from);
-            await toText(from,'¿Qué *cantidad* necesitas *(L/KG o unidades)* para este producto?');
+            s.pending='cantidad'; s.lastPrompt='cantidad'; s.lastPromptTs=Date.now(); s.asked.cantidad=true; persistS(fromId);
+            await toText(fromId,'¿Qué *cantidad* necesitas *(L/KG o unidades)* para este producto?');
           }
         }
         res.sendStatus(200); return;
@@ -1229,10 +1233,10 @@ router.post('/wa/webhook', async (req,res)=>{
           const sku = m[1];
           const pres = ub64u(m[2]);
           if(s.vars.last_sku===sku){
-            s.vars.last_presentacion = pres; persistS(from);
+            s.vars.last_presentacion = pres; persistS(fromId);
             if(!s.vars.cantidad){
-              s.pending='cantidad'; s.lastPrompt='cantidad'; s.lastPromptTs=Date.now(); s.asked.cantidad=true; persistS(from);
-              await toText(from,'Perfecto. ¿Qué *cantidad* necesitas *(L/KG o unidades)* para este producto?');
+              s.pending='cantidad'; s.lastPrompt='cantidad'; s.lastPromptTs=Date.now(); s.asked.cantidad=true; persistS(fromId);
+              await toText(fromId,'Perfecto. ¿Qué *cantidad* necesitas *(L/KG o unidades)* para este producto?');
             }
           }
         }
@@ -1243,42 +1247,41 @@ router.post('/wa/webhook', async (req,res)=>{
     // ===== TEXTO =====
     if(msg.type==='text'){
       const text = (msg.text?.body||'').trim();
-      remember(from,'user',text);
+      remember(fromId,'user',text);
       const tnorm = norm(text);
 
-      if (S(from).pending==='nombre'){
+      if (S(fromId).pending==='nombre'){
         const looksLikeIntent = /[?¿]|(tiene|tienes|hay|precio|glifo|glifosato|producto|cat[aá]logo|insecticida|herbicida|fungicida|acaricida)/i.test(text);
         if(!looksLikeIntent){
-          S(from).profileName = title(text.toLowerCase());
-          S(from).pending=null; S(from).lastPrompt=null; persistS(from);
-          await nextStep(from); res.sendStatus(200); return;
+          S(fromId).profileName = title(text.toLowerCase());
+          S(fromId).pending=null; S(fromId).lastPrompt=null; persistS(fromId);
+          await nextStep(fromId); res.sendStatus(200); return;
         }
       }
-      if (S(from).pending==='cultivo_text'){
-        S(from).vars.cultivos = [title(text)];
-        S(from).pending=null; S(from).lastPrompt=null; persistS(from);
-        await askHectareas(from);
+      if (S(fromId).pending==='cultivo_text'){
+        S(fromId).vars.cultivos = [title(text)];
+        S(fromId).pending=null; S(fromId).lastPrompt=null; persistS(fromId);
+        await askHectareas(fromId);
         res.sendStatus(200); return;
       }
 
       // Hectáreas libre (activado desde HA_OTRA)
-if (S(from).pending==='hectareas_text'){
-  const ha = parseHectareas(text);
-  if (ha){
-    S(from).vars.hectareas = ha;
-    S(from).pending=null; S(from).lastPrompt=null; persistS(from);
-    await nextStep(from);
-  } else {
-    await toText(from,'Por favor escribe un número válido de *hectáreas* (ej. 50).');
-  }
-  res.sendStatus(200); return;
-}
-
+      if (S(fromId).pending==='hectareas_text'){
+        const ha = parseHectareas(text);
+        if (ha){
+          S(fromId).vars.hectareas = ha;
+          S(fromId).pending=null; S(fromId).lastPrompt=null; persistS(fromId);
+          await nextStep(fromId);
+        } else {
+          await toText(fromId,'Por favor escribe un número válido de *hectáreas* (ej. 50).');
+        }
+        res.sendStatus(200); return;
+      }
 
       // Lead de Messenger
       const lead = parseMessengerLead(text);
       if (lead){
-        s.meta.origin = 'messenger'; s.greeted = true; persistS(from);
+        s.meta.origin = 'messenger'; s.greeted = true; persistS(fromId);
         if (lead.name) {
           s.profileName = canonName(lead.name);   
           s.asked.nombre = true;                        
@@ -1298,163 +1301,164 @@ if (S(from).pending==='hectareas_text'){
           const mapped = Array.from(new Set(picks.map(x=>CROP_SYN[x]).filter(Boolean)));
           if (mapped.length) s.vars.cultivos = [mapped[0]];
         }
-        persistS(from);
+        persistS(fromId);
         const quien = s.profileName ? ` ${s.profileName}` : '';
-        await toText(from, `👋 Hola${quien}, gracias por continuar con *New Chem* vía WhatsApp.\nAquí encontrarás los agroquímicos esenciales para tu cultivo, al mejor precio. 🌱`);
-        await askCultivo(from); res.sendStatus(200); return;
+        await toText(fromId, `👋 Hola${quien}, gracias por continuar con *New Chem* vía WhatsApp.\nAquí encontrarás los agroquímicos esenciales para tu cultivo, al mejor precio. 🌱`);
+        await askCultivo(fromId); res.sendStatus(200); return;
       }
 
       // Subzona libre
-      if (S(from).pending==='subzona_libre'){
-        S(from).vars.subzona = title(text.toLowerCase());
-        S(from).pending=null; S(from).lastPrompt=null; persistS(from);
-        await nextStep(from); res.sendStatus(200); return;
+      if (S(fromId).pending==='subzona_libre'){
+        S(fromId).vars.subzona = title(text.toLowerCase());
+        S(fromId).pending=null; S(fromId).lastPrompt=null; persistS(fromId);
+        await nextStep(fromId); res.sendStatus(200); return;
       }
 
       // Hectáreas
-      if (S(from).pending==='hectareas'){
+      if (S(fromId).pending==='hectareas'){
         const ha = parseHectareas(text);
         if(ha){
-          S(from).vars.hectareas = ha;
-          S(from).pending=null; S(from).lastPrompt=null; persistS(from);
-          await nextStep(from);
+          S(fromId).vars.hectareas = ha;
+          S(fromId).pending=null; S(fromId).lastPrompt=null; persistS(fromId);
+          await nextStep(fromId);
           res.sendStatus(200); return;
         } else {
-          await toText(from,'Por favor ingresa un número válido de *hectáreas* (ej. 50 ha).');
+          await toText(fromId,'Por favor ingresa un número válido de *hectáreas* (ej. 50 ha).');
           res.sendStatus(200); return;
         }
       }
 
       // Campaña libre
-      if (S(from).pending==='campana_text'){
-        S(from).vars.campana = title(text);
-        S(from).pending=null; S(from).lastPrompt=null; persistS(from);
-        await nextStep(from); res.sendStatus(200); return;
+      if (S(fromId).pending==='campana_text'){
+        S(fromId).vars.campana = title(text);
+        S(fromId).pending=null; S(fromId).lastPrompt=null; persistS(fromId);
+        await nextStep(fromId); res.sendStatus(200); return;
       }
 
       // ASESOR
       if (wantsAgentPlus(text)) {
         const quien = s.profileName ? `, ${s.profileName}` : '';
-        await toText(from, `¡Perfecto${quien}! Ya notifiqué a nuestro equipo. Un **asesor comercial** se pondrá en contacto contigo por este chat en unos minutos para ayudarte con tu consulta y la cotización. Desde ahora **pauso el asistente automático** para que te atienda una persona. 🙌`);
-        humanOn(from, 4); persistS(from); res.sendStatus(200); return;
+        await toText(fromId, `¡Perfecto${quien}! Ya notifiqué a nuestro equipo. Un **asesor comercial** se pondrá en contacto contigo por este chat en unos minutos para ayudarte con tu consulta y la cotización. Desde ahora **pauso el asistente automático** para que te atienda una persona. 🙌`);
+        humanOn(fromId, 4); persistS(fromId); res.sendStatus(200); return;
       }
 
-      if(/horario|atienden|abren|cierran/i.test(tnorm)){ await toText(from, `Atendemos ${FAQS?.horarios || 'Lun–Vie 8:00–17:00'} 🙂`); res.sendStatus(200); return; }
-      if(wantsLocation(text)){ await toText(from, `Nuestra ubicación en Google Maps 👇\nVer ubicación: ${linkMaps()}`); await toButtons(from,'¿Hay algo más en lo que pueda ayudarte?',[{title:'Seguir',payload:'QR_SEGUIR'},{title:'Finalizar',payload:'QR_FINALIZAR'}]); res.sendStatus(200); return; }
+      if(/horario|atienden|abren|cierran/i.test(tnorm)){ await toText(fromId, `Atendemos ${FAQS?.horarios || 'Lun–Vie 8:00–17:00'} 🙂`); res.sendStatus(200); return; }
+      if(wantsLocation(text)){ await toText(fromId, `Nuestra ubicación en Google Maps 👇\nVer ubicación: ${linkMaps()}`); await toButtons(fromId,'¿Hay algo más en lo que pueda ayudarte?',[{title:'Seguir',payload:'QR_SEGUIR'},{title:'Finalizar',payload:'QR_FINALIZAR'}]); res.sendStatus(200); return; }
       if(wantsCatalog(text)){
-        await toText(from, `Este es nuestro catálogo completo\n${CATALOG_URL}`);
-        await toButtons(from,'¿Quieres que te ayude a elegir o añadir un producto ahora?',[{title:'Añadir producto', payload:'ADD_MORE'},{title:'Finalizar', payload:'QR_FINALIZAR'}]);
+        await toText(fromId, `Este es nuestro catálogo completo\n${CATALOG_URL}`);
+        await toButtons(fromId,'¿Quieres que te ayude a elegir o añadir un producto ahora?',[{title:'Añadir producto', payload:'ADD_MORE'},{title:'Finalizar', payload:'QR_FINALIZAR'}]);
         res.sendStatus(200); return;
       }
       if(wantsClose(text)){
-        await toText(from,'¡Gracias por escribirnos! Si más adelante te surge algo, aquí estoy para ayudarte. 👋');
-        humanOn(from, 4);
+        await toText(fromId,'¡Gracias por escribirnos! Si más adelante te surge algo, aquí estoy para ayudarte. 👋');
+        humanOn(fromId, 4);
         s._closedAt = Date.now();
         s.stage = 'closed';
-        persistS(from);
-        broadcastAgent('convos', { id: from });
+        persistS(fromId);
+        broadcastAgent('convos', { id: fromId });
         res.sendStatus(200); 
         return;
       }
-      if(wantsAnother(text)){ await askAddMore(from); res.sendStatus(200); return; }
+      if(wantsAnother(text)){ await askAddMore(fromId); res.sendStatus(200); return; }
 
-      const ha   = parseHectareas(text); if(ha && !S(from).vars.hectareas){ S(from).vars.hectareas = ha; persistS(from); }
-      const phone= parsePhone(text);     if(phone){ S(from).vars.phone = phone; persistS(from); }
+      const ha   = parseHectareas(text); if(ha && !S(fromId).vars.hectareas){ S(fromId).vars.hectareas = ha; persistS(fromId); }
+      const phone= parsePhone(text);     if(phone){ S(fromId).vars.phone = phone; persistS(fromId); }
 
       let cant = parseCantidad(text);
-      if(!cant && (S(from).pending==='cantidad')){
+      if(!cant && (S(fromId).pending==='cantidad')){
         const mOnly = text.match(/^\s*(\d{1,6}(?:[.,]\d{1,2})?)\s*$/);
-        if(mOnly){ const unit = inferUnitFromProduct(S(from)).toLowerCase(); cant = `${mOnly[1].replace(',','.') } ${unit}`; }
+        if(mOnly){ const unit = inferUnitFromProduct(S(fromId)).toLowerCase(); cant = `${mOnly[1].replace(',','.') } ${unit}`; }
       }
-      if(cant){ S(from).vars.cantidad = cant; persistS(from); }
+      if(cant){ S(fromId).vars.cantidad = cant; persistS(fromId); }
       const prodExact = findProduct(text);
       const iaHits = findProductsByIA(text);
       if (prodExact){
-        S(from).vars.last_product = prodExact.nombre;
-        S(from).vars.last_sku = prodExact.sku;
-        S(from).vars.last_presentacion = null;
-        const catFromProd = normalizeCatLabel(prodExact.categoria||''); if (catFromProd) S(from).vars.category = catFromProd;
-        S(from).stage='product'; S(from).vars.catOffset=0; persistS(from);
+        S(fromId).vars.last_product = prodExact.nombre;
+        S(fromId).vars.last_sku = prodExact.sku;
+        S(fromId).vars.last_presentacion = null;
+        const catFromProd = normalizeCatLabel(prodExact.categoria||''); if (catFromProd) S(fromId).vars.category = catFromProd;
+        S(fromId).stage='product'; S(fromId).vars.catOffset=0; persistS(fromId);
       } else if (iaHits.length === 1){
         const prod = iaHits[0];
-        S(from).vars.last_product = prod.nombre;
-        S(from).vars.last_sku = prod.sku;
-        S(from).vars.last_presentacion = null;
-        const catFromProd = normalizeCatLabel(prod.categoria||''); if (catFromProd) S(from).vars.category = catFromProd;
-        S(from).stage='product'; S(from).vars.catOffset=0; persistS(from);
+        S(fromId).vars.last_product = prod.nombre;
+        S(fromId).vars.last_sku = prod.sku;
+        S(fromId).vars.last_presentacion = null;
+        const catFromProd = normalizeCatLabel(prod.categoria||''); if (catFromProd) S(fromId).vars.category = catFromProd;
+        S(fromId).stage='product'; S(fromId).vars.catOffset=0; persistS(fromId);
       } else if (iaHits.length > 1){
-        await listByIA(from, iaHits, text);
+        await listByIA(fromId, iaHits, text);
         res.sendStatus(200); return;
       }
 
       const catTyped2 = detectCategory(text);
       if(catTyped2){
-        S(from).vars.category=catTyped2; S(from).vars.catOffset=0; S(from).asked.categoria=true; S(from).stage='product';
-        persistS(from);
-        if (mentionsAcaricida(text) && catTyped2==='Insecticida') await toText(from,'Te muestro Insecticidas que cubren ácaros.');
+        S(fromId).vars.category=catTyped2; S(fromId).vars.catOffset=0; S(fromId).asked.categoria=true; S(fromId).stage='product';
+        persistS(fromId);
+        if (mentionsAcaricida(text) && catTyped2==='Insecticida') await toText(fromId,'Te muestro Insecticidas que cubren ácaros.');
       }
 
       const depTyped = detectDepartamento(text);
       const subOnly  = detectSubzona(text);
-      if(depTyped){ S(from).vars.departamento = depTyped; S(from).vars.subzona=null; persistS(from); }
-      if((S(from).vars.departamento==='Santa Cruz' || depTyped==='Santa Cruz') && subOnly){ S(from).vars.subzona = subOnly; persistS(from); }
+      if(depTyped){ S(fromId).vars.departamento = depTyped; S(fromId).vars.subzona=null; persistS(fromId); }
+      if((S(fromId).vars.departamento==='Santa Cruz' || depTyped==='Santa Cruz') && subOnly){ S(fromId).vars.subzona = subOnly; persistS(fromId); }
 
-      if (S(from).pending==='cultivo'){
+      if (S(fromId).pending==='cultivo'){
         const picked = Object.keys(CROP_SYN).find(k=>tnorm.includes(k));
         if (picked){
-          S(from).vars.cultivos = [CROP_SYN[picked]];
-          S(from).pending=null; S(from).lastPrompt=null; persistS(from);
-          await askHectareas(from);
+          S(fromId).vars.cultivos = [CROP_SYN[picked]];
+          S(fromId).pending=null; S(fromId).lastPrompt=null; persistS(fromId);
+          await askHectareas(fromId);
           res.sendStatus(200); return;
         } else {
-          await toText(from, 'Por favor, *elige una opción del listado* para continuar.');
-          await askCultivo(from); res.sendStatus(200); return;
+          await toText(fromId, 'Por favor, *elige una opción del listado* para continuar.');
+          await askCultivo(fromId); res.sendStatus(200); return;
         }
       }
 
-      if(!S(from).vars.campana){
-        if(/\bverano\b/i.test(text)) S(from).vars.campana='Verano';
-        else if(/\binvierno\b/i.test(text)) S(from).vars.campana='Invierno';
+      if(!S(fromId).vars.campana){
+        if(/\bverano\b/i.test(text)) S(fromId).vars.campana='Verano';
+        else if(/\binvierno\b/i.test(text)) S(fromId).vars.campana='Invierno';
       }
 
       if(asksPrice(text)){
-        if (mentionsAcaricida(text)) await toText(from, 'Te muestro Insecticidas que cubren ácaros.');
-        await toText(from,'Con gusto te preparo una *cotización* con un precio a medida. Solo necesito que me compartas unos datos para poder recomendarte la mejor opción para tu zona y cultivo');
+        if (mentionsAcaricida(text)) await toText(fromId, 'Te muestro Insecticidas que cubren ácaros.');
+        await toText(fromId,'Con gusto te preparo una *cotización* con un precio a medida. Solo necesito que me compartas unos datos para poder recomendarte la mejor opción para tu zona y cultivo');
       }
 
-      if(S(from).vars.cantidad && S(from).vars.last_sku){
-        addCurrentToCart(S(from)); persistS(from);
-        await askAddMore(from);
+      if(S(fromId).vars.cantidad && S(fromId).vars.last_sku){
+        addCurrentToCart(S(fromId)); persistS(fromId);
+        await askAddMore(fromId);
         res.sendStatus(200); return;
       }
 
       const productIntent = prodExact || (iaHits.length>0) || catTyped2 || asksPrice(text) || wantsBuy(text) || /producto|herbicida|insecticida|fungicida|acaricida|informaci[oó]n/i.test(tnorm);
-      if (S(from).stage === 'discovery' && productIntent) { S(from).stage = 'product'; persistS(from); }
+      if (S(fromId).stage === 'discovery' && productIntent) { S(fromId).stage = 'product'; persistS(fromId); }
 
-      if (S(from).vars.last_product && S(from).vars.departamento && S(from).vars.subzona){
-        const prod = findProduct(S(from).vars.last_product) || prodExact || iaHits[0];
+      if (S(fromId).vars.last_product && S(fromId).vars.departamento && S(fromId).vars.subzona){
+        const prod = findProduct(S(fromId).vars.last_product) || prodExact || iaHits[0];
         if (prod) {
-          await showProduct(from, prod);
-          if (productHasMultiPres(prod) && !S(from).vars.last_presentacion) {
+          await showProduct(fromId, prod);
+          if (productHasMultiPres(prod) && !S(fromId).vars.last_presentacion) {
             // se pidió en showProduct
-          } else if (!S(from).vars.cantidad && !S(from).asked.cantidad) {
-            S(from).pending='cantidad'; S(from).lastPrompt='cantidad'; S(from).lastPromptTs=Date.now(); S(from).asked.cantidad=true; persistS(from);
-            await toText(from,'¿Qué *cantidad* necesitas *(L/KG o unidades)* para este producto?');
+          } else if (!S(fromId).vars.cantidad && !S(fromId).asked.cantidad) {
+            S(fromId).pending='cantidad'; S(fromId).lastPrompt='cantidad'; S(fromId).lastPromptTs=Date.now(); S(fromId).asked.cantidad=true; persistS(fromId);
+            await toText(fromId,'¿Qué *cantidad* necesitas *(L/KG o unidades)* para este producto?');
           }
         }
       }
 
-      await nextStep(from);
+      await nextStep(fromId);
       res.sendStatus(200); return;
     }
 
-    await nextStep(from);
+    await nextStep(fromId);
     res.sendStatus(200);
   }catch(e){
     console.error('WA webhook error', e);
     res.sendStatus(500);
   }
 });
+
 // ===== AGENT =====
 router.get('/wa/agent/stream', agentAuth, (req,res)=>{
   res.writeHead(200, {
