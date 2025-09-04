@@ -945,7 +945,7 @@ const digits = s => String(s||'').replace(/[^\d]/g,'');
 const ADVISOR_WA_NUMBER = digits(process.env.ADVISOR_WA_NUMBER || '');
 if (!ADVISOR_WA_NUMBER) console.warn('ADVISOR_WA_NUMBER vacío. No se avisará al asesor.');
 console.log('[BOOT] ADVISOR_WA_NUMBER =', ADVISOR_WA_NUMBER || '(vacío)');
-console.log('[HOOK] fromId =', fromId, ' advisor =', ADVISOR_WA_NUMBER);
+
 let advisorWindowTs = 0;                 
 const MS24H = 24*60*60*1000;
 const isAdvisorWindowOpen = () => (Date.now() - advisorWindowTs) < MS24H;
@@ -1015,6 +1015,7 @@ router.post('/wa/webhook', async (req,res)=>{
 
     // 🔹 Normaliza el número UNA vez y úsalo en todo el handler
     const fromId = digits(msg?.from || '');
+    console.log('[HOOK] fromId =', fromId, 'advisor =', ADVISOR_WA_NUMBER);
     if(!msg || !fromId){ res.sendStatus(200); return; }
     if (seenWamid(msg.id)) { res.sendStatus(200); return; }
 
@@ -1103,8 +1104,7 @@ router.post('/wa/webhook', async (req,res)=>{
         await toText(fromId,'Para volver a activar el asistente, por favor, escribe *Asistente New Chem*.');
 
         // 🔔 Aviso al asesor (sin redefinir 'from' y usando fromId normalizado)
-        if (ADVISOR_WA_NUMBER) {
-          if (isAdvisorWindowOpen()) {
+          if (ADVISOR_WA_NUMBER) {
             const txt = compileAdvisorAlert(S(fromId), fromId);
             const ok = await waSendQ(ADVISOR_WA_NUMBER, {
               messaging_product: 'whatsapp',
@@ -1112,12 +1112,14 @@ router.post('/wa/webhook', async (req,res)=>{
               type: 'text',
               text: { body: txt.slice(0,4096) }
             });
-            if (ok === false) console.error('No se pudo avisar al asesor (API o política 24h).');
-          } else {
-            console.warn('No se avisó al asesor: ventana 24h cerrada.');
-            // aquí puedes disparar un fallback (email/Slack)
+
+            if (ok) {
+              console.log('[ADVISOR] alerta enviada (texto)');
+            } else {
+              console.warn('[ADVISOR] la API bloqueó el envío (prob. fuera de 24h / sin sesión abierta).');
+              // acá podrías agregar un fallback no-WhatsApp: email/Slack/etc.
+            }
           }
-        }
 
         humanOn(fromId, 4);
         s._closedAt = Date.now();         
