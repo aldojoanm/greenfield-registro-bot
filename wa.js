@@ -944,7 +944,8 @@ router.get('/wa/webhook',(req,res)=>{
 const digits = s => String(s||'').replace(/[^\d]/g,'');
 const ADVISOR_WA_NUMBER = digits(process.env.ADVISOR_WA_NUMBER || '');
 if (!ADVISOR_WA_NUMBER) console.warn('ADVISOR_WA_NUMBER vacío. No se avisará al asesor.');
-
+console.log('[BOOT] ADVISOR_WA_NUMBER =', ADVISOR_WA_NUMBER || '(vacío)');
+console.log('[HOOK] fromId =', fromId, ' advisor =', ADVISOR_WA_NUMBER);
 let advisorWindowTs = 0;                 
 const MS24H = 24*60*60*1000;
 const isAdvisorWindowOpen = () => (Date.now() - advisorWindowTs) < MS24H;
@@ -1035,11 +1036,12 @@ router.post('/wa/webhook', async (req,res)=>{
     }
 
     // 👤 Si escribe el asesor, solo abrir ventana 24h y salir
-    if (ADVISOR_WA_NUMBER && fromId === ADVISOR_WA_NUMBER) {
-      advisorWindowTs = Date.now();
-      persistS(fromId);
-      return res.sendStatus(200);
-    }
+   if (ADVISOR_WA_NUMBER && fromId === ADVISOR_WA_NUMBER) {
+  console.log('[HOOK] Mensaje del asesor — abriendo ventana 24h');
+  advisorWindowTs = Date.now();
+  persistS(fromId);
+  return res.sendStatus(200);
+}
 
     // 🧲 Referral (Facebook Ads)
     const referral = msg?.referral;
