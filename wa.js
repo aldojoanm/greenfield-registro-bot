@@ -942,9 +942,17 @@ router.get('/wa/webhook',(req,res)=>{
 });
 
 const digits = s => String(s||'').replace(/[^\d]/g,'');
-const ADVISOR_WA_NUMBER = digits(process.env.ADVISOR_WA_NUMBER || '');
-if (!ADVISOR_WA_NUMBER) console.warn('ADVISOR_WA_NUMBER vacío. No se avisará al asesor.');
-console.log('[BOOT] ADVISOR_WA_NUMBER =', ADVISOR_WA_NUMBER || '(vacío)');
+const ADVISOR_WA_NUMBERS = String(
+  process.env.ADVISOR_WA_NUMBER ?? process.env.ADVISOR_WA_NUMBERS ?? ''
+)
+  .split(/[,\s]+/)
+  .map(digits)
+  .filter(Boolean);
+
+const isAdvisor = (id) => ADVISOR_WA_NUMBERS.includes(digits(id));
+
+if (!ADVISOR_WA_NUMBERS.length) console.warn('ADVISOR_WA_NUMBER(S) vacío(s). No se avisará al asesor.');
+console.log('[BOOT] ADVISOR_WA_NUMBERS =', ADVISOR_WA_NUMBERS.length ? ADVISOR_WA_NUMBERS.join(',') : '(vacío)');
 
 let advisorWindowTs = 0;                 
 const MS24H = 24*60*60*1000;
@@ -1053,12 +1061,13 @@ router.post('/wa/webhook', async (req,res)=>{
     }
 
     // 👤 Si escribe el asesor, solo abrir ventana 24h y salir
-   if (ADVISOR_WA_NUMBER && fromId === ADVISOR_WA_NUMBER) {
+if (isAdvisor(fromId)) {
   console.log('[HOOK] Mensaje del asesor — abriendo ventana 24h');
   advisorWindowTs = Date.now();
   persistS(fromId);
   return res.sendStatus(200);
 }
+
 
     // 🧲 Referral (Facebook Ads)
     const referral = msg?.referral;
@@ -1119,24 +1128,19 @@ router.post('/wa/webhook', async (req,res)=>{
         await toText(fromId,'¡Gracias por escribirnos! Nuestro encargado de negocios te enviará la cotización en breve. Si requieres más información, estamos a tu disposición.');
         await toText(fromId,'Para volver a activar el asistente, por favor, escribe *Asistente New Chem*.');
 
-        // 🔔 Aviso al asesor (sin redefinir 'from' y usando fromId normalizado)
-          if (ADVISOR_WA_NUMBER) {
-            const txt = compileAdvisorAlert(S(fromId), fromId);
-            const ok = await waSendQ(ADVISOR_WA_NUMBER, {
-              messaging_product: 'whatsapp',
-              to: ADVISOR_WA_NUMBER,
-              type: 'text',
-              text: { body: txt.slice(0,4096) }
-            });
-
-            if (ok) {
-              console.log('[ADVISOR] alerta enviada (texto)');
-            } else {
-              console.warn('[ADVISOR] la API bloqueó el envío (prob. fuera de 24h / sin sesión abierta).');
-              // acá podrías agregar un fallback no-WhatsApp: email/Slack/etc.
-            }
-          }
-
+if (ADVISOR_WA_NUMBERS.length) {
+  const txt = compileAdvisorAlert(S(fromId), fromId);
+  for (const advisor of ADVISOR_WA_NUMBERS) {
+    const ok = await waSendQ(advisor, {
+      messaging_product: 'whatsapp',
+      to: advisor,
+      type: 'text',
+      text: { body: txt.slice(0,4096) }
+    });
+    if (ok) console.log('[ADVISOR] alerta enviada a', advisor);
+    else console.warn('[ADVISOR] no se pudo enviar a', advisor, '(prob. fuera de 24h / sin sesión abierta).');
+  }
+}
         humanOn(fromId, 4);
         s._closedAt = Date.now();         
         s.stage = 'closed';
