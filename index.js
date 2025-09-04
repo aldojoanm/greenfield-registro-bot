@@ -279,7 +279,7 @@ async function finishAndWhatsApp(psid){
   await sendText(psid, summaryTextForFinal(s));
 
   // 2) NUEVO: texto amable ofreciendo ver el catálogo (con el link)
-  await sendText(psid, `Mientras tanto, si quieres ir viendo opciones, aquí está nuestro catálogo 📘:\n${CATALOG_URL}`);
+  await sendText(psid, `Si quieres ir viendo opciones, aquí está nuestro catálogo 📘:\n${CATALOG_URL}`);
 
   // 3) Luego el link/botón de WhatsApp
   const wa = whatsappLinkFromSession(s);

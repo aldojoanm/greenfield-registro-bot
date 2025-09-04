@@ -103,7 +103,7 @@ function buildClientMessage({ nombre, items }) {
     return `• ${it.nombre}${pres}${cant}`;
   });
   return [
-    `Hola ${quien}, soy Jonathan Arteaga, encargado de negocios de NEW CHEM.`,
+    `Hola ${quien}, soy Jonathan Arteaga, Encargado de Negocios de New Chem Agroquímicos.`,
     `Te escribo por tu cotización con los siguientes productos:`,
     ...lines
   ].join('\n');

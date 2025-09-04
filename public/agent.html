@@ -197,27 +197,6 @@ async function requestToken(force = false){
     }
   }
 }
-document.getElementById('markRead').onclick = async () => {
-  if (!current) return;
-  await api.read(current.id);
-  refresh(false);
-};
-
-document.getElementById('takeHuman').onclick = async () => {
-  if (!current) return;
-  await api.handoff(current.id, 'human');
-  const elStatus = document.getElementById('status');
-  elStatus.style.display = 'inline-block';
-  elStatus.textContent = 'HUMANO';
-};
-
-document.getElementById('resumeBot').onclick = async () => {
-  if (!current) return;
-  await api.handoff(current.id, 'bot');
-  const elStatus = document.getElementById('status');
-  elStatus.style.display = 'none';
-};
-
 
 function startSSE(){
   try{ if (sse) sse.close(); }catch{}

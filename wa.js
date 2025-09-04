@@ -941,6 +941,65 @@ router.get('/wa/webhook',(req,res)=>{
   return res.sendStatus(403);
 });
 
+
+const ADVISOR_WA_NUMBER = (process.env.ADVISOR_WA_NUMBER || '').replace(/\D/g,'');
+if (!ADVISOR_WA_NUMBER) console.warn('ADVISOR_WA_NUMBER vacío. No se avisará al asesor.');
+
+let advisorWindowTs = 0;                 
+const MS24H = 24*60*60*1000;
+const isAdvisorWindowOpen = () => (Date.now() - advisorWindowTs) < MS24H;
+
+
+const TZ = process.env.TIMEZONE || 'America/La_Paz';
+
+function formatStamp() {
+  try {
+    return new Intl.DateTimeFormat('es-BO', {
+      timeZone: TZ,
+      dateStyle: 'short',
+      timeStyle: 'short'
+    }).format(new Date());
+  } catch {
+    // Fallback simple si el runtime no tiene ICU completa
+    const d = new Date();
+    const pad = n => String(n).padStart(2,'0');
+    return `${pad(d.getDate())}/${pad(d.getMonth()+1)}/${String(d.getFullYear()).slice(-2)} ` +
+           `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }
+}
+
+function compileAdvisorAlert(s, customerWa){
+  const stamp   = formatStamp();
+  const nombre  = s.profileName || 'Cliente';
+  const dep     = s.vars.departamento || 'ND';
+  const zona    = s.vars.subzona || 'ND';
+  const cultivo = s.vars.cultivos?.[0] || 'ND';
+  const ha      = s.vars.hectareas || 'ND';
+  const camp    = s.vars.campana || 'ND';
+
+  const prod    = s.vars.last_product || (s.vars.cart?.[0]?.nombre || '—');
+  const cant    = s.vars.cantidad || (s.vars.cart?.[0]?.cantidad || '—');
+
+  const baseChat     = `https://wa.me/${customerWa}`;
+  const presetText   =
+    `Hola ${nombre}, soy asesor de New Chem 👋. ` +
+    `Recibimos tu consulta sobre ${prod} (${cant}) para ${cultivo} en ${dep}/${zona}. ` +
+    `¿Seguimos con tu cotización?`;
+  const replyWithMsg = `${baseChat}?text=${encodeURIComponent(presetText)}`;
+
+  return [
+    `🕒 ${stamp}`,
+    `🆕 *Nuevo lead*`,
+    `• ${nombre} (${dep} / ${zona})`,
+    `• Cultivo: ${cultivo} — Ha: ${ha} — Campaña: ${camp}`,
+    `• Producto: ${prod} — Cantidad: ${cant}`,
+    `Abrir chat: ${baseChat}`,
+    `Responder con mensaje: ${replyWithMsg}`
+  ].join('\n');
+}
+
+
+
 const processed = new Map(); 
 const PROCESSED_TTL = 5 * 60 * 1000;
 setInterval(()=>{ const now=Date.now(); for(const [k,ts] of processed){ if(now-ts>PROCESSED_TTL) processed.delete(k); } }, 60*1000);
@@ -971,6 +1030,12 @@ router.post('/wa/webhook', async (req,res)=>{
         await toText(from, `Listo${quien} 🙌. Reactivé el *asistente automático*. ¿En qué puedo ayudarte?`);
       }
       persistS(from); res.sendStatus(200); return;
+    }
+
+     if (ADVISOR_WA_NUMBER && from === ADVISOR_WA_NUMBER) {
+      advisorWindowTs = Date.now();
+      persistS(from);
+      return res.sendStatus(200);
     }
 
     const referral = msg?.referral;
@@ -1030,6 +1095,24 @@ router.post('/wa/webhook', async (req,res)=>{
         await toText(from,'¡Gracias por escribirnos! Nuestro encargado de negocios te enviará la cotización en breve. Si requieres más información, estamos a tu disposición.');
         await toText(from,'Para volver a activar el asistente, por favor, escribe *Asistente New Chem*.');
 
+        if (ADVISOR_WA_NUMBER) {
+          if (isAdvisorWindowOpen()) {
+            const txt = compileAdvisorAlert(S(from), from);
+            const ok = await waSendQ(ADVISOR_WA_NUMBER, {
+              messaging_product: 'whatsapp',
+              to: ADVISOR_WA_NUMBER,
+              type: 'text',
+              text: { body: txt.slice(0,4096) }
+            });
+            if (ok === false) console.error('No se pudo avisar al asesor (API o política 24h).');
+          } else {
+            console.warn('No se avisó al asesor: ventana 24h cerrada.');
+            // aquí puedes disparar un fallback (email/Slack)
+          }
+        }
+
+
+
         humanOn(from, 4);
         s._closedAt = Date.now();         
         s.stage = 'closed';
@@ -1037,7 +1120,6 @@ router.post('/wa/webhook', async (req,res)=>{
         broadcastAgent('convos', { id: from }); 
         res.sendStatus(200); 
         return;
-
       }
       if(id==='QR_SEGUIR'){ await toText(from,'Perfecto, vamos a añadir un nuevo producto 🙌.'); await askCategory(from); res.sendStatus(200); return; }
       if(id==='ADD_MORE'){ s.vars.catOffset=0; s.vars.last_product=null; s.vars.last_sku=null; s.vars.last_presentacion=null; s.vars.cantidad=null; s.asked.cantidad=false; persistS(from); await toButtons(from,'Dime el *nombre del otro producto* o elige una categoría 👇', CAT_QR.map(c=>({title:c.title,payload:c.payload}))); res.sendStatus(200); return; }
