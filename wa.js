@@ -1013,11 +1013,27 @@ router.post('/wa/webhook', async (req,res)=>{
     const value  = change?.value;
     const msg    = value?.messages?.[0];
 
-    // 🔹 Normaliza el número UNA vez y úsalo en todo el handler
-    const fromId = digits(msg?.from || '');
-    console.log('[HOOK] fromId =', fromId, 'advisor =', ADVISOR_WA_NUMBER);
-    if(!msg || !fromId){ res.sendStatus(200); return; }
-    if (seenWamid(msg.id)) { res.sendStatus(200); return; }
+    const rawFrom = msg?.from || value?.contacts?.[0]?.wa_id || '';
+    const fromId  = digits(rawFrom);
+
+    console.log('[HOOK]', {
+      rawFrom,
+      fromId,
+      advisorEnv: ADVISOR_WA_NUMBER,
+      eq: fromId === ADVISOR_WA_NUMBER
+    });
+
+    if(!msg || !fromId){ return res.sendStatus(200); }
+
+ if (ADVISOR_WA_NUMBER && fromId === ADVISOR_WA_NUMBER) {
+      console.log('[HOOK] Mensaje del asesor — ignorando como bot y abriendo ventana 24h');
+      advisorWindowTs = Date.now();           // si querés conservar la “ventana”
+      persistS(fromId);
+      return res.sendStatus(200);
+    }
+
+    // 👇 recién acá, el resto del flujo
+    if (seenWamid(msg.id)) { return res.sendStatus(200); }
 
     const s = S(fromId);
     s.meta = s.meta || {};
@@ -1033,7 +1049,7 @@ router.post('/wa/webhook', async (req,res)=>{
         const quien = s.profileName ? `, ${s.profileName}` : '';
         await toText(fromId, `Listo${quien} 🙌. Reactivé el *asistente automático*. ¿En qué puedo ayudarte?`);
       }
-      persistS(fromId); res.sendStatus(200); return;
+      persistS(fromId); return res.sendStatus(200);
     }
 
     // 👤 Si escribe el asesor, solo abrir ventana 24h y salir
