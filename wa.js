@@ -1383,7 +1383,7 @@ if (ADVISOR_WA_NUMBERS.length) {
       if(/horario|atienden|abren|cierran/i.test(tnorm)){ await toText(fromId, `Atendemos ${FAQS?.horarios || 'Lun–Vie 8:00–17:00'} 🙂`); res.sendStatus(200); return; }
       if(wantsLocation(text)){ await toText(fromId, `Nuestra ubicación en Google Maps 👇\nVer ubicación: ${linkMaps()}`); await toButtons(fromId,'¿Hay algo más en lo que pueda ayudarte?',[{title:'Seguir',payload:'QR_SEGUIR'},{title:'Finalizar',payload:'QR_FINALIZAR'}]); res.sendStatus(200); return; }
       if(wantsCatalog(text)){
-        await toText(fromId, `Este es nuestro catálogo completo\n${CATALOG_URL}`);
+        await toText(fromId, `Este es nuestro catálogo completo\nhttps://tinyurl.com/f4euhvzk`);
         await toButtons(fromId,'¿Quieres que te ayude a elegir o añadir un producto ahora?',[{title:'Añadir producto', payload:'ADD_MORE'},{title:'Finalizar', payload:'QR_FINALIZAR'}]);
         res.sendStatus(200); return;
       }
