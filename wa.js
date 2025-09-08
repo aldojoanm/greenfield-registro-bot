@@ -741,8 +741,8 @@ async function askCategory(to){
   s.asked.categoria=true;
   persistS(to); 
 
-  await toText(to, `Te dejo nuestro *catálogo* para que puedas ver nuestras opciones \n$https://tinyurl.com/f4euhvzk`);
-  await toText(to, `Y la *lista de precios* actualizada:\n${PRICE_LIST_URL}`);
+  await toText(to, `Te dejo nuestro *catálogo* para que puedas ver nuestras opciones \nhttps://tinyurl.com/f4euhvzk`);
+  await toText(to, `Y nuestra *lista de precios* actualizada:\n${PRICE_LIST_URL}`);
 
   await toButtons(
     to,
