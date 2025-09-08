@@ -279,7 +279,7 @@ async function finishAndWhatsApp(psid){
   await sendText(psid, summaryTextForFinal(s));
 
   // 2) NUEVO: texto amable ofreciendo ver el catálogo (con el link)
-  await sendText(psid, `Si quieres ir viendo opciones, aquí está nuestro catálogo 📘:\n${CATALOG_URL}`);
+  await sendText(psid, `Si quieres ir viendo opciones, aquí está nuestro catálogo 📘:\nhttps://tinyurl.com/f4euhvzk`);
 
   // 3) Luego el link/botón de WhatsApp
   const wa = whatsappLinkFromSession(s);
@@ -425,7 +425,7 @@ router.post('/webhook', async (req,res)=>{
           if(qr==='QR_CONTINUAR'){ await showHelp(psid); continue; }
 
           if(qr==='OPEN_CATALOG'){
-            await sendButtons(psid, 'Abrir catálogo completo', [{type:'web_url', url: CATALOG_URL, title:'Ver catálogo'}]);
+            await sendButtons(psid, 'Abrir catálogo completo', [{type:'web_url', url: https://tinyurl.com/f4euhvzk, title:'Ver catálogo'}]);
             await sendText(psid, '¿Te interesó algún producto del catálogo?');
             s.pending = 'prod_from_catalog';
             await showHelp(psid); continue;
