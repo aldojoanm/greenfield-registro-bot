@@ -9,7 +9,7 @@ router.use(express.json());
 // ===== ENV =====
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
-const CATALOG_URL = process.env.CATALOG_URL || 'https://tinyurl.com/PORTAFOLIO-NEWCHEM';
+const CATALOG_URL = process.env.CATALOG_URL || 'https://tinyurl.com/f4euhvzk';
 const WA_SELLER_NUMBER = (process.env.WA_SELLER_NUMBER || '').replace(/\D/g,'');
 const STORE_LAT = process.env.STORE_LAT || '-17.7580406';
 const STORE_LNG = process.env.STORE_LNG || '-63.1532503';
