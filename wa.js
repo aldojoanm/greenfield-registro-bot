@@ -106,26 +106,23 @@ const CAMP_BTNS = [
   { title:'Invierno', payload:'CAMP_INVIERNO' }
 ];
 
-// === HECTÁREAS (rango + otra) ===
 const HECTARE_OPTIONS = [
-  { title:'0–50 ha',     payload:'HA_0_50' },
-  { title:'51–100 ha',   payload:'HA_51_100' },
-  { title:'101–200 ha',  payload:'HA_101_200' },
-  { title:'201–500 ha',  payload:'HA_201_500' },
-  { title:'+1000 ha',    payload:'HA_1000_MAS' },
-  { title:'+3000 ha',     payload:'HA_3000_MAS' },
-  { title:'+5000 ha',     payload:'HA_5000_MAS' },
-  { title:'Otra cantidad',  payload:'HA_OTRA' }
+  { title:'0–100 ha',        payload:'HA_0_100' },
+  { title:'101–300 ha',      payload:'HA_101_300' },
+  { title:'301–500 ha',      payload:'HA_301_500' },
+  { title:'1,000–3,000 ha',  payload:'HA_1000_3000' },
+  { title:'3,001–5,000 ha',  payload:'HA_3001_5000' },
+  { title:'+5,000 ha',       payload:'HA_5000_MAS' },
+  { title:'Otras cantidades', payload:'HA_OTRA' } // mantiene el flujo de entrada libre
 ];
 
 const HA_LABEL = {
-  HA_0_50:       '0–50 ha',
-  HA_51_100:     '51–100 ha',
-  HA_101_200:    '101–200 ha',
-  HA_201_500:    '201–500 ha',
-  HA_1000_MAS:   '+1000 ha',
-    HA_3000_MAS:   '+3000 ha',
-  HA_5000_MAS:   '+5000 ha'
+  HA_0_100:      '0–100 ha',
+  HA_101_300:    '101–300 ha',
+  HA_301_500:    '301–500 ha',
+  HA_1000_3000:  '1,000–3,000 ha',
+  HA_3001_5000:  '3,001–5,000 ha',
+  HA_5000_MAS:   '+5,000 ha'
 };
 
 const linkMaps  = () => `https://www.google.com/maps?q=${encodeURIComponent(`${STORE_LAT},${STORE_LNG}`)}`;
