@@ -425,7 +425,7 @@ router.post('/webhook', async (req,res)=>{
           if(qr==='QR_CONTINUAR'){ await showHelp(psid); continue; }
 
           if(qr==='OPEN_CATALOG'){
-            await sendButtons(psid, 'Abrir catálogo completo', [{type:'web_url', url: https://tinyurl.com/f4euhvzk, title:'Ver catálogo'}]);
+            await sendButtons(psid, 'Abrir catálogo completo', [{type:'web_url', url: 'https://tinyurl.com/f4euhvzk', title:'Ver catálogo'}]);
             await sendText(psid, '¿Te interesó algún producto del catálogo?');
             s.pending = 'prod_from_catalog';
             await showHelp(psid); continue;
