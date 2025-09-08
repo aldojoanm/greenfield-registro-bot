@@ -22,7 +22,7 @@ const VERIFY_TOKEN    = process.env.VERIFY_TOKEN || 'VERIFY_123';
 const WA_TOKEN        = process.env.WHATSAPP_TOKEN || '';
 const WA_PHONE_ID     = process.env.WHATSAPP_PHONE_ID || '';
 const CATALOG_URL     = process.env.CATALOG_URL || 'https://tinyurl.com/f4euhvzk';
-const PRICE_LIST_URL = process.env.PRICE_LIST_URL || 'https://tinyurl.com/f4euhvzk';
+const PRICE_LIST_URL = process.env.PRICE_LIST_URL || 'https://tinyurl.com/5xc62vy5';
 const STORE_LAT       = process.env.STORE_LAT || '-17.7580406';
 const STORE_LNG       = process.env.STORE_LNG || '-63.1532503';
 const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || '').replace(/\/+$/, '');
@@ -741,8 +741,8 @@ async function askCategory(to){
   s.asked.categoria=true;
   persistS(to); 
 
-  await toText(to, `📘 Catálogo (fichas e imágenes):\n${CATALOG_URL}`);
-  await toText(to, `💵 Lista de precios actualizada:\n${PRICE_LIST_URL}`);
+  await toText(to, `Te dejo nuestro *catálogo* para que puedas ver nuestras opciones \n$https://tinyurl.com/f4euhvzk`);
+  await toText(to, `Y la *lista de precios* actualizada:\n${PRICE_LIST_URL}`);
 
   await toButtons(
     to,
