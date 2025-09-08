@@ -22,6 +22,7 @@ const VERIFY_TOKEN    = process.env.VERIFY_TOKEN || 'VERIFY_123';
 const WA_TOKEN        = process.env.WHATSAPP_TOKEN || '';
 const WA_PHONE_ID     = process.env.WHATSAPP_PHONE_ID || '';
 const CATALOG_URL     = process.env.CATALOG_URL || 'https://tinyurl.com/f4euhvzk';
+const PRICE_LIST_URL = process.env.PRICE_LIST_URL || 'https://tinyurl.com/f4euhvzk';
 const STORE_LAT       = process.env.STORE_LAT || '-17.7580406';
 const STORE_LNG       = process.env.STORE_LNG || '-63.1532503';
 const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || '').replace(/\/+$/, '');
@@ -102,8 +103,7 @@ const CROP_SYN = {
 };
 const CAMP_BTNS = [
   { title:'Verano',   payload:'CAMP_VERANO'   },
-  { title:'Invierno', payload:'CAMP_INVIERNO' },
-  { title:'Otra',     payload:'CAMP_OTRA'     }
+  { title:'Invierno', payload:'CAMP_INVIERNO' }
 ];
 
 // === HECTÁREAS (rango + otra) ===
@@ -113,6 +113,8 @@ const HECTARE_OPTIONS = [
   { title:'101–200 ha',  payload:'HA_101_200' },
   { title:'201–500 ha',  payload:'HA_201_500' },
   { title:'+1000 ha',    payload:'HA_1000_MAS' },
+  { title:'+3000 ha',     payload:'HA_3000_MAS' },
+  { title:'+5000 ha',     payload:'HA_5000_MAS' },
   { title:'Otra cantidad',  payload:'HA_OTRA' }
 ];
 
@@ -121,7 +123,9 @@ const HA_LABEL = {
   HA_51_100:     '51–100 ha',
   HA_101_200:    '101–200 ha',
   HA_201_500:    '201–500 ha',
-  HA_1000_MAS:   '+1000 ha'
+  HA_1000_MAS:   '+1000 ha',
+    HA_3000_MAS:   '+3000 ha',
+  HA_5000_MAS:   '+5000 ha'
 };
 
 const linkMaps  = () => `https://www.google.com/maps?q=${encodeURIComponent(`${STORE_LAT},${STORE_LNG}`)}`;
@@ -727,17 +731,24 @@ async function askCampana(to){
   persistS(to); 
   await toButtons(to,'¿En qué *campaña* te encuentras? ', CAMP_BTNS);
 }
-async function askCampanaLibre(to){
-  const s=S(to); if (s.lastPrompt==='campana_text') return;
-  await markPrompt(s,'campana_text'); s.pending='campana_text';
-  persistS(to); 
-  await toText(to,'Podrias decirme que *campaña*?');
-}
+
 async function askCategory(to){
-  const s=S(to); if (s.lastPrompt==='categoria') return;
-  s.stage='product'; await markPrompt(s,'categoria'); s.pending='categoria'; s.asked.categoria=true;
+  const s=S(to); 
+  if (s.lastPrompt==='categoria') return;
+  s.stage='product'; 
+  await markPrompt(s,'categoria'); 
+  s.pending='categoria'; 
+  s.asked.categoria=true;
   persistS(to); 
-  await toButtons(to,'¿Qué tipo de producto necesitas?', CAT_QR.map(c=>({ title:c.title, payload:c.payload })));
+
+  await toText(to, `📘 Catálogo (fichas e imágenes):\n${CATALOG_URL}`);
+  await toText(to, `💵 Lista de precios actualizada:\n${PRICE_LIST_URL}`);
+
+  await toButtons(
+    to,
+    '¿Qué tipo de producto necesitas?',
+    CAT_QR.map(c=>({ title:c.title, payload:c.payload }))
+  );
 }
 
 function productHasMultiPres(prod){
@@ -1233,7 +1244,6 @@ if (ADVISOR_WA_NUMBERS.length) {
         const code = id.replace('CAMP_','').toLowerCase();
         if(code==='verano') s.vars.campana='Verano';
         else if(code==='invierno') s.vars.campana='Invierno';
-        else if(code==='otra'){ await askCampanaLibre(fromId); res.sendStatus(200); return; }
         s.pending=null; s.lastPrompt=null; persistS(fromId);
         await nextStep(fromId); res.sendStatus(200); return;
       }
@@ -1364,13 +1374,6 @@ if (ADVISOR_WA_NUMBERS.length) {
           await toText(fromId,'Por favor ingresa un número válido de *hectáreas* (ej. 50 ha).');
           res.sendStatus(200); return;
         }
-      }
-
-      // Campaña libre
-      if (S(fromId).pending==='campana_text'){
-        S(fromId).vars.campana = title(text);
-        S(fromId).pending=null; S(fromId).lastPrompt=null; persistS(fromId);
-        await nextStep(fromId); res.sendStatus(200); return;
       }
 
       // ASESOR
