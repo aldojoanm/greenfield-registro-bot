@@ -1,3 +1,4 @@
+// quote-pdf.js
 import fs from 'fs';
 import path from 'path';
 import PDFDocument from 'pdfkit';
@@ -29,7 +30,9 @@ function findAsset(...relPaths){
   return null;
 }
 
-/* ===== Detecta tamaño de envase (pack) ===== */
+/* =========================
+   Detección de presentación
+   ========================= */
 function detectPackSize(it = {}){
   // 1) Desde "envase" (ej: "20 L", "1 Kg", "200L")
   if (it.envase) {
@@ -61,47 +64,143 @@ function detectPackSize(it = {}){
   return null;
 }
 
-/* Lectura robusta de precio en USD */
-function readUSD(it = {}) {
-  const candidates = [it.precio_usd, it.price_usd, it.usd, it.precio, it.price];
-  for (const v of candidates) {
-    const n = Number(v);
-    if (!isNaN(n) && n > 0) return n;
-  }
-  // permite 0 explícito si de verdad viene 0
-  const z = Number(it.precio_usd ?? it.price_usd ?? it.usd ?? it.precio ?? it.price);
-  return isNaN(z) ? 0 : z;
+/* =========================
+   Lectura robusta de precios
+   ========================= */
+const FLEX_KEYS_USD = ['precio_usd','price_usd','usd','precioUSD','PrecioUSD','precio','price'];
+
+function toNumberFlexible(v){
+  if (v==null || v==='') return NaN;
+  const s = String(v).trim().replace(/\s+/g,'').replace(',', '.');
+  const n = Number(s);
+  return Number.isFinite(n) ? n : NaN;
 }
 
-/* Redondeo por pack, con reglas solicitadas */
+// Devuelve el PRIMER valor > 0 que encuentre.
+// Si no hay ninguno > 0 pero sí hay algún 0 explícito, retorna 0.
+// (Evita que un "usd: 0" tape un "precio_usd: 16.55".)
+function readUSDDirectPreferPositive(obj = {}){
+  let sawZero = false;
+  for (const k of FLEX_KEYS_USD){
+    const n = toNumberFlexible(obj[k]);
+    if (Number.isFinite(n)) {
+      if (n > 0) return n;
+      if (n === 0) sawZero = true;
+    }
+  }
+  return sawZero ? 0 : 0;
+}
+
+function norm(s=''){
+  return String(s)
+    .normalize('NFD').replace(/\p{Diacritic}/gu,'')
+    .replace(/[^a-z0-9]/gi,'')
+    .toUpperCase();
+}
+
+function collectCatalog(quote = {}, company = {}){
+  const lists = [];
+  const candidates = [
+    quote.catalog, quote.price_catalog, quote.priceList, quote.pricelist, quote.products, quote.itemsCatalog,
+    company.catalog, company.priceList
+  ];
+  for (const c of candidates){
+    if (Array.isArray(c) && c.length) lists.push(c);
+  }
+  return lists;
+}
+
+function detectPackFromCatalogRow(row){
+  return detectPackSize({ envase: row?.envase, sku: row?.sku, nombre: row?.nombre });
+}
+
+function matchCatalogRow(item, lists){
+  if (!lists.length) return null;
+
+  const sku = item?.sku ? norm(item.sku) : '';
+  const nameN = item?.nombre ? norm(item.nombre) : '';
+  const pack = detectPackSize(item);
+
+  // 1) Por SKU exacto
+  if (sku){
+    for (const list of lists){
+      const hit = list.find(r => r?.sku && norm(r.sku) === sku);
+      if (hit) return hit;
+    }
+  }
+
+  // 2) Por nombre + presentación (cuando no hay SKU)
+  if (nameN || pack){
+    for (const list of lists){
+      const cand = list.find(r => {
+        const n2 = r?.nombre ? norm(r.nombre) : (r?.sku ? norm(String(r.sku).split('-')[0]) : '');
+        if (nameN && n2 && !n2.includes(nameN) && !nameN.includes(n2)) return false;
+        if (pack){
+          const p2 = detectPackFromCatalogRow(r);
+          if (!p2) return false;
+          return p2.unit === pack.unit && Math.abs(p2.size - pack.size) < 1e-9;
+        }
+        return true;
+      });
+      if (cand) return cand;
+    }
+  }
+
+  return null;
+}
+
+function lookupPriceUSD(it = {}, quote = {}, company = {}){
+  // 1) Preferir precio directo del item (buscando valor > 0)
+  const direct = readUSDDirectPreferPositive(it);
+  if (direct > 0 || direct === 0) return direct;
+
+  // 2) Buscar en catálogos opcionales si existen
+  const lists = collectCatalog(quote, company);
+  if (lists.length){
+    const row = matchCatalogRow(it, lists);
+    if (row){
+      const fromCat = readUSDDirectPreferPositive(row);
+      if (Number.isFinite(fromCat)) return fromCat;
+    }
+  }
+
+  // 3) Nada
+  return 0;
+}
+
+/* =========================
+   Redondeo por presentación
+   ========================= */
 function roundQuantityByPack(originalQty, pack, itemUnitRaw){
   if (!pack || !(originalQty > 0)) return originalQty;
 
   const itemUnit = String(itemUnitRaw || '').toUpperCase();
   if (itemUnit && itemUnit !== pack.unit) {
-    // Unidades distintas → no tocamos
-    return originalQty;
+    return originalQty; // unidades distintas -> no tocamos
   }
 
   const ratio = originalQty / pack.size;
 
-  // KG de 1 kg → no redondear
+  // 1 Kg -> no redondear
   if (pack.unit === 'KG' && Math.abs(pack.size - 1) < 1e-9) {
     return originalQty;
   }
 
-  // Packs grandes ≥200 L → redondear hacia abajo si piden ≥ 1 pack; si piden menos de 1, mínimo 1 pack
+  // Packs grandes >=200 L -> floor si piden >=1; si <1, mínimo 1 pack
   if (pack.unit === 'L' && pack.size >= 200) {
-    if (ratio < 1) return pack.size;                    // mínimo 1 envase
-    const mult = Math.floor(ratio + 1e-9);              // floor (evita 220→400)
+    if (ratio < 1) return pack.size;
+    const mult = Math.floor(ratio + 1e-9);
     return mult * pack.size;
   }
 
-  // Resto (ej. 5L, 10L, 20L, 25KG, etc.) → redondeo hacia arriba
-  const mult = Math.ceil(ratio - 1e-9);                 // ceil pero sin subir si ya es entero
+  // Resto -> ceil
+  const mult = Math.ceil(ratio - 1e-9);
   return mult * pack.size;
 }
 
+/* =========================
+   Render PDF
+   ========================= */
 export async function renderQuotePDF(quote, outPath, company = {}){
   const dir = path.dirname(outPath);
   try{ fs.mkdirSync(dir, { recursive:true }); }catch{}
@@ -144,7 +243,7 @@ export async function renderQuotePDF(quote, outPath, company = {}){
 
   y = 100;
 
-  // Datos cliente
+  // Cliente
   const c = quote.cliente || {};
   const L = (label, val) => {
     doc.font('Helvetica-Bold').text(`${label}: `, xMargin, y, { continued: true });
@@ -175,7 +274,7 @@ export async function renderQuotePDF(quote, outPath, company = {}){
   const tableX = xMargin;
   const tableW = cols.reduce((a,c)=>a+c.w,0);
 
-  // Cabecera
+  // Cabecera un poco más alta
   const headerH = 28;
   doc.save();
   doc.rect(tableX, y, tableW, headerH).fill('#0a8e7b');
@@ -214,17 +313,19 @@ export async function renderQuotePDF(quote, outPath, company = {}){
 
   let subtotalUSD = 0;
   for (const itRaw of (quote.items || [])){
-    const precioUSD = readUSD(itRaw);                  // <- robusto
+    // Precio (lee del item; si viene 0 o vacío, busca en catálogos opcionales)
+    const precioUSD = lookupPriceUSD(itRaw, quote, company);
     const precioBs  = precioUSD * rate;
 
+    // Cantidad con redondeo por presentación
     const cantOrig  = Number(itRaw.cantidad || 0);
     const pack      = detectPackSize(itRaw);
-
     let cant = cantOrig;
     if (pack) {
       cant = roundQuantityByPack(cantOrig, pack, itRaw.unidad);
     }
 
+    // Subtotales
     const subUSD = precioUSD * cant;
     const subBs  = subUSD * rate;
     subtotalUSD += subUSD;
