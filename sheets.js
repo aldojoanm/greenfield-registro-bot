@@ -220,10 +220,7 @@ export async function appendFromSession(s, fromPhone, estado = 'NUEVO') {
   return values[0][14]; // cotizacion_id
 }
 
-/* =================================================
-   NUEVO: Hoja 2 – Facturación / Recojo (datos libres)
-   Columnas: Nombre Cliente | Razón Social | NIT | Nombre Chofer | Placa | Fecha de Recojo
-   ================================================= */
+
 const TAB2_DEFAULT = process.env.SHEETS_TAB2_NAME || 'Hoja 2';
 
 // Normaliza fechas dd/mm/aaaa o dd-mm-aaaa -> dd/mm/aaaa
@@ -241,15 +238,17 @@ function normalizePlate(s=''){
   return String(s).toUpperCase().replace(/\s+/g,'').replace(/[^A-Z0-9\-]/g,'');
 }
 
+// helper para comparar nombres sin tildes/ruido
+const normName = (s='') => String(s)
+  .normalize('NFD')
+  .replace(/\p{Diacritic}/gu,'')
+  .replace(/[^a-z0-9 ]/gi,'')
+  .trim()
+  .toLowerCase();
 
-// Normalización básica para comparar nombres
-const normName = (s='') =>
-  String(s).normalize('NFD').replace(/\p{Diacritic}/gu,'')
-        .replace(/[^a-z0-9 ]/gi,'').trim().toLowerCase();
-
-export function parseClientResponse(text='', fallbackName=''){
+export function parseClientResponse(text = '', fallbackName = '') {
   const out = {
-    nombreCliente: (fallbackName||'').trim(),
+    nombreCliente: (fallbackName || '').trim(),
     razonSocial: '',
     nit: '',
     nombreChofer: '',
@@ -257,22 +256,25 @@ export function parseClientResponse(text='', fallbackName=''){
     fechaRecojo: ''
   };
 
-  const lines = String(text||'')
-    .split(/\r?\n|,|;/).map(s => s.trim()).filter(Boolean);
+  const lines = String(text || '')
+    .split(/\r?\n|,|;/)
+    .map(s => s.trim())
+    .filter(Boolean);
 
   const tryMatch = (regex, line) => {
     const m = line.match(regex);
-    return m ? m[m.length-1].trim() : '';
+    return m ? m[m.length - 1].trim() : '';
   };
 
-  const reNombre   = /(nombre\s+del\s+cliente|cliente)\s*[:\-]\s*(.+)/i;
-  const reRazon    = /(raz[oó]n(?:\s+social)?|rs)\s*[:\-]\s*(.+)/i;
-  const reNIT      = /\b(nit)\s*[:\-]\s*([A-Za-z0-9\.\-\/]+)/i;
-  const reChofer   = /(nombre\s+del\s+chofer|chofer|conductor)\s*[:\-]\s*(.+)/i;
-  const rePlaca    = /(placa(?:\s+del\s+veh[ií]culo)?|placa)\s*[:\-]\s*([A-Za-z0-9\-\s]{4,})/i;
-  const reFecha    = /(fecha(?:\s+de)?\s*(recojo|retiro)?)\s*[:\-]\s*([0-3]?\d[\/\-][01]?\d[\/\-]\d{2,4})/i;
+  const reNombre = /(nombre\s+del\s+cliente|cliente)\s*[:\-]\s*(.+)/i;
+  const reRazon  = /(raz[oó]n(?:\s+social)?|rs)\s*[:\-]\s*(.+)/i;
+  const reNIT    = /\b(nit)\s*[:\-]\s*([A-Za-z0-9.\-\/]+)/i;
+  const reChofer = /(nombre\s+del\s+chofer|chofer|conductor)\s*[:\-]\s*(.+)/i;
+  const rePlaca  = /(placa(?:\s+del\s+veh[ií]culo)?|placa)\s*[:\-]\s*([A-Za-z0-9\-\s]{4,})/i;
+  const reFecha  = /(fecha(?:\s+de)?\s*(recojo|retiro)?)\s*[:\-]\s*([0-3]?\d[\/\-][01]?\d[\/\-]\d{2,4})/i;
 
-  for (const line of lines){
+  // con títulos
+  for (const line of lines) {
     if (!out.nombreCliente) {
       const v = tryMatch(reNombre, line); if (v) out.nombreCliente = v;
     }
@@ -293,106 +295,43 @@ export function parseClientResponse(text='', fallbackName=''){
     }
   }
 
-  // === NUEVO: detección sin títulos ===
+  // sin títulos
   const fbNorm = normName(fallbackName);
   const labeledHints = /(raz[oó]n|rs|nit|chofer|conductor|placa|fecha|cliente)\s*[:\-]/i;
-
-  // Candidatos "desnudos" (sin etiqueta)
   const bare = lines.filter(l => !labeledHints.test(l));
 
-  // 2.1 Si escribe solo su nombre (igual al fallback), tómalo como Razón social
-  if (!out.razonSocial && bare.length){
+  // solo el nombre (igual al del perfil) -> Razón social
+  if (!out.razonSocial && bare.length) {
     const hit = bare.find(l => normName(l) === fbNorm);
     if (hit) out.razonSocial = hit.trim();
   }
-
-  // 2.2 Si hay una línea solo numérica larga, úsala como NIT
-  if (!out.nit){
-    const m = bare.map(l => l.match(/^\s*([0-9\.\-\/]{5,})\s*$/)).find(Boolean);
+  // línea solo numérica larga -> NIT
+  if (!out.nit) {
+    const m = bare.map(l => l.match(/^\s*([0-9.\-\/]{5,})\s*$/)).find(Boolean);
     if (m) out.nit = m[1].trim();
   }
-
-  // 2.3 Si no hubo coincidencia y solo hay UNA línea de texto clara, úsala como Razón social
-  if (!out.razonSocial && bare.length === 1 && bare[0].length >= 3 && !/^\d+$/.test(bare[0])){
+  // una única línea de texto clara -> Razón social
+  if (!out.razonSocial && bare.length === 1 && bare[0].length >= 3 && !/^\d+$/.test(bare[0])) {
     out.razonSocial = bare[0].trim();
   }
 
-  // Fallbacks ya existentes
-  if (!out.razonSocial){
+  // fallbacks adicionales
+  if (!out.razonSocial) {
     const m = text.match(/rs\s*[:\-]\s*([^\n;]+)/i) || text.match(/raz[oó]n\s*social\s*[:\-]\s*([^\n;]+)/i);
     if (m) out.razonSocial = m[1].trim();
   }
-  if (!out.nit){
-    const m = text.match(/\bnit\s*[:\-]\s*([A-Za-z0-9\.\-\/]+)/i);
-    if (m) out.nit = m[1].trim();
-  }
-
-  // Saneo final
-  out.razonSocial   = out.razonSocial.replace(/\s+/g,' ').trim();
-  out.nombreChofer  = out.nombreChofer.replace(/\s+/g,' ').trim();
-  out.nombreCliente = out.nombreCliente.replace(/\s+/g,' ').trim();
-
-  return out;
-}
-
-
-  const lines = String(text||'').split(/\r?\n|,/).map(s => s.trim()).filter(Boolean);
-
-  const tryMatch = (regex, line) => {
-    const m = line.match(regex);
-    return m ? m[m.length-1].trim() : '';
-  };
-
-  const reNombre   = /(nombre\s+del\s+cliente|cliente)\s*[:\-]\s*(.+)/i;
-  const reRazon    = /(raz[oó]n(?:\s+social)?|rs)\s*[:\-]\s*(.+)/i;
-  const reNIT      = /\b(nit)\s*[:\-]\s*([A-Za-z0-9\.\-\/]+)/i;
-  const reChofer   = /(nombre\s+del\s+chofer|chofer|conductor)\s*[:\-]\s*(.+)/i;
-  const rePlaca    = /(placa(?:\s+del\s+veh[ií]culo)?|placa)\s*[:\-]\s*([A-Za-z0-9\-\s]{4,})/i;
-  const reFecha    = /(fecha(?:\s+de)?\s*(recojo|retiro)?)\s*[:\-]\s*([0-3]?\d[\/\-][01]?\d[\/\-]\d{2,4})/i;
-
-  for (const line of lines){
-    if (!out.nombreCliente) {
-      const v = tryMatch(reNombre, line);
-      if (v) out.nombreCliente = v;
-    }
-    if (!out.razonSocial) {
-      const v = tryMatch(reRazon, line);
-      if (v) out.razonSocial = v;
-    }
-    if (!out.nit) {
-      const m = line.match(reNIT);
-      if (m) out.nit = m[2].trim();
-    }
-    if (!out.nombreChofer) {
-      const v = tryMatch(reChofer, line);
-      if (v) out.nombreChofer = v;
-    }
-    if (!out.placa) {
-      const m = line.match(rePlaca);
-      if (m) out.placa = normalizePlate(m[2]);
-    }
-    if (!out.fechaRecojo) {
-      const m = line.match(reFecha);
-      if (m) out.fechaRecojo = normalizeDateDMY(m[3]);
-    }
-  }
-
-  // fallback extra simple si el cliente responde en una línea tipo "NIT: 123; RS: ACME; CHOFER: Juan; PLACA 1234ABC; FECHA 10/09/2025"
-  if (!out.razonSocial){
-    const m = text.match(/rs\s*[:\-]\s*([^\n;]+)/i) || text.match(/raz[oó]n\s*social\s*[:\-]\s*([^\n;]+)/i);
-    if (m) out.razonSocial = m[1].trim();
-  }
-  if (!out.nit){
-    const m = text.match(/\bnit\s*[:\-]\s*([A-Za-z0-9\.\-\/]+)/i);
+  if (!out.nit) {
+    const m = text.match(/\bnit\s*[:\-]\s*([A-Za-z0-9.\-\/]+)/i);
     if (m) out.nit = m[1].trim();
   }
 
   // saneo final
-  out.razonSocial = out.razonSocial.replace(/\s+/g,' ').trim();
-  out.nombreChofer= out.nombreChofer.replace(/\s+/g,' ').trim();
-  out.nombreCliente= out.nombreCliente.replace(/\s+/g,' ').trim();
+  out.razonSocial   = out.razonSocial.replace(/\s+/g, ' ').trim();
+  out.nombreChofer  = out.nombreChofer.replace(/\s+/g, ' ').trim();
+  out.nombreCliente = out.nombreCliente.replace(/\s+/g, ' ').trim();
 
   return out;
+}
 
 export async function appendBillingPickupRow({ nombreCliente, razonSocial, nit, nombreChofer, placa, fechaRecojo }){
   const sheets = await getSheets();
