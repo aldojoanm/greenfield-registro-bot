@@ -4,8 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import { appendFromSession } from './sheets.js';
 import { sendAutoQuotePDF } from './quote.js';
-import { buildQuoteFromSession } from './quote-engine.js';
-import { renderQuotePDF } from './quote-pdf.js';
+
 
 const router = express.Router();
 router.use(express.json());
