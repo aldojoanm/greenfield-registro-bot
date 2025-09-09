@@ -2,7 +2,7 @@ import 'dotenv/config';
 import express from 'express';
 import fs from 'fs';
 import path from 'path';
-import { appendFromSession } from './sheets.js';
+import { appendFromSession, parseAndAppendClientResponse } from './sheets.js';
 import { sendAutoQuotePDF } from './quote.js';
 
 const router = express.Router();
@@ -1486,6 +1486,40 @@ if (isAdvisor(fromId)) {
           }
         }
       }
+        try {
+          const s = S(fromId);
+          const deadline = s?.meta?.awaitBillingPickupUntil || 0;
+          const withinWindow = deadline > Date.now();
+
+          // Heurística: solo intentamos si el texto parece contener alguno de los campos clave
+          const looksLikeBillingData =
+            /\bnit\b/i.test(text) ||
+            /raz[oó]n\s*social|^rs\b/i.test(text) ||
+            /chofer|conductor/i.test(text) ||
+            /placa/i.test(text) ||
+            /fecha\s*(de)?\s*(recojo|retiro)/i.test(text);
+
+          if (withinWindow && looksLikeBillingData) {
+            // Guarda en Hoja 2. Usa el nombre de la sesión como fallback del "Nombre Cliente".
+            const parsed = await parseAndAppendClientResponse({
+              text,
+              clientName: s?.profileName || ''
+            });
+
+            // Si al menos vino un campo fuerte (NIT o Razón Social o Placa/Fecha), da por cumplida la captura
+            const captured = parsed?.nit || parsed?.razonSocial || parsed?.placa || parsed?.fechaRecojo;
+            if (captured) {
+              // cierra la ventana para evitar duplicados
+              s.meta.awaitBillingPickupUntil = 0;
+              persistS(fromId);
+
+              // (Opcional) notifica al asesor por el mismo chat del cliente (o podrías emitir un SSE si quieres)
+              await toAgentText(fromId, '✅ Recibimos los datos para facturación/entrega. ¡Gracias!');
+            }
+          }
+        } catch (err) {
+          console.error('guardar Hoja 2 error:', err);
+        }
 
       await nextStep(fromId);
       res.sendStatus(200); return;
@@ -1563,6 +1597,19 @@ router.post('/wa/agent/send', agentAuth, async (req,res)=>{
     const { to, text } = req.body || {};
     if(!to || !text) return res.status(400).json({error:'to y text son requeridos'});
     humanOn(to, 4);
+    try {
+      const wantsBillingPickup = /raz[oó]n social/i.test(text)
+        && /nombre del chofer/i.test(text)
+        && /placa/i.test(text)
+        && /fecha de recojo/i.test(text);
+
+      if (wantsBillingPickup) {
+        const s = S(to);
+        s.meta = s.meta || {};
+        s.meta.awaitBillingPickupUntil = Date.now() + 72 * 60 * 60 * 1000;
+        persistS(to);
+      }
+    } catch {}
     await toAgentText(to, text);
     res.json({ ok:true });
   }catch(e){
