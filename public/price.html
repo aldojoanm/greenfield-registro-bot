@@ -12,16 +12,20 @@
   .top{display:flex;gap:8px;align-items:center;padding:12px 14px;border-bottom:1px solid var(--ring)}
   .top input{flex:1;background:#1c2b33;border:1px solid var(--ring);color:var(--txt);padding:10px;border-radius:10px}
   .btn{background:var(--accent);color:#06372f;border:0;border-radius:10px;padding:10px 14px;font-weight:700;cursor:pointer}
-  .btn.ghost{background:#1c2b33;color:#cde; border:1px solid var(--ring)}
-  .btn.danger{background:var(--danger); color:#fff}
+  .btn.ghost{background:#1c2b33;color:#cde;border:1px solid var(--ring)}
+  .btn.danger{background:var(--danger);color:#fff}
   .muted{color:var(--muted);font-size:12px}
   .bar{display:flex;gap:8px;align-items:center;justify-content:space-between;padding:10px 14px}
+  .bar-right{display:flex;gap:8px;align-items:center}
+  .tc{display:flex;gap:6px;align-items:center;background:#0f1820;border:1px solid var(--ring);padding:8px 10px;border-radius:10px}
+  .tc label{color:#9bb0ba;font-size:12px}
+  .tc input{width:90px;background:#1c2b33;border:1px solid var(--ring);color:var(--txt);padding:6px 8px;border-radius:8px}
   table{width:100%;border-collapse:collapse}
-  th,td{border-bottom:1px solid var(--ring);padding:10px 12px;text-align:left}
+  th,td{border-bottom:1px solid var(--ring);padding:10px 12px;text-align:left;vertical-align:middle}
   th{background:#0f1820;position:sticky;top:0}
   tbody tr:hover{background:#0f1f27}
   td[contenteditable="true"]{outline:none;border-radius:6px}
-  td[contenteditable="true"]:focus{box-shadow:0 0 0 2px #0aa; background:#0c1b22}
+  td[contenteditable="true"]:focus{box-shadow:0 0 0 2px #0aa;background:#0c1b22}
   .right{text-align:right}
   .del{cursor:pointer;color:#ffd6d6}
   .toast{position:fixed;right:16px;bottom:16px;background:#092e25;color:#bff2e6;border:1px solid #125547;padding:10px 12px;border-radius:10px}
@@ -37,7 +41,11 @@
 
     <div class="bar">
       <div class="muted" id="hint">Edita directamente en la tabla. USD y Bs con 2 decimales.</div>
-      <div style="display:flex;gap:8px">
+      <div class="bar-right">
+        <div class="tc">
+          <label for="tc">TC</label>
+          <input id="tc" type="number" step="0.01" min="0" value="6.96" />
+        </div>
         <button class="btn ghost" id="addRow">+ Agregar fila</button>
         <button class="btn ghost" id="reload">Deshacer cambios</button>
         <button class="btn" id="save">Guardar</button>
@@ -48,11 +56,12 @@
       <table id="tbl">
         <thead>
           <tr>
-            <th style="width:36%">SKU</th>
-            <th style="width:14%">Unidad</th>
+            <th style="width:24%">Producto</th>
+            <th style="width:14%">Presentación</th>
+            <th style="width:10%">Unidad</th>
             <th class="right" style="width:20%">Precio (USD)</th>
             <th class="right" style="width:20%">Precio (Bs)</th>
-            <th style="width:10%"> </th>
+            <th style="width:12%"> </th>
           </tr>
         </thead>
         <tbody id="tbody"></tbody>
@@ -64,24 +73,41 @@
 <div id="toast" class="toast" style="display:none"></div>
 
 <script>
-const $ = s=>document.querySelector(s);
+const $ = s => document.querySelector(s);
 const tokenInput = $('#token');
+const tcInput = $('#tc');
 const tbody = $('#tbody');
 const toast = $('#toast');
 
 let TOKEN = localStorage.getItem('nc_token') || '';
 let VERSION = '0';
+let TC = Number(localStorage.getItem('nc_tc') || '6.96') || 6.96;
 tokenInput.value = TOKEN;
+tcInput.value = TC.toFixed(2);
 
 function showToast(t){ toast.textContent = t; toast.style.display='block'; setTimeout(()=>toast.style.display='none', 2500); }
-function esc(s){ return String(s??'').replace(/[&<>"]/g, m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[m])); }
-function num(v){ const n = Number(String(v).replace(',','.')); return Number.isFinite(n)? n : 0; }
+function esc(s){ return String(s ?? '').replace(/[&<>"]/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m])); }
+function num(v){ const n = Number(String(v).replace(',', '.')); return Number.isFinite(n) ? n : 0; }
 function fmt2(n){ return (Number(n)||0).toFixed(2); }
 
+// --- SKU helpers (Producto + Presentación) ---
+function parseSKU(sku=''){
+  const parts = String(sku).trim().split('-');
+  if (parts.length <= 1) return { producto: parts[0] || '', presentacion: '' };
+  return { producto: parts[0], presentacion: parts.slice(1).join('-') };
+}
+function buildSKU(producto='', presentacion=''){
+  producto = String(producto||'').trim();
+  presentacion = String(presentacion||'').trim();
+  return presentacion ? `${producto}-${presentacion}` : producto;
+}
+
 function rowTpl(p){
+  const {producto, presentacion} = parseSKU(p?.sku || '');
   return `
   <tr>
-    <td contenteditable="true" data-key="sku">${esc(p?.sku||'')}</td>
+    <td contenteditable="true" data-key="producto">${esc(producto)}</td>
+    <td contenteditable="true" data-key="presentacion">${esc(presentacion)}</td>
     <td contenteditable="true" data-key="unidad">${esc(p?.unidad||'')}</td>
     <td contenteditable="true" data-key="precio_usd" class="right">${fmt2(p?.precio_usd)}</td>
     <td contenteditable="true" data-key="precio_bs"  class="right">${fmt2(p?.precio_bs)}</td>
@@ -93,8 +119,11 @@ function readTable(){
   const rows = [];
   for (const tr of Array.from(tbody.querySelectorAll('tr'))){
     const get = k => tr.querySelector(`[data-key="${k}"]`)?.textContent?.trim() ?? '';
-    const sku = get('sku');
-    if (!sku) continue; // ignora filas vacías
+    const prod = get('producto');
+    const pres = get('presentacion');
+    const sku = buildSKU(prod, pres);
+    if (!sku) continue;
+
     rows.push({
       sku,
       unidad: get('unidad'),
@@ -105,9 +134,33 @@ function readTable(){
   return rows;
 }
 
+function computeBsForRow(tr){
+  const usdEl = tr.querySelector('[data-key="precio_usd"]');
+  const bsEl  = tr.querySelector('[data-key="precio_bs"]');
+  const usd = num(usdEl?.textContent || 0);
+  const bs = usd * TC;
+  if (bsEl) bsEl.textContent = fmt2(bs);
+}
+
+function recalcAllBs(){
+  for (const tr of Array.from(tbody.querySelectorAll('tr'))){
+    computeBsForRow(tr);
+  }
+}
+
 function bindRowEvents(){
+  // eliminar
   for (const btn of Array.from(document.querySelectorAll('.del'))){
     btn.onclick = (e)=>{ e.target.closest('tr').remove(); };
+  }
+  // recalcular Bs cuando se edite USD
+  for (const cell of Array.from(tbody.querySelectorAll('[data-key="precio_usd"]'))){
+    cell.addEventListener('input', ()=> computeBsForRow(cell.closest('tr')));
+    cell.addEventListener('blur',  ()=> { cell.textContent = fmt2(num(cell.textContent)); computeBsForRow(cell.closest('tr')); });
+  }
+  // normalizar Bs a 2 decimales al salir (si lo editan manualmente)
+  for (const cell of Array.from(tbody.querySelectorAll('[data-key="precio_bs"]'))){
+    cell.addEventListener('blur', ()=> { cell.textContent = fmt2(num(cell.textContent)); });
   }
 }
 
@@ -116,25 +169,26 @@ async function load(){
   if(!TOKEN){ alert('Pega tu AGENT_TOKEN'); return; }
   localStorage.setItem('nc_token', TOKEN);
 
-  tbody.innerHTML = `<tr><td colspan="5">Cargando…</td></tr>`;
+  tbody.innerHTML = `<tr><td colspan="6">Cargando…</td></tr>`;
   const r = await fetch('/admin/prices', { headers:{ 'Authorization':'Bearer '+TOKEN }});
   if (r.status===401){ tbody.innerHTML=''; alert('Token inválido'); return; }
   if (!r.ok){ tbody.innerHTML=''; alert('Error en /admin/prices'); return; }
   const {prices=[], version='0'} = await r.json();
   VERSION = version;
-  tbody.innerHTML = prices.map(rowTpl).join('') || rowTpl({}); // al menos 1 fila vacía
+  tbody.innerHTML = prices.map(rowTpl).join('') || rowTpl({});
   bindRowEvents();
+  recalcAllBs();
   showToast('Precios cargados');
 }
 
 async function save(){
   const prices = readTable();
 
-  // validaciones básicas
+  // validaciones
   const seen = new Set();
   for (const p of prices){
     if (!p.sku) return alert('Hay un SKU vacío.');
-    if (seen.has(p.sku)) return alert('SKU duplicado: '+p.sku);
+    if (seen.has(p.sku)) return alert('SKU duplicado: ' + p.sku);
     seen.add(p.sku);
     if (p.precio_usd < 0 || p.precio_bs < 0) return alert('No permitidos precios negativos.');
   }
@@ -145,27 +199,34 @@ async function save(){
     body: JSON.stringify({ prices, version: VERSION })
   });
   if (r.status === 409){
-    const j = await r.json().catch(()=>({}));
     alert('Otro usuario modificó la lista. Recargando para evitar perder cambios.');
-    await load(); // refresca
+    await load();
     return;
   }
   if (!r.ok){ alert('No se pudo guardar'); return; }
 
-  const j = await r.json();
+  const j = await r.json().catch(()=>({}));
   VERSION = j.version || VERSION;
   showToast('Guardado ✓');
 }
 
-$('#load').onclick = load;
+// eventos barra
+$('#load').onclick   = load;
 $('#reload').onclick = load;
-$('#save').onclick = save;
+$('#save').onclick   = save;
 $('#addRow').onclick = ()=>{
   tbody.insertAdjacentHTML('beforeend', rowTpl({}));
   bindRowEvents();
 };
 
-(async ()=>{ /* opcional: auto-cargar si hay token guardado */ if (TOKEN) load(); })();
+// TC -> recalcular y guardar en localStorage
+tcInput.addEventListener('input', ()=>{
+  TC = num(tcInput.value) || 0;
+  localStorage.setItem('nc_tc', TC.toFixed(2));
+  recalcAllBs();
+});
+
+(async ()=>{ if (TOKEN) load(); })();
 </script>
 </body>
 </html>
