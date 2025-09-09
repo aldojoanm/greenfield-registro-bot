@@ -41,15 +41,39 @@ function writeAtomic(p, data){
   fs.renameSync(tmp, p);
 }
 
-// ===== GET: leer precios (con versión) =====
+/* ===== Normalización canónica ===== */
+function canonSKU(s=''){
+  return String(s||'')
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g,'')               // "5 L" -> "5L"
+    .replace(/LTS?|LT|LITROS?/g,'L')  // LTS/LT/LITROS -> L
+    .replace(/KGS?|KILOS?/g,'KG');    // KGS/KILOS -> KG
+}
+function canonUnidad(u=''){
+  const t = String(u||'').trim().toUpperCase();
+  if (/^KG|KILO/.test(t)) return 'KG';
+  if (/^L|LT|LTS|LITRO/.test(t)) return 'L';
+  if (/^UNID|UND|UNIDAD/.test(t)) return 'UNID';
+  return t || '';
+}
+function canonCategoria(c=''){
+  const t = String(c||'').toLowerCase();
+  return ['herbicida','insecticida','fungicida'].includes(t) ? t : 'herbicida';
+}
+function to2(n){ return Number.isFinite(n) ? +Number(n).toFixed(2) : 0; }
+
+/* ===== GET: leer precios (con versión) ===== */
 router.get('/admin/prices', agentAuth, (_req,res)=>{
   res.json({ prices: loadPrices(), version: fileVersion() });
 });
 
-// ===== PUT: guardar precios =====
+/* ===== PUT: guardar precios (normalizado) ===== */
 router.put('/admin/prices', agentAuth, (req,res)=>{
   const { prices, version } = req.body || {};
-  if (!Array.isArray(prices)) return res.status(400).json({ error:'bad_request', detail:'prices debe ser array' });
+  if (!Array.isArray(prices)) {
+    return res.status(400).json({ error:'bad_request', detail:'prices debe ser array' });
+  }
 
   // control de versión para evitar pisadas
   const current = fileVersion();
@@ -59,29 +83,35 @@ router.put('/admin/prices', agentAuth, (req,res)=>{
 
   const orderCat = { herbicida:0, insecticida:1, fungicida:2 };
 
-  // sanitizar + validar
+  // sanitizar + **normalizar**
   const seen = new Set();
   const clean = [];
   for (const row of prices){
-    const sku = String(row?.sku||'').trim();
-    if (!sku) return res.status(400).json({ error:'bad_row', detail:'SKU vacío' });
-    if (seen.has(sku)) return res.status(400).json({ error:'dup_sku', detail:`SKU duplicado: ${sku}` });
+    const rawSku = String(row?.sku||'').trim();
+    if (!rawSku) return res.status(400).json({ error:'bad_row', detail:'SKU vacío' });
+
+    const sku     = canonSKU(rawSku);                // <— clave
+    const unidad  = canonUnidad(row?.unidad || '');  // <— clave
+    const usd     = Number(row?.precio_usd ?? 0);
+    const bs      = Number(row?.precio_bs  ?? 0);
+    if (usd < 0 || bs < 0) {
+      return res.status(400).json({ error:'bad_price', detail:`Precios negativos en ${rawSku}` });
+    }
+
+    // duplicados después de normalizar
+    if (seen.has(sku)) {
+      return res.status(400).json({ error:'dup_sku', detail:`SKU duplicado tras normalizar: ${sku}` });
+    }
     seen.add(sku);
 
-    const unidad = String(row?.unidad||'').trim();
-    const usd = Number(row?.precio_usd ?? 0);
-    const bs  = Number(row?.precio_bs  ?? 0);
-    if (usd < 0 || bs < 0) return res.status(400).json({ error:'bad_price', detail:`Precios negativos en ${sku}` });
-
-    let categoria = String(row?.categoria||'').toLowerCase();
-    if (!['herbicida','insecticida','fungicida'].includes(categoria)) categoria = 'herbicida';
+    const categoria = canonCategoria(row?.categoria);
 
     clean.push({
       categoria,
       sku,
       unidad,
-      precio_usd: Number.isFinite(usd) ? +usd.toFixed(2) : 0,
-      precio_bs:  Number.isFinite(bs)  ? +bs.toFixed(2)  : 0
+      precio_usd: to2(usd),
+      precio_bs:  to2(bs)     // el editor recalcula en pantalla; guardamos como referencia
     });
   }
 
@@ -104,7 +134,7 @@ router.put('/admin/prices', agentAuth, (req,res)=>{
   return res.json({ ok:true, version: fileVersion() });
 });
 
-// ===== TC (rate) =====
+/* ===== TC (rate) ===== */
 router.get('/admin/rate', agentAuth, (_req,res)=>{
   res.json({ rate: loadRate() });
 });

@@ -1,3 +1,4 @@
+// quote-pdf.js
 import fs from 'fs';
 import path from 'path';
 import PDFDocument from 'pdfkit';
@@ -27,6 +28,122 @@ function findAsset(...relPaths){
     if (fs.existsSync(p)) return p;
   }
   return null;
+}
+
+/* ===== Helpers de normalización/pack (mismos que en el engine) ===== */
+function canonSku(s=''){
+  return String(s||'')
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g,'')
+    .replace(/LTS?|LT|LITROS?/g,'L')
+    .replace(/KGS?|KILOS?/g,'KG');
+}
+function normName(s=''){
+  return String(s||'')
+    .normalize('NFD').replace(/\p{Diacritic}/gu,'')
+    .replace(/[^A-Z0-9]/gi,'')
+    .toUpperCase();
+}
+function parsePackFromText(t=''){
+  const m = String(t||'').match(/(\d+(?:[.,]\d+)?)\s*(L|LT|LTS|LITROS?|KG|KGS?|KILOS?)/i);
+  if (!m) return null;
+  const size = parseFloat(m[1].replace(',','.'));
+  const unit = /KG|KGS?|KILOS?/i.test(m[2]) ? 'KG' : 'L';
+  if (!Number.isFinite(size) || size<=0) return null;
+  return { size, unit };
+}
+function splitSku(s=''){
+  const raw = String(s||'').trim();
+  const i = raw.lastIndexOf('-');
+  if (i < 0) return { base: raw, pack: null, canon: canonSku(raw) };
+  const base = raw.slice(0, i);
+  const tail = raw.slice(i+1);
+  const pack = parsePackFromText(tail) || parsePackFromText('-'+tail) || parsePackFromText(tail.replace(/-/g,' '));
+  return { base, pack, canon: canonSku(raw) };
+}
+function lookupFromCatalog(priceList=[], item={}){
+  if (!Array.isArray(priceList) || !priceList.length) return 0;
+
+  // 1) Por SKU exacto / canónico
+  const cs = canonSku(item.sku||'');
+  let row = priceList.find(r => canonSku(r.sku||'') === cs);
+
+  // 2) Recomponer con nombre + envase
+  if (!row && item.nombre && item.envase){
+    const cs2 = canonSku(`${item.nombre}-${item.envase}`);
+    row = priceList.find(r => canonSku(r.sku||'') === cs2);
+  }
+
+  // 3) Por nombre base + pack
+  if (!row){
+    const nm = String(item.nombre||'').trim() || splitSku(String(item.sku||'')).base;
+    const pack = parsePackFromText(String(item.envase||'')) || splitSku(String(item.sku||'')).pack;
+    if (nm && pack){
+      const nn = normName(nm);
+      row = priceList.find(r=>{
+        const { base, pack: p2 } = splitSku(String(r.sku||''));
+        return base && p2 && normName(base)===nn && p2.unit===pack.unit && Math.abs(p2.size-pack.size)<1e-9;
+      });
+    }
+  }
+
+  if (!row) return 0;
+  const usd = Number(row?.precio_usd||0);
+  return Number.isFinite(usd) ? usd : 0;
+}
+
+/* ===== Detección de pack para redondeo ===== */
+function detectPackSize(it = {}){
+  if (it.envase) {
+    const m = String(it.envase).match(/(\d+(?:[.,]\d+)?)\s*(l|lt|lts|litros?|kg|kilos?)/i);
+    if (m) {
+      const size = parseFloat(m[1].replace(',','.'));
+      const unit = /kg/i.test(m[2]) ? 'KG' : 'L';
+      if (!isNaN(size) && size > 0) return { size, unit };
+    }
+  }
+  if (it.sku) {
+    const m = String(it.sku).match(/-(\d+(?:\.\d+)?)(?:\s?)(l|kg)\b/i);
+    if (m) {
+      const size = parseFloat(m[1]);
+      const unit = m[2].toUpperCase();
+      if (!isNaN(size) && size > 0) return { size, unit };
+    }
+  }
+  if (it.nombre) {
+    const m = String(it.nombre).match(/(\d+(?:[.,]\d+)?)\s*(l|lt|lts|kg)\b/i);
+    if (m) {
+      const size = parseFloat(m[1].replace(',','.'));
+      const unit = /kg/i.test(m[2]) ? 'KG' : 'L';
+      if (!isNaN(size) && size > 0) return { size, unit };
+    }
+  }
+  return null;
+}
+
+/* ===== Redondeo por pack (con tus reglas) ===== */
+function roundQuantityByPack(originalQty, pack, itemUnitRaw){
+  if (!pack || !(originalQty > 0)) return originalQty;
+
+  const itemUnit = String(itemUnitRaw || '').toUpperCase();
+  if (itemUnit && itemUnit !== pack.unit) return originalQty;
+
+  const ratio = originalQty / pack.size;
+
+  // 1 Kg -> no redondear
+  if (pack.unit === 'KG' && Math.abs(pack.size - 1) < 1e-9) return originalQty;
+
+  // Packs grandes >=200 L -> floor si piden >=1; si <1, mínimo 1 pack
+  if (pack.unit === 'L' && pack.size >= 200) {
+    if (ratio < 1) return pack.size;
+    const mult = Math.floor(ratio + 1e-9);
+    return mult * pack.size;
+  }
+
+  // Resto -> ceil
+  const mult = Math.ceil(ratio - 1e-9);
+  return mult * pack.size;
 }
 
 export async function renderQuotePDF(quote, outPath, company = {}){
@@ -71,6 +188,7 @@ export async function renderQuotePDF(quote, outPath, company = {}){
 
   y = 100;
 
+  // Cliente
   const c = quote.cliente || {};
   const L = (label, val) => {
     doc.font('Helvetica-Bold').text(`${label}: `, xMargin, y, { continued: true });
@@ -87,12 +205,11 @@ export async function renderQuotePDF(quote, outPath, company = {}){
   // ===== Tabla =====
   const rate = Number(process.env.USD_BOB_RATE || quote.rate || 6.96);
 
-  // Anchos (suman 523)
   const cols = [
     { key:'nombre',             label:'Producto',           w:90,  align:'left'  },
     { key:'ingrediente_activo', label:'Ingrediente activo', w:104, align:'left'  },
-    { key:'envase',             label:'Envase',             w:48,  align:'left'  },  // +8
-    { key:'cantidad',           label:'Cantidad',           w:56,  align:'right' },  // +8
+    { key:'envase',             label:'Envase',             w:48,  align:'left'  },
+    { key:'cantidad',           label:'Cantidad',           w:56,  align:'right' },
     { key:'precio_usd',         label:'Precio (USD)',       w:55,  align:'right' },
     { key:'precio_bs',          label:'Precio (Bs)',        w:50,  align:'right' },
     { key:'subtotal_usd',       label:'Subtotal (USD)',     w:60,  align:'right' },
@@ -101,7 +218,6 @@ export async function renderQuotePDF(quote, outPath, company = {}){
   const tableX = xMargin;
   const tableW = cols.reduce((a,c)=>a+c.w,0);
 
-  // Cabecera un poco más alta
   const headerH = 28;
   doc.save();
   doc.rect(tableX, y, tableW, headerH).fill('#0a8e7b');
@@ -132,7 +248,6 @@ export async function renderQuotePDF(quote, outPath, company = {}){
     }
   };
 
-  // Filas
   const rowPadV = 6;
   const minRowH = 20;
 
@@ -140,11 +255,24 @@ export async function renderQuotePDF(quote, outPath, company = {}){
 
   let subtotalUSD = 0;
   for (const itRaw of (quote.items || [])){
-    const precioUSD = Number(itRaw.precio_usd || 0);
+    // 1) Precio: usa el del ítem si viene (>0); si no, consulta catálogo de respaldo
+    let precioUSD = Number(itRaw.precio_usd || 0);
+    if (!(precioUSD > 0)) {
+      precioUSD = lookupFromCatalog(quote.price_catalog || company.priceList || [], itRaw) || 0;
+    }
     const precioBs  = precioUSD * rate;
-    const cant      = Number(itRaw.cantidad || 0);
-    const subUSD    = precioUSD * cant;
-    const subBs     = subUSD * rate;
+
+    // 2) Cantidad con redondeo por presentación
+    const cantOrig  = Number(itRaw.cantidad || 0);
+    const pack      = detectPackSize(itRaw);
+    let cant = cantOrig;
+    if (pack) {
+      cant = roundQuantityByPack(cantOrig, pack, itRaw.unidad);
+    }
+
+    // 3) Subtotales
+    const subUSD = precioUSD * cant;
+    const subBs  = subUSD * rate;
     subtotalUSD += subUSD;
 
     const cellTexts = [
@@ -188,7 +316,7 @@ export async function renderQuotePDF(quote, outPath, company = {}){
     y += rowH;
   }
 
-  // Totales (fila más alta y "Bs" después del número)
+  // Totales
   const totalUSD = Number(quote.total_usd ?? subtotalUSD);
   const totalBs  = totalUSD * rate;
 
@@ -200,7 +328,7 @@ export async function renderQuotePDF(quote, outPath, company = {}){
 
   doc.moveTo(tableX, y).lineTo(tableX + tableW, y).strokeColor('#333').lineWidth(0.8).stroke();
 
-  const totalRowH = 26; // más alto
+  const totalRowH = 26;
   doc.rect(tableX, y, wUntilCol6, totalRowH).strokeColor('#333').lineWidth(0.8).stroke();
   doc.font('Helvetica-Bold').text('Total', tableX, y+6, { width: wUntilCol6, align: 'center' });
 
@@ -213,7 +341,6 @@ export async function renderQuotePDF(quote, outPath, company = {}){
   doc.rect(tableX + wUntilCol6 + wCol7, y, wCol8, totalRowH).stroke();
 
   doc.font('Helvetica-Bold').text(`$ ${money(totalUSD)}`, tableX + wUntilCol6, y+6, { width: wCol7-8, align:'right' });
-  // "Bs" DESPUÉS del número
   doc.font('Helvetica-Bold').text(`${money(totalBs)} Bs`, tableX + wUntilCol6 + wCol7 + 6, y+6, { width: wCol8-12, align:'left' });
 
   y += totalRowH + 18;
