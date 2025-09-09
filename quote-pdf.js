@@ -3,245 +3,306 @@ import fs from 'fs';
 import path from 'path';
 import PDFDocument from 'pdfkit';
 
-function pad(n){ return String(n).padStart(2,'0'); }
-function fmtDate(d=new Date()){
+function fmtDate(d = new Date()){
+  const pad = n => String(n).padStart(2,'0');
   return `${pad(d.getDate())}/${pad(d.getMonth()+1)}/${d.getFullYear()}`;
 }
 function money(n){
-  // 1,234.56 (estilo de tu plantilla)
-  const x = Number(n || 0);
-  const s = x.toFixed(2);
+  const s = (Number(n||0)).toFixed(2);
   return s.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 }
+function ensure(v, def){ return v==null || v==='' ? def : v; }
 
-function fileExists(p){ try{ return p && fs.existsSync(p); }catch{ return false; } }
+// Busca un asset en varias rutas comunes
+function findAsset(...relPaths){
+  for (const r of relPaths){
+    const p = path.resolve(r);
+    if (fs.existsSync(p)) return p;
+  }
+  return null;
+}
 
 export async function renderQuotePDF(quote, outPath, company = {}){
   const dir = path.dirname(outPath);
   try{ fs.mkdirSync(dir, { recursive:true }); }catch{}
 
-  const doc = new PDFDocument({ size:'A4', margin:36 });
+  // ===== Setup doc =====
+  const doc = new PDFDocument({ size: 'A4', margin: 36 });
   const stream = fs.createWriteStream(outPath);
   doc.pipe(stream);
 
-  // ====== Config empresa / plantilla ======
-  const BRAND   = company.brand || 'New Chem Agroquímicos SRL';
-  const RUC     = company.ruc   || '';
-  const TEL     = company.tel   || '';
-  const ADDR    = company.dir   || '';
-  const LOGO    = company.logoPath && fileExists(company.logoPath) ? company.logoPath : null;
+  const pageW = doc.page.width;
+  const pageH = doc.page.height;
+  const xMargin = 36;
+  const usableW = pageW - xMargin*2;
 
-  const PAYMENT = quote?.pago || 'Contado';
-  const RATE    = Number(quote?.rate || process.env.USD_BOB_RATE || 6.96); // para columnas en Bs
+  // ===== Assets =====
+  const logoPath = company.logoPath
+    || findAsset('./public/logo_newchem.png', './logo_newchem.png', './image/logo_newchem.png');
+  const qrPath = company.qrPath
+    || findAsset('./public/qr.png', './image/qr.png');
 
-  // Entrega
-  const DELIVERY_TITLE    = 'Lugar de entrega';
-  const DELIVERY_NAME     = company.delivery_name || 'Almacenes Orange Cargo SRL';
-  const DELIVERY_ADDRESS  = company.delivery_addr || 'Km 9, zona norte (lado del surtidor bioceánico)';
-  const DELIVERY_SCHEDULE = company.delivery_sched|| 'Horarios: 08:00–12:00 / 13:00–17:00';
+  const brand = company.brand || 'New Chem Agroquímicos';
 
-  // Condiciones
-  const TERMS = company.terms || [
-    'Oferta válida por 1 día a partir de la fecha, sujeta a la disponibilidad de productos.',
-    'Solicite su cotización de acuerdo al volumen requerido antes de realizar cualquier pago.',
-    'La única manera de fijar precio y reservar volumen, es con el pago 100% y facturado.',
-    'Una vez facturado, no se aceptan cambios ni devoluciones. Excepto por producto dañado.'
-  ];
-
-  // Bancos / QR
-  const BANK_TITLE  = 'Datos bancarios y QR';
-  const BANK_LINES  = company.bank_lines || [
-    `Titular: ${BRAND}`,
-    'Moneda: Bolivianos',
-    'Banco: (complete aquí)',
-    'N° de cuenta: (complete aquí)'
-  ];
-  const BANK_QR     = company.bank_qr && fileExists(company.bank_qr) ? company.bank_qr : null;
-
-  // ====== HEADER ======
-  let y = doc.y;
-
-  if (LOGO){
-    try{ doc.image(LOGO, doc.x, y, { width: 120 }); }catch{}
-  }else{
-    doc.fontSize(18).text(BRAND, { continued:false });
+  // ===== Marca de agua (membrete) =====
+  if (logoPath){
+    doc.save();
+    doc.opacity(0.05);
+    // centra grande
+    const mw = 420;
+    const mx = (pageW - mw) / 2;
+    const my = (pageH - mw*0.45) / 2; // proporción aprox del logo
+    try { doc.image(logoPath, mx, my, { width: mw }); } catch{}
+    doc.restore();
   }
 
-  doc.fontSize(18).text('COTIZACIÓN', 0, y, { align:'right' });
-  doc.moveDown(0.2).fontSize(10).fillColor('#666')
-     .text(fmtDate(quote.fecha || new Date()), { align:'right' })
+  // ===== Header =====
+  let y = 24;
+  if (logoPath){
+    try { doc.image(logoPath, xMargin, y, { width: 120 }); } catch {}
+  }
+  doc.font('Helvetica-Bold').fontSize(14).text('COTIZACIÓN', 0, y+8, { align: 'center' });
+  doc.font('Helvetica').fontSize(9).fillColor('#666')
+     .text(fmtDate(quote.fecha), 0, y+12, { align: 'right' })
      .fillColor('black');
 
-  y = Math.max(y + 60, doc.y + 6);
-  doc.moveTo(36, y).lineTo(doc.page.width-36, y).strokeColor('#e5e7eb').stroke().strokeColor('black');
-  y += 10;
+  y = 84;
 
-  // ====== CLIENTE ======
+  // ===== Cliente (bloque a la izquierda) =====
   const c = quote.cliente || {};
-  doc.fontSize(11).text(`Cliente: ${c.nombre || '-'}`);
-  doc.fontSize(10).text(`Zona: ${c.zona || '-'}`);
-  doc.text(`Departamento: ${c.departamento || '-'}`);
-  doc.text(`Pago: ${PAYMENT}`);
-  doc.moveDown(0.2);
-  doc.text(`Cultivo: ${c.cultivo || '-'}`);
-  doc.text(`Hectáreas: ${c.hectareas || '-'}`);
-  doc.text(`Campaña: ${c.campana || '-'}`);
-  doc.moveDown(0.6);
+  const L = (label, val) => {
+    doc.font('Helvetica-Bold').text(`${label}: `, xMargin, y, { continued: true });
+    doc.font('Helvetica').text(ensure(val,'-'));
+    y += 14;
+  };
+  L('Cliente', c.nombre);
+  L('Zona', c.zona);
+  L('Departamento', c.departamento);
+  L('Cultivo', c.cultivo);
+  L('Hectáreas', c.hectareas);
+  L('Campaña', c.campana);
 
-  // ====== TABLA ======
-  const x0 = doc.x;
-  const tableWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right; // 523 aprox
+  y += 6;
+
+  // ===== Tabla =====
+  const rate = Number(process.env.USD_BOB_RATE || quote.rate || 6.96);
+
   const cols = [
-    { key:'nombre',             label:'Producto',           w: 90,  align:'left'  },
-    { key:'ingrediente_activo', label:'Ingrediente activo', w: 120, align:'left'  },
-    { key:'envase',             label:'Envase',             w: 40,  align:'center'},
-    { key:'cantidad',           label:'Cantidad',           w: 45,  align:'right' },
-    { key:'precio_usd',         label:'Precio (USD)',       w: 55,  align:'right' },
-    { key:'precio_bs',          label:'Precio (Bs)',        w: 60,  align:'right' },
-    { key:'subtotal_usd',       label:'Sub total (USD)',    w: 55,  align:'right' },
-    { key:'subtotal_bs',        label:'Sub total (Bs)',     w: 58,  align:'right' }
+    { key:'nombre',             label:'Producto',            w:110, align:'left'  },
+    { key:'ingrediente_activo', label:'Ingrediente activo',  w:110, align:'left'  },
+    { key:'envase',             label:'Envase',              w:45,  align:'left'  },
+    { key:'cantidad',           label:'Cantidad',            w:45,  align:'right' },
+    { key:'precio_usd',         label:'Precio (USD)',        w:55,  align:'right' },
+    { key:'precio_bs',          label:'Precio (Bs)',         w:55,  align:'right' },
+    { key:'subtotal_usd',       label:'Sub total (USD)',     w:51,  align:'right' },
+    { key:'subtotal_bs',        label:'Sub total (Bs)',      w:52,  align:'right' },
   ];
-  // seguridad: suma exacta a ancho de página
-  const sumW = cols.reduce((a,b)=>a+b.w,0);
-  if (Math.abs(sumW - tableWidth) > 1){
-    // reajusta proporcionalmente si cambian márgenes
-    const k = tableWidth / sumW;
-    cols.forEach(c=> c.w = Math.floor(c.w * k));
-  }
+  const tableX = xMargin;
+  const tableW = cols.reduce((a,c)=>a+c.w,0);
 
-  function drawHeader(){
-    const hY = doc.y;
-    doc.save();
-    doc.rect(x0, hY, tableWidth, 20).fill('#0a8e7b');
-    doc.fillColor('white').fontSize(9);
-    let x = x0 + 6;
-    for (const c of cols){
-      doc.text(c.label, x, hY + 5, { width: c.w - 12, align: c.align || 'left' });
-      x += c.w;
-    }
-    doc.restore();
-    doc.moveDown(1.2);
+  // Cabecera
+  doc.save();
+  doc.rect(tableX, y, tableW, 22).fill('#0a8e7b');
+  doc.fillColor('white').font('Helvetica-Bold').fontSize(9);
+  let cx = tableX + 6;
+  for (const cdef of cols){
+    doc.text(cdef.label, cx, y+6, { width: cdef.w-12, align: cdef.align || 'left' });
+    cx += cdef.w;
   }
+  doc.restore();
+  y += 22;
 
-  function needPage(nextRowHeight = 18){
-    const bottom = doc.page.height - doc.page.margins.bottom - 120; // deja espacio para secciones finales
-    if (doc.y + nextRowHeight > bottom){
+  // Filas
+  const rowPadV = 6;
+  const minRowH = 20;
+
+  const ensureSpace = (need = 80) => {
+    if (y + need > (pageH - 60)){
       doc.addPage();
-      drawHeader();
+      y = 36;
+
+      // Redibujar membrete
+      if (logoPath){
+        doc.save();
+        doc.opacity(0.05);
+        const mw = 420;
+        const mx = (pageW - mw) / 2;
+        const my = (pageH - mw*0.45) / 2;
+        try { doc.image(logoPath, mx, my, { width: mw }); } catch {}
+        doc.restore();
+      }
     }
-  }
+  };
 
-  drawHeader();
-  doc.fontSize(8.5).fillColor('black');
+  doc.fontSize(9).fillColor('black');
 
-  const items = (quote.items || []).map(it=>{
-    const qty = Number(it.cantidad || 0);
-    const pUSD = Number(it.precio_usd || 0);
-    const stUSD = Number(it.subtotal_usd || (qty * pUSD));
-    return {
-      ...it,
-      precio_bs:   pUSD * RATE,
-      subtotal_bs: stUSD * RATE
-    };
-  });
+  let subtotalUSD = 0;
+  for (const itRaw of (quote.items || [])){
+    // Derivados
+    const precioUSD = Number(itRaw.precio_usd || 0);
+    const precioBs  = precioUSD * rate;
+    const cant      = Number(itRaw.cantidad || 0);
+    const subUSD    = precioUSD * cant;
+    const subBs     = subUSD * rate;
 
-  for (const it of items){
-    needPage();
-    const rowH = 18;
+    subtotalUSD += subUSD;
 
-    // zebra
+    // Altura dinámica (por wrapping de celdas texto)
+    const cellHeights = [];
+    let tx = tableX + 6;
+
+    const cellTexts = [
+      String(itRaw.nombre || ''),
+      String(itRaw.ingrediente_activo || ''),
+      String(itRaw.envase || ''),
+      money(cant),
+      money(precioUSD),
+      money(precioBs),
+      money(subUSD),
+      money(subBs),
+    ];
+
+    for (let i=0; i<cols.length; i++){
+      const w = cols[i].w - 12;
+      const h = doc.heightOfString(cellTexts[i], { width: w, align: cols[i].align || 'left' });
+      cellHeights.push(Math.max(h + rowPadV*2, minRowH));
+      tx += cols[i].w;
+    }
+    const rowH = Math.max(...cellHeights);
+
+    ensureSpace(rowH + 6);
+
+    // Fondo cebra
     doc.save();
-    doc.rect(x0, doc.y - 2, tableWidth, rowH).fillOpacity(0.06).fill('#0a8e7b').fillOpacity(1);
+    doc.rect(tableX, y, tableW, rowH).fillOpacity(0.06).fill('#0a8e7b').fillOpacity(1);
     doc.restore();
 
-    let x = x0 + 6;
-    const cells = [
-      String(it.nombre || ''),
-      String(it.ingrediente_activo || ''),
-      String(it.envase || ''),
-      money(it.cantidad || 0),
-      money(it.precio_usd || 0),
-      money(it.precio_bs || 0),
-      money(it.subtotal_usd || 0),
-      money(it.subtotal_bs || 0),
-    ];
-    cols.forEach((c, i)=>{
-      doc.text(cells[i], x, doc.y + 4, { width: c.w - 12, align: c.align || 'left' });
-      x += c.w;
-    });
-    doc.moveDown(1.1);
+    // Contenido
+    tx = tableX + 6;
+    for (let i=0; i<cols.length; i++){
+      const cdef = cols[i];
+      doc.fillColor('black')
+         .font(cdef.key==='nombre' ? 'Helvetica-Bold' : 'Helvetica')
+         .text(cellTexts[i], tx, y + rowPadV, { width: cdef.w - 12, align: cdef.align || 'left' });
+      // Borde celda
+      doc.rect(tx-6, y, cdef.w, rowH).strokeColor('#333').lineWidth(0.6).stroke();
+      tx += cdef.w;
+    }
+    y += rowH;
   }
 
   // Totales
-  const subtotalUSD = Number(quote.subtotal_usd || items.reduce((a,b)=>a + Number(b.subtotal_usd||0), 0));
-  const totalUSD    = Number(quote.total_usd    || subtotalUSD);
-  const subtotalBs  = subtotalUSD * RATE;
-  const totalBs     = totalUSD    * RATE;
+  const totalUSD = Number(quote.total_usd ?? subtotalUSD);
+  const totalBs  = totalUSD * rate;
 
-  doc.moveDown(0.3);
-  doc.moveTo(x0, doc.y).lineTo(x0 + tableWidth, doc.y).strokeColor('#d1d5db').stroke().strokeColor('black');
-  doc.moveDown(0.4);
+  ensureSpace(40);
+  // Fila total: celda "Total" que ocupa las 6 primeras columnas
+  const wUntilCol6 = cols.slice(0,6).reduce((a,c)=>a+c.w,0);
+  const wCol7      = cols[6].w;
+  const wCol8      = cols[7].w;
 
-  // fila TOTAL resaltada
-  const yTot = doc.y;
-  const wRight = cols.slice(-2).reduce((a,b)=>a+b.w,0); // ancho de las dos últimas (subtot Bs y usd)-> usaremos toda la fila
+  // Línea superior
+  doc.moveTo(tableX, y).lineTo(tableX + tableW, y).strokeColor('#333').lineWidth(0.8).stroke();
+
+  const totalRowH = 22;
+  // Caja "Total"
+  doc.rect(tableX, y, wUntilCol6, totalRowH).strokeColor('#333').lineWidth(0.8).stroke();
+  doc.font('Helvetica-Bold').text('Total', tableX, y+5, { width: wUntilCol6, align: 'center' });
+
+  // Celdas de montos con fondo amarillo
   doc.save();
-  doc.rect(x0, yTot - 2, tableWidth, 20).fill('#fff59d'); // amarillo suave
+  doc.rect(tableX + wUntilCol6, y, wCol7, totalRowH).fill('#fff59d');
+  doc.rect(tableX + wUntilCol6 + wCol7, y, wCol8, totalRowH).fill('#fff59d');
   doc.restore();
-  doc.fontSize(10).font('Helvetica-Bold');
-  doc.text('Total', x0 + tableWidth - 260, yTot + 4, { width: 110, align:'right' });
-  doc.text(`$ ${money(totalUSD)}`, x0 + tableWidth - 140, yTot + 4, { width: 70, align:'right' });
-  doc.text(`Bs ${money(totalBs)}`, x0 + tableWidth - 60,  yTot + 4, { width: 60, align:'right' });
-  doc.font('Helvetica').moveDown(1.6);
+  // Bordes y montos
+  doc.rect(tableX + wUntilCol6, y, wCol7, totalRowH).strokeColor('#333').lineWidth(0.8).stroke();
+  doc.rect(tableX + wUntilCol6 + wCol7, y, wCol8, totalRowH).stroke();
 
-  // Nota legal
-  doc.fontSize(8.5).fillColor('#444')
-    .text('*Nuestros precios incluyen impuestos de ley.')
-    .fillColor('black');
-  doc.moveDown(0.6);
+  doc.font('Helvetica-Bold').text(`$ ${money(totalUSD)}`, tableX + wUntilCol6, y+5, { width: wCol7, align:'right' });
+  doc.font('Helvetica-Bold').text(`Bs ${money(totalBs)}`, tableX + wUntilCol6 + wCol7, y+5, { width: wCol8, align:'right' });
 
-  // ====== LUGAR DE ENTREGA ======
-  function sectionTitle(t){
-    doc.font('Helvetica-Bold').fontSize(11).fillColor('black').text(t, { underline: true });
-    doc.font('Helvetica').fontSize(9.5);
+  y += totalRowH + 10;
+
+  // Nota
+  ensureSpace(20);
+  doc.font('Helvetica-Oblique').fontSize(9).fillColor('#333')
+     .text('*Nuestros precios incluyen impuestos de ley.');
+  doc.fillColor('black');
+  y += 6;
+
+  // ===== Lugar de entrega =====
+  const drawH2 = (t)=>{ ensureSpace(18); doc.font('Helvetica-Bold').fontSize(11).text(t); doc.font('Helvetica').fontSize(10); y = doc.y + 2; };
+
+  drawH2('Lugar de entrega');
+  const entrega = [
+    'Almacenes Orange Cargo SRL., ubicados en el km9 zona norte, lado del surtidor bioceánico.',
+    'Horarios de atención: 08:00 - 12:00 / 13:00 - 17:00'
+  ];
+  for (const line of entrega){ ensureSpace(14); doc.text(line, xMargin, y); y = doc.y; }
+
+  // ===== Condiciones =====
+  y += 6;
+  drawH2('Condiciones y validez de la oferta');
+  const conds = [
+    '1.- Oferta válida por 1 día a partir de la fecha, sujeta a la disponibilidad de productos.',
+    '2.- Solicite su cotización acorde al volumen requerido antes de realizar cualquier pago.',
+    '3.- La única manera de fijar precio y reservar volumen, es con el pago 100% y facturado.',
+    '4.- Una vez facturado, no se aceptan cambios ni devoluciones. Excepto por producto dañado.'
+  ];
+  for (const line of conds){ ensureSpace(14); doc.font('Helvetica-BoldOblique').text(line, xMargin, y); doc.font('Helvetica'); y = doc.y; }
+
+  // ===== Aviso de facturación =====
+  y += 8;
+  ensureSpace(40);
+  const warnH = 36;
+  doc.save();
+  doc.rect(xMargin, y, usableW, warnH).fill('#fdecea');
+  doc.restore();
+  doc.rect(xMargin, y, usableW, warnH).strokeColor('#c53030').lineWidth(1).stroke();
+  doc.font('Helvetica-Bold').fillColor('#a50000').text(
+    'IMPORTANTE: LA FACTURACIÓN DEBE EMITIRSE A NOMBRE DE QUIEN REALIZA EL PAGO.',
+    xMargin+10, y+10, { width: usableW-20, align:'left' }
+  );
+  doc.fillColor('black');
+  y += warnH + 10;
+
+  // ===== Datos bancarios y QR =====
+  drawH2('Datos bancarios y QR');
+
+  const leftX = xMargin;
+  const rightX = xMargin + usableW - 170; // ancho zona QR
+  const colW = rightX - leftX - 12;       // ancho columna textos a la izquierda
+
+  // Cuadros de banco
+  const bankBox = (label, value)=>{
+    ensureSpace(34);
+    doc.font('Helvetica-Bold').text(label, leftX, y, { width: 100 });
+    doc.font('Helvetica').text(value, leftX+100, y, { width: colW-100 });
+    y = doc.y + 6;
+    doc.moveTo(leftX, y-2).lineTo(leftX+colW, y-2).strokeColor('#bbb').stroke();
+  };
+
+  bankBox('Titular:', 'New Chem Agroquímicos SRL');
+  bankBox('Moneda:', 'Bolivianos');
+  bankBox('Banco:', 'BCP');                bankBox('Cuenta Corriente:', '701-5096500-3-34');
+  bankBox('Banco:', 'BANCO UNIÓN');        bankBox('Cuenta Corriente:', '10000047057563');
+  bankBox('Banco:', 'BANCO SOL');          bankBox('Cuenta Corriente:', '2784368-000-001');
+
+  // QR a la derecha
+  if (qrPath){
+    doc.save();
+    try { doc.image(qrPath, rightX, y-160, { width: 160 }); }
+    catch {}
+    doc.restore();
+  } else {
+    // Placeholder si no hay imagen
+    doc.rect(rightX, y-160, 160, 160).strokeColor('#ccc').dash(4, { space: 3 }).stroke().undash();
+    doc.font('Helvetica-Oblique').fontSize(9).fillColor('#666')
+       .text('QR aquí', rightX, y-90, { width: 160, align:'center' })
+       .fontSize(10).fillColor('black');
   }
 
-  sectionTitle(DELIVERY_TITLE);
-  doc.text(DELIVERY_NAME);
-  doc.text(DELIVERY_ADDRESS);
-  doc.text(DELIVERY_SCHEDULE);
-  doc.moveDown(0.8);
-
-  // ====== CONDICIONES ======
-  sectionTitle('Condiciones y validez de la oferta');
-  TERMS.forEach((t, i)=> doc.text(`${i+1}.- ${t}`));
-  doc.moveDown(0.8);
-
-  // ====== BANCOS + QR ======
-  sectionTitle(BANK_TITLE);
-  const xLeft = doc.x;
-  const yStart = doc.y;
-
-  BANK_LINES.forEach(l => doc.text(l));
-
-  if (BANK_QR){
-    try{
-      const imgW = 120;
-      const xQR = doc.page.width - doc.page.margins.right - imgW;
-      doc.image(BANK_QR, xQR, yStart - 6, { width: imgW });
-    }catch{}
-  }
-
-  // Firma / pie opcional
-  doc.moveDown(1.2);
-  if (ADDR || TEL || RUC){
-    doc.fontSize(8.5).fillColor('#555');
-    if (ADDR) doc.text(ADDR);
-    if (TEL)  doc.text(`Tel: ${TEL}`);
-    if (RUC)  doc.text(`NIT: ${RUC}`);
-    doc.fillColor('black');
-  }
-
+  // ===== Fin =====
   doc.end();
   await new Promise((res, rej)=>{ stream.on('finish', res); stream.on('error', rej); });
   return outPath;
