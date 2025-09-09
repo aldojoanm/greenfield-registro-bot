@@ -13,7 +13,6 @@
   .top input{flex:1;background:#1c2b33;border:1px solid var(--ring);color:var(--txt);padding:10px;border-radius:10px}
   .btn{background:var(--accent);color:#06372f;border:0;border-radius:10px;padding:10px 14px;font-weight:700;cursor:pointer}
   .btn.ghost{background:#1c2b33;color:#cde;border:1px solid var(--ring)}
-  .btn.danger{background:var(--danger);color:#fff}
   .muted{color:var(--muted);font-size:12px}
   .bar{display:flex;gap:8px;align-items:center;justify-content:space-between;padding:10px 14px}
   .bar-right{display:flex;gap:8px;align-items:center}
@@ -30,7 +29,10 @@
   td[contenteditable="true"]{outline:none;border-radius:6px}
   td[contenteditable="true"]:focus{box-shadow:0 0 0 2px #0aa;background:#0c1b22}
   .right{text-align:right}
+  .center{text-align:center}
   .toast{position:fixed;right:16px;bottom:16px;background:#092e25;color:#bff2e6;border:1px solid #125547;padding:10px 12px;border-radius:10px}
+  tr[data-editing="1"] td{ background:#0c1b22; }
+  tr.empty td{ color:var(--muted); font-style:italic; }
 </style>
 </head>
 <body>
@@ -42,7 +44,7 @@
     </div>
 
     <div class="bar">
-      <div class="muted" id="hint">Edita directamente en la tabla. USD y Bs con 2 decimales.</div>
+      <div class="muted" id="hint">Usa “Editar” por fila. Solo USD es editable; Bs se calcula con el TC.</div>
       <div class="bar-right">
         <div class="tc">
           <label for="tc">TC</label>
@@ -57,7 +59,7 @@
     <div class="section" id="sec-herb">
       <div class="section-head">
         <div class="section-title">Herbicidas</div>
-        <button class="btn ghost" id="add-herb">+ Agregar fila</button>
+        <!-- (sin botón Agregar fila) -->
       </div>
       <table>
         <thead>
@@ -78,7 +80,7 @@
     <div class="section" id="sec-insec">
       <div class="section-head">
         <div class="section-title">Insecticidas</div>
-        <button class="btn ghost" id="add-insec">+ Agregar fila</button>
+        <!-- (sin botón Agregar fila) -->
       </div>
       <table>
         <thead>
@@ -99,7 +101,7 @@
     <div class="section" id="sec-fung">
       <div class="section-head">
         <div class="section-title">Fungicidas</div>
-        <button class="btn ghost" id="add-fung">+ Agregar fila</button>
+        <!-- (sin botón Agregar fila) -->
       </div>
       <table>
         <thead>
@@ -158,56 +160,93 @@ function buildSKU(producto='', presentacion=''){
 function rowTpl(p){
   const {producto, presentacion} = parseSKU(p?.sku || '');
   return `
-  <tr>
-    <td contenteditable="true" data-key="producto">${esc(producto)}</td>
-    <td contenteditable="true" data-key="presentacion">${esc(presentacion)}</td>
-    <td contenteditable="true" data-key="unidad">${esc(p?.unidad||'')}</td>
-    <td contenteditable="true" data-key="precio_usd" class="right">${fmt2(p?.precio_usd)}</td>
-    <td contenteditable="true" data-key="precio_bs"  class="right">${fmt2(p?.precio_bs)}</td>
-    <td class="right"><button class="btn danger del">Eliminar</button></td>
+  <tr data-editing="0">
+    <td data-key="producto">${esc(producto)}</td>
+    <td data-key="presentacion">${esc(presentacion)}</td>
+    <td data-key="unidad">${esc(p?.unidad||'')}</td>
+    <td data-key="precio_usd" class="right">${fmt2(p?.precio_usd)}</td>
+    <td data-key="precio_bs"  class="right">${fmt2(p?.precio_bs)}</td>
+    <td class="right"><button class="btn ghost edit">Editar</button></td>
   </tr>`;
+}
+
+function emptyTpl(msg='Sin productos en esta categoría'){
+  return `<tr class="empty"><td class="center" colspan="6">${esc(msg)}</td></tr>`;
 }
 
 function computeBsForRow(tr){
   const usdEl = tr.querySelector('[data-key="precio_usd"]');
   const bsEl  = tr.querySelector('[data-key="precio_bs"]');
-  const usd = num(usdEl?.textContent || 0);
+  if(!usdEl || !bsEl) return;
+  const usd = num(usdEl.textContent || 0);
   const bs = usd * TC;
-  if (bsEl) bsEl.textContent = fmt2(bs);
+  bsEl.textContent = fmt2(bs);
 }
 function recalcAllBs(){
-  document.querySelectorAll('tbody tr').forEach(tr => computeBsForRow(tr));
+  document.querySelectorAll('tbody tr:not(.empty)').forEach(tr => computeBsForRow(tr));
+}
+
+function enterEdit(tr, btn){
+  const usdCell = tr.querySelector('[data-key="precio_usd"]');
+  tr.dataset.editing = '1';
+  btn.textContent = 'Guardar';
+  usdCell.setAttribute('contenteditable','true');
+  // enfocar al final
+  const range = document.createRange();
+  range.selectNodeContents(usdCell); range.collapse(false);
+  const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
+  usdCell.focus();
+}
+function exitEdit(tr, btn){
+  const usdCell = tr.querySelector('[data-key="precio_usd"]');
+  tr.dataset.editing = '0';
+  btn.textContent = 'Editar';
+  usdCell.textContent = fmt2(num(usdCell.textContent));
+  computeBsForRow(tr);
+  usdCell.setAttribute('contenteditable','false');
 }
 
 function bindRowEvents(scope){
-  scope.querySelectorAll('.del').forEach(btn=>{
-    btn.onclick = (e)=>{ e.target.closest('tr').remove(); };
+  // Evitar enlazar sobre filas vacías
+  scope.querySelectorAll('tr:not(.empty) .edit').forEach(btn=>{
+    btn.onclick = (e)=>{
+      const tr = e.target.closest('tr');
+      const editing = tr?.dataset.editing === '1';
+      if (!editing) enterEdit(tr, e.target);
+      else exitEdit(tr, e.target);
+    };
   });
-  scope.querySelectorAll('[data-key="precio_usd"]').forEach(cell=>{
+
+  // Recalcular Bs mientras se edita USD
+  scope.querySelectorAll('tr:not(.empty) [data-key="precio_usd"]').forEach(cell=>{
     cell.addEventListener('input', ()=> computeBsForRow(cell.closest('tr')));
-    cell.addEventListener('blur',  ()=> { cell.textContent = fmt2(num(cell.textContent)); computeBsForRow(cell.closest('tr')); });
-  });
-  scope.querySelectorAll('[data-key="precio_bs"]').forEach(cell=>{
-    cell.addEventListener('blur', ()=> { cell.textContent = fmt2(num(cell.textContent)); });
+    cell.addEventListener('blur',  ()=> {
+      const tr = cell.closest('tr');
+      if (tr?.dataset.editing === '1'){
+        cell.textContent = fmt2(num(cell.textContent));
+        computeBsForRow(tr);
+      }
+    });
   });
 }
 
 function renderSections(prices){
   // limpiar
   Object.values(TBODYS).forEach(tb=> tb.innerHTML = '');
-  // dividir por categoría (default herbicida)
+  // dividir por categoría
   const norm = s => String(s||'').toLowerCase();
   const groups = { herb: [], insec: [], fung: [] };
   for (const p of prices){
     const c = norm(p.categoria);
     if (c === 'insecticida') groups.insec.push(p);
     else if (c === 'fungicida') groups.fung.push(p);
-    else groups.herb.push(p); // default
+    else groups.herb.push(p);
   }
   // pintar
-  TBODYS.herb.innerHTML = groups.herb.map(rowTpl).join('') || rowTpl({});
-  TBODYS.insec.innerHTML = groups.insec.map(rowTpl).join('') || rowTpl({});
-  TBODYS.fung.innerHTML = groups.fung.map(rowTpl).join('') || rowTpl({});
+  TBODYS.herb.innerHTML  = groups.herb.length  ? groups.herb.map(rowTpl).join('')  : emptyTpl();
+  TBODYS.insec.innerHTML = groups.insec.length ? groups.insec.map(rowTpl).join('') : emptyTpl();
+  TBODYS.fung.innerHTML  = groups.fung.length  ? groups.fung.map(rowTpl).join('')  : emptyTpl();
+
   bindRowEvents(TBODYS.herb);
   bindRowEvents(TBODYS.insec);
   bindRowEvents(TBODYS.fung);
@@ -217,14 +256,14 @@ function renderSections(prices){
 function readTable(){
   const rows = [];
   const grab = (tbody, categoria) => {
-    tbody.querySelectorAll('tr').forEach(tr=>{
+    tbody.querySelectorAll('tr:not(.empty)').forEach(tr=>{
       const get = k => tr.querySelector(`[data-key="${k}"]`)?.textContent?.trim() ?? '';
       const prod = get('producto');
       const pres = get('presentacion');
       const sku = buildSKU(prod, pres);
       if (!sku) return;
       rows.push({
-        categoria, // <- se guarda
+        categoria,
         sku,
         unidad: get('unidad'),
         precio_usd: num(get('precio_usd')),
@@ -243,7 +282,6 @@ async function load(){
   if(!token){ alert('Pega tu AGENT_TOKEN'); return; }
   TOKEN = token; localStorage.setItem('nc_token', TOKEN);
 
-  // Cargar precios y TC del servidor
   const [rp, rr] = await Promise.all([
     fetch('/admin/prices', { headers:{ 'Authorization':'Bearer '+TOKEN }}),
     fetch('/admin/rate',   { headers:{ 'Authorization':'Bearer '+TOKEN }})
@@ -256,7 +294,11 @@ async function load(){
 
   if (rr.ok){
     const { rate } = await rr.json();
-    if (Number.isFinite(rate)){ TC = Number(rate); tcInput.value = TC.toFixed(2); localStorage.setItem('nc_tc', TC.toFixed(2)); }
+    if (Number.isFinite(rate)){
+      TC = Number(rate);
+      tcInput.value = TC.toFixed(2);
+      localStorage.setItem('nc_tc', TC.toFixed(2));
+    }
   }
 
   renderSections(prices);
@@ -305,14 +347,13 @@ async function save(){
 $('#load').onclick   = load;
 $('#reload').onclick = load;
 $('#save').onclick   = save;
-$('#add-herb').onclick  = ()=>{ TBODYS.herb.insertAdjacentHTML('beforeend', rowTpl({})); bindRowEvents(TBODYS.herb); };
-$('#add-insec').onclick = ()=>{ TBODYS.insec.insertAdjacentHTML('beforeend', rowTpl({})); bindRowEvents(TBODYS.insec); };
-$('#add-fung').onclick  = ()=>{ TBODYS.fung.insertAdjacentHTML('beforeend', rowTpl({})); bindRowEvents(TBODYS.fung); };
 
 // TC -> recalcular y persistir en local
 tcInput.addEventListener('input', ()=>{
   const v = Number(tcInput.value) || 0;
-  TC = v; localStorage.setItem('nc_tc', TC.toFixed(2)); recalcAllBs();
+  TC = v;
+  localStorage.setItem('nc_tc', TC.toFixed(2));
+  recalcAllBs();
 });
 
 (async ()=>{ if (TOKEN) load(); })();
