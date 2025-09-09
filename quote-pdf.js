@@ -29,8 +29,9 @@ function findAsset(...relPaths){
   return null;
 }
 
+/* ===== Detecta tamaño de envase (pack) ===== */
 function detectPackSize(it = {}){
-  // 1) Intento: desde el campo "envase" (ej: "10 L", "25KG")
+  // 1) Desde "envase" (ej: "20 L", "1 Kg", "200L")
   if (it.envase) {
     const m = String(it.envase).match(/(\d+(?:[.,]\d+)?)\s*(l|lt|lts|litros?|kg|kilos?)/i);
     if (m) {
@@ -39,7 +40,7 @@ function detectPackSize(it = {}){
       if (!isNaN(size) && size > 0) return { size, unit };
     }
   }
-  // 2) Intento: desde el SKU (ej: "SINERGY-10L", "LAYER-25KG")
+  // 2) Desde el SKU (ej: "GLISATO-200L", "LAYER-25KG")
   if (it.sku) {
     const m = String(it.sku).match(/-(\d+(?:\.\d+)?)(l|kg)\b/i);
     if (m) {
@@ -48,7 +49,7 @@ function detectPackSize(it = {}){
       if (!isNaN(size) && size > 0) return { size, unit };
     }
   }
-  // 3) Intento: desde el nombre (por si viene "GLISATO 20L")
+  // 3) Desde el nombre
   if (it.nombre) {
     const m = String(it.nombre).match(/(\d+(?:[.,]\d+)?)\s*(l|lt|lts|kg)\b/i);
     if (m) {
@@ -58,6 +59,47 @@ function detectPackSize(it = {}){
     }
   }
   return null;
+}
+
+/* Lectura robusta de precio en USD */
+function readUSD(it = {}) {
+  const candidates = [it.precio_usd, it.price_usd, it.usd, it.precio, it.price];
+  for (const v of candidates) {
+    const n = Number(v);
+    if (!isNaN(n) && n > 0) return n;
+  }
+  // permite 0 explícito si de verdad viene 0
+  const z = Number(it.precio_usd ?? it.price_usd ?? it.usd ?? it.precio ?? it.price);
+  return isNaN(z) ? 0 : z;
+}
+
+/* Redondeo por pack, con reglas solicitadas */
+function roundQuantityByPack(originalQty, pack, itemUnitRaw){
+  if (!pack || !(originalQty > 0)) return originalQty;
+
+  const itemUnit = String(itemUnitRaw || '').toUpperCase();
+  if (itemUnit && itemUnit !== pack.unit) {
+    // Unidades distintas → no tocamos
+    return originalQty;
+  }
+
+  const ratio = originalQty / pack.size;
+
+  // KG de 1 kg → no redondear
+  if (pack.unit === 'KG' && Math.abs(pack.size - 1) < 1e-9) {
+    return originalQty;
+  }
+
+  // Packs grandes ≥200 L → redondear hacia abajo si piden ≥ 1 pack; si piden menos de 1, mínimo 1 pack
+  if (pack.unit === 'L' && pack.size >= 200) {
+    if (ratio < 1) return pack.size;                    // mínimo 1 envase
+    const mult = Math.floor(ratio + 1e-9);              // floor (evita 220→400)
+    return mult * pack.size;
+  }
+
+  // Resto (ej. 5L, 10L, 20L, 25KG, etc.) → redondeo hacia arriba
+  const mult = Math.ceil(ratio - 1e-9);                 // ceil pero sin subir si ya es entero
+  return mult * pack.size;
 }
 
 export async function renderQuotePDF(quote, outPath, company = {}){
@@ -102,6 +144,7 @@ export async function renderQuotePDF(quote, outPath, company = {}){
 
   y = 100;
 
+  // Datos cliente
   const c = quote.cliente || {};
   const L = (label, val) => {
     doc.font('Helvetica-Bold').text(`${label}: `, xMargin, y, { continued: true });
@@ -122,8 +165,8 @@ export async function renderQuotePDF(quote, outPath, company = {}){
   const cols = [
     { key:'nombre',             label:'Producto',           w:90,  align:'left'  },
     { key:'ingrediente_activo', label:'Ingrediente activo', w:104, align:'left'  },
-    { key:'envase',             label:'Envase',             w:48,  align:'left'  },  // +8
-    { key:'cantidad',           label:'Cantidad',           w:56,  align:'right' },  // +8
+    { key:'envase',             label:'Envase',             w:48,  align:'left'  },
+    { key:'cantidad',           label:'Cantidad',           w:56,  align:'right' },
     { key:'precio_usd',         label:'Precio (USD)',       w:55,  align:'right' },
     { key:'precio_bs',          label:'Precio (Bs)',        w:50,  align:'right' },
     { key:'subtotal_usd',       label:'Subtotal (USD)',     w:60,  align:'right' },
@@ -132,7 +175,7 @@ export async function renderQuotePDF(quote, outPath, company = {}){
   const tableX = xMargin;
   const tableW = cols.reduce((a,c)=>a+c.w,0);
 
-  // Cabecera un poco más alta
+  // Cabecera
   const headerH = 28;
   doc.save();
   doc.rect(tableX, y, tableW, headerH).fill('#0a8e7b');
@@ -171,25 +214,20 @@ export async function renderQuotePDF(quote, outPath, company = {}){
 
   let subtotalUSD = 0;
   for (const itRaw of (quote.items || [])){
-    const precioUSD = Number(itRaw.precio_usd || 0);
+    const precioUSD = readUSD(itRaw);                  // <- robusto
     const precioBs  = precioUSD * rate;
+
     const cantOrig  = Number(itRaw.cantidad || 0);
+    const pack      = detectPackSize(itRaw);
 
-    const pack = detectPackSize(itRaw);
     let cant = cantOrig;
-    if (pack && cant > 0) {
-      const itemUnit = String(itRaw.unidad || '').toUpperCase();
-      if (!itemUnit || itemUnit === pack.unit) {
-        const eps = 1e-9;
-        cant = Math.ceil((cant + eps) / pack.size) * pack.size;
-      }
+    if (pack) {
+      cant = roundQuantityByPack(cantOrig, pack, itRaw.unidad);
     }
-    
-    const subUSD    = precioUSD * cant;
-    const subBs     = subUSD * rate;
 
+    const subUSD = precioUSD * cant;
+    const subBs  = subUSD * rate;
     subtotalUSD += subUSD;
-
 
     const cellTexts = [
       String(itRaw.nombre || ''),
@@ -201,7 +239,6 @@ export async function renderQuotePDF(quote, outPath, company = {}){
       money(subUSD),
       money(subBs),
     ];
-
 
     const cellHeights = [];
     for (let i=0; i<cols.length; i++){
@@ -233,7 +270,7 @@ export async function renderQuotePDF(quote, outPath, company = {}){
     y += rowH;
   }
 
-  // Totales (fila más alta y "Bs" después del número)
+  // Totales
   const totalUSD = Number(quote.total_usd ?? subtotalUSD);
   const totalBs  = totalUSD * rate;
 
@@ -245,7 +282,7 @@ export async function renderQuotePDF(quote, outPath, company = {}){
 
   doc.moveTo(tableX, y).lineTo(tableX + tableW, y).strokeColor('#333').lineWidth(0.8).stroke();
 
-  const totalRowH = 26; // más alto
+  const totalRowH = 26;
   doc.rect(tableX, y, wUntilCol6, totalRowH).strokeColor('#333').lineWidth(0.8).stroke();
   doc.font('Helvetica-Bold').text('Total', tableX, y+6, { width: wUntilCol6, align: 'center' });
 
@@ -258,7 +295,6 @@ export async function renderQuotePDF(quote, outPath, company = {}){
   doc.rect(tableX + wUntilCol6 + wCol7, y, wCol8, totalRowH).stroke();
 
   doc.font('Helvetica-Bold').text(`$ ${money(totalUSD)}`, tableX + wUntilCol6, y+6, { width: wCol7-8, align:'right' });
-  // "Bs" DESPUÉS del número
   doc.font('Helvetica-Bold').text(`${money(totalBs)} Bs`, tableX + wUntilCol6 + wCol7 + 6, y+6, { width: wCol8-12, align:'left' });
 
   y += totalRowH + 18;
