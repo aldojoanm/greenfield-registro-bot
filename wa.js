@@ -237,19 +237,6 @@ const clamp = (t, n=20) => (String(t).length<=n? String(t) : String(t).slice(0,n
 const clampN = (t, n) => clamp(t, n);
 const upperNoDia = (t='') => t.normalize('NFD').replace(/\p{Diacritic}/gu,'').toUpperCase();
 const canonName = (s='') => title(String(s||'').trim().replace(/\s+/g,' ').toLowerCase());
-const tokenCount = (s='') => String(s||'').trim().split(/\s+/).filter(Boolean).length;
-const preferFullName = (current, candidate) => {
-  const a = canonName(current);
-  const b = canonName(candidate);
-  if (!b) return a || '';
-  if (!a) return b;
-  const ta = tokenCount(a), tb = tokenCount(b);
-  if (tb > ta) return b;                 // más palabras → mejor
-  if (tb === ta && b.length > a.length) return b; // misma #palabras pero más largo
-  return a;                              // conserva el más completo que ya teníamos
-};
-
-
 
 const b64u = s => Buffer.from(String(s),'utf8').toString('base64').replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
 const ub64u = s => Buffer.from(String(s).replace(/-/g,'+').replace(/_/g,'/'), 'base64').toString('utf8');
@@ -318,6 +305,11 @@ function findProduct(text){
     const n = norm(p.nombre||''); if(nt.includes(n)) return true;
     return n.split(/\s+/).filter(Boolean).every(tok=>nt.includes(tok));
   }) || null;
+}
+
+function hasEarlyIntent(t=''){
+  return wantsCatalog(t) || wantsLocation(t) || asksPrice(t) || wantsAgentPlus(t) || wantsBuy(t)
+      || !!findProduct(t) || findProductsByIA(t).length>0 || !!detectCategory(t);
 }
 
 const IA_SYNONYMS = {
@@ -759,14 +751,26 @@ function productSinglePres(prod){
   return pres.length === 1 ? pres[0] : null;
 }
 async function askPresentacion(to, prod){
-  const pres = (prod?.presentaciones||[]).filter(Boolean);
-  if(pres.length <= 1) return;
+  const s = S(to);
+
+  const pres = (prod?.presentaciones || []).filter(Boolean);
+  if (pres.length <= 1) return;
+
+  // evita duplicados: si ya estás en "presentacion" y no está "stale", no repitas
+  const fresh = s.lastPrompt === 'presentacion' && (Date.now() - (s.lastPromptTs || 0)) < 25000;
+  if (fresh) return;
+
+  await markPrompt(s, 'presentacion'); // <-- importante
+  s.pending = 'presentacion';
+  persistS(to);
+
   const rows = pres.map(p => ({
     title: String(p),
     payload: `PRES_${prod.sku}__${b64u(String(p))}`
   }));
   await toList(to, `¿En qué *presentación* deseas *${prod.nombre}*?`, 'Elegir presentación', rows);
 }
+
 
 function productListRow(p){
   const nombre = p?.nombre || '';
@@ -834,13 +838,13 @@ async function showProduct(to, prod){
     markDetailShown(s, prod.sku);
   }
 
-  const single = productSinglePres(prod);
-  if(single && !s.vars.last_presentacion){
-    s.vars.last_presentacion = single;
-  } else if (productHasMultiPres(prod) && !s.vars.last_presentacion){
-    await askPresentacion(to, prod);
-  }
-  persistS(to); // ★
+    const single = productSinglePres(prod);
+    if (single && !s.vars.last_presentacion) {
+      s.vars.last_presentacion = single;
+    } else if (productHasMultiPres(prod) && !s.vars.last_presentacion) {
+      await askPresentacion(to, prod);   // <-- ya desduplica y marca lastPrompt
+    }
+    persistS(to);
 }
 
 // ===== CARRITO =====
@@ -949,8 +953,8 @@ async function nextStep(to){
     if(!s.vars.last_product) return listByCategory(to);
 
     // (8) Presentación (si hay varias y aún no se eligió)
-    const prod = (CATALOG||[]).find(p=>p.sku===s.vars.last_sku);
-    if(prod && productHasMultiPres(prod) && !s.vars.last_presentacion){
+    const prod = (CATALOG||[]).find(p => p.sku === s.vars.last_sku);
+    if (prod && productHasMultiPres(prod) && !s.vars.last_presentacion) {
       return askPresentacion(to, prod);
     }
     if(prod && productSinglePres(prod) && !s.vars.last_presentacion){
@@ -1349,15 +1353,29 @@ if (isAdvisor(fromId)) {
       const text = (msg.text?.body||'').trim();
       remember(fromId,'user',text);
       const tnorm = norm(text);
+    if (!s.asked.nombre && s.pending !== 'nombre') {
+    if (!hasEarlyIntent(text)) {
+      await askNombre(fromId); 
+      res.sendStatus(200);
+      return;
+    }
+  }
 
-      if (S(fromId).pending==='nombre'){
-        const looksLikeIntent = /[?¿]|(tiene|tienes|hay|precio|glifo|glifosato|producto|cat[aá]logo|insecticida|herbicida|fungicida|acaricida)/i.test(text);
-        if(!looksLikeIntent){
-          S(fromId).profileName = title(text.toLowerCase());
-          S(fromId).pending=null; S(fromId).lastPrompt=null; persistS(fromId);
-          await nextStep(fromId); res.sendStatus(200); return;
+      if (s.pending === 'nombre') {
+        const cleaned = text.trim();
+        if (cleaned) {
+          s.profileName = canonName(cleaned);
+          s.pending = null;
+          s.lastPrompt = null;
+          persistS(fromId);
+          await nextStep(fromId);
+        } else {
+          await askNombre(fromId);
         }
+        res.sendStatus(200);
+        return;
       }
+
       if (S(fromId).pending==='cultivo_text'){
         S(fromId).vars.cultivos = [title(text)];
         S(fromId).pending=null; S(fromId).lastPrompt=null; persistS(fromId);
