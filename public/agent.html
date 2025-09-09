@@ -151,8 +151,11 @@
         <button class="btn sm" id="takeHuman">⏸️ Pausar bot</button>
         <button class="btn sm" id="resumeBot">▶️ Bot ON</button>
         <button class="btn sm" id="markRead">✓ Leído</button>
-        <!-- NUEVO BOTÓN -->
+        <!-- EXISTENTE -->
         <button class="btn sm" id="requestInfo">📋 Solicitar datos</button>
+        <!-- NUEVOS -->
+        <button class="btn sm" id="sendQR">QR</button>
+        <button class="btn sm" id="sendAccounts">CUENTAS</button>
       </div>
     </div>
 
@@ -407,6 +410,7 @@ fileInput.onchange = async (e)=>{
   e.target.value = '';
 };
 
+/* =================== Solicitar datos (original) =================== */
 function buildRequestMessages(){
   const nombre = (current && current.name) ? current.name.trim() : 'cliente';
 
@@ -430,7 +434,8 @@ function buildRequestMessages(){
   ].join('\n');
 
   return { part1, part2 };
-}function buildRequestMessages(){
+}
+function buildRequestMessages(){
   const nombre = (current && current.name) ? current.name.trim() : 'cliente';
 
   const part1 = [
@@ -448,6 +453,7 @@ function buildRequestMessages(){
     `*ORDEN DE ENTREGA*`,
     `• Nombre del cliente: ${nombre}`,
     `• Nombre del chofer:`,
+    `• Carnet de Identidad Chofer:`,
     `• Placa del vehículo:`,
     `• Fecha de recojo (dd/mm/aaaa):`
   ].join('\n');
@@ -462,6 +468,53 @@ document.getElementById('requestInfo').onclick = async ()=>{
   await api.send(current.id, part2); 
 };
 
+/* =================== NUEVO: Botón QR =================== */
+document.getElementById('sendQR').onclick = async ()=>{
+  if(!current) return;
+
+  // Intenta cargar desde rutas típicas de estáticos
+  const QR_URLS = ['/qr-pagos.png', '/public/qr-pagos.png'];
+  let blob = null, mime = 'image/png';
+
+  for (const u of QR_URLS){
+    try{
+      const r = await fetch(u);
+      if (r.ok){
+        blob = await r.blob();
+        mime = blob.type || mime;
+        break;
+      }
+    }catch{}
+  }
+
+  if(!blob){ alert('No encontré el archivo QR en /qr-pagos.png'); return; }
+
+  const file = new File([blob], 'qr-pagos.png', { type: mime });
+  await api.sendMedia(current.id, [file], '');
+};
+
+/* =================== NUEVO: Botón CUENTAS =================== */
+document.getElementById('sendAccounts').onclick = async ()=>{
+  if(!current) return;
+
+  const cuentasMsg = [
+    '*Titular:* New Chem Agroquímicos SRL',
+    '*Moneda:* Bolivianos',
+    '',
+    '*BCP*',
+    '*Cuenta Corriente:* 701-5096500-3-34',
+    '',
+    '*BANCO UNIÓN*',
+    '*Cuenta Corriente:* 10000047057563',
+    '',
+    '*BANCO SOL*',
+    '*Cuenta Corriente:* 2784368-000-001'
+  ].join('\\n');
+
+  await api.send(current.id, cuentasMsg);
+};
+
+/* =================== Bootstrap =================== */
 (async function bootstrap(){
   const ok = await requestToken(true);
   if (!ok) return;
