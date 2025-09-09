@@ -445,6 +445,19 @@ function parseMessengerLead(text){
   return { name, prod, qty, crops, dptoZ, zona };
 }
 
+function isLikelyGreeting(t=''){
+  const x = norm(String(t)).replace(/[^a-z\s]/g,'').trim();
+  return /^(hola|buenas|ola|buenos dias|buen dia|buenas tardes|buenas noches|saludos|que tal|qué tal|como estas|cómo estás|hey|ola|ok|okay|gracias|listo|si|sí|no)$/.test(x);
+}
+
+function looksLikeFullName(t=''){
+  const s = String(t||'').trim();
+  if (!s) return false;
+  if (isLikelyGreeting(s)) return false;
+  const parts = s.split(/\s+/).filter(Boolean);
+  const valid = parts.filter(w => /^[A-Za-zÁÉÍÓÚÜÑáéíóúüñ][A-Za-zÁÉÍÓÚÜÑáéíóúüñ'’\-\.]{1,}$/.test(w));
+  return valid.length >= 2 && s.length <= 60; // nombre + apellido
+}
 
 function productFromReferral(ref){
   try{
@@ -1363,14 +1376,14 @@ if (isAdvisor(fromId)) {
 
       if (s.pending === 'nombre') {
         const cleaned = text.trim();
-        if (cleaned) {
+         if (looksLikeFullName(cleaned)) {
           s.profileName = canonName(cleaned);
           s.pending = null;
           s.lastPrompt = null;
           persistS(fromId);
           await nextStep(fromId);
         } else {
-          await askNombre(fromId);
+          await toText(fromId, 'Para continuar, por favor escribe tu *nombre y apellido*.');
         }
         res.sendStatus(200);
         return;
