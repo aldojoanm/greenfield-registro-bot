@@ -1073,24 +1073,68 @@ router.post('/wa/webhook', async (req,res)=>{
 
     const textRaw = (msg.type==='text' ? (msg.text?.body || '').trim() : '');
 
-    // 🙋 Si la conversación está en modo humano, no responder salvo para reactivar bot
-    if (isHuman(fromId)) {
-      if (textRaw) remember(fromId, 'user', textRaw);
-      if (textRaw && wantsBotBack(textRaw)) {
-        humanOff(fromId);
-        const quien = s.profileName ? `, ${s.profileName}` : '';
-        await toText(fromId, `Listo${quien} 🙌. Reactivé el *asistente automático*. ¿En qué puedo ayudarte?`);
-      }
-      persistS(fromId); return res.sendStatus(200);
-    }
+   // 🙋 Modo humano (bot pausado)
+if (isHuman(fromId)) {
+  if (textRaw) remember(fromId, 'user', textRaw);
 
-    // 👤 Si escribe el asesor, solo abrir ventana 24h y salir
+  // ⬇️ EXCEPCIÓN: aunque esté en modo humano, si está abierta la ventana
+  // de facturación/recojo, parsea y guarda, y confirma al cliente.
+  try {
+    const deadline = s?.meta?.awaitBillingPickupUntil || 0;
+    const withinWindow = deadline > Date.now();
+
+    const looksLikeBillingData =
+      /\bnit\b/i.test(textRaw) ||
+      /raz[oó]n\s*social|^rs\b/i.test(textRaw) ||
+      /chofer|conductor/i.test(textRaw) ||
+      /placa/i.test(textRaw) ||
+      /fecha\s*(de)?\s*(recojo|retiro)/i.test(textRaw);
+
+    if (textRaw && withinWindow && looksLikeBillingData) {
+      const parsed = await parseAndAppendClientResponse({
+        text: textRaw,
+        clientName: s?.profileName || ''
+      });
+
+      const captured =
+        parsed?.nit ||
+        parsed?.razonSocial ||
+        parsed?.placa ||
+        parsed?.fechaRecojo ||
+        parsed?.nombreChofer;
+
+      if (captured) {
+        // cierra la ventana para evitar duplicados
+        s.meta.awaitBillingPickupUntil = 0;
+        persistS(fromId);
+
+        // confirma al cliente en el mismo chat
+        await toAgentText(fromId, '✅ Recibimos los datos para facturación/entrega. ¡Gracias!');
+      }
+    }
+  } catch (err) {
+    console.error('guardar Hoja 2 (modo humano) error:', err);
+  }
+
+  // permitir reactivar el bot
+  if (textRaw && wantsBotBack(textRaw)) {
+    humanOff(fromId);
+    const quien = s.profileName ? `, ${s.profileName}` : '';
+    await toText(fromId, `Listo${quien} 🙌. Reactivé el *asistente automático*. ¿En qué puedo ayudarte?`);
+  }
+
+  persistS(fromId);
+  return res.sendStatus(200);
+}
+
+// 👤 Si escribe el asesor, solo abrir ventana 24h y salir
 if (isAdvisor(fromId)) {
   console.log('[HOOK] Mensaje del asesor — abriendo ventana 24h');
   advisorWindowTs = Date.now();
   persistS(fromId);
   return res.sendStatus(200);
 }
+
 
 
     // 🧲 Referral (Facebook Ads)
