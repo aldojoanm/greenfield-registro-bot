@@ -1,14 +1,18 @@
 [
   { "categoria":"herbicida",   "sku":"SEAL-20L",        "unidad":"L",  "precio_usd":6.88,  "precio_bs":0 },
-  { "categoria":"herbicida",   "sku":"SINERGY-10-20L",  "unidad":"L",  "precio_usd":15.10, "precio_bs":0 },
+  { "categoria":"herbicida",   "sku":"SINERGY-10L",     "unidad":"L",  "precio_usd":15.10, "precio_bs":0 },
+  { "categoria":"herbicida",   "sku":"SINERGY-20L",     "unidad":"L",  "precio_usd":15.10, "precio_bs":0 },
   { "categoria":"herbicida",   "sku":"GLISATO-20L",     "unidad":"L",  "precio_usd":5.30,  "precio_bs":0 },
   { "categoria":"herbicida",   "sku":"GLISATO-200L",    "unidad":"L",  "precio_usd":5.30,  "precio_bs":0 },
+  { "categoria":"herbicida",   "sku":"DRIER-20L",       "unidad":"L",  "precio_usd":5.30,  "precio_bs":0 },
+  { "categoria":"herbicida",   "sku":"DRIER-200L",      "unidad":"L",  "precio_usd":5.05,  "precio_bs":0 },
 
+  { "categoria":"insecticida",   "sku":"MEXIN-5L",      "unidad":"L",  "precio_usd":16.55, "precio_bs":0 },
+  { "categoria":"insecticida",   "sku":"MEXIN-10L",     "unidad":"L",  "precio_usd":16.40, "precio_bs":0 },
+  { "categoria":"insecticida",   "sku":"TRENCH-10L",    "unidad":"L",  "precio_usd":12.53, "precio_bs":0 },
+  { "categoria":"insecticida", "sku":"NICOXAM-10L",     "unidad":"L",  "precio_usd":0.00,  "precio_bs":0 },
   { "categoria":"insecticida", "sku":"FENPRONIL-1KG",   "unidad":"KG", "precio_usd":137.66,"precio_bs":0 },
   { "categoria":"insecticida", "sku":"NOATO-1KG",       "unidad":"KG", "precio_usd":19.80, "precio_bs":0 },
-  { "categoria":"insecticida", "sku":"NICOXAM-10L",     "unidad":"L",  "precio_usd":0.00,  "precio_bs":0 },
 
-  { "categoria":"fungicida",   "sku":"TRENCH-10L",      "unidad":"L",  "precio_usd":12.53, "precio_bs":0 },
-  { "categoria":"fungicida",   "sku":"MEXIN-5-10L",     "unidad":"L",  "precio_usd":16.55, "precio_bs":0 },
-  { "categoria":"fungicida",   "sku":"LAYER-20KG",      "unidad":"KG", "precio_usd":0.00,  "precio_bs":0 }
+  { "categoria":"fungicida",   "sku":"LAYER-25KG",      "unidad":"KG", "precio_usd":0.00,  "precio_bs":0 }
 ]
