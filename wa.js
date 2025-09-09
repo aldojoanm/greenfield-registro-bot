@@ -1148,7 +1148,6 @@ if (isAdvisor(fromId)) {
           await sendAutoQuotePDF(fromId, S(fromId));
         } catch (err) {
           console.error('AutoQuote error:', err);
-          // No frenamos el flujo aunque falle el PDF
         }
 
         // 2) Guardar en Google Sheets (igual que antes)
