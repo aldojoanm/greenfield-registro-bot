@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 
 const PRICE_PATH = path.resolve('./knowledge/prices.json');
+const RATE_PATH  = path.resolve('./knowledge/rate.json');
 const CATALOG    = readJSON('./knowledge/catalog.json');
 
 function readJSON(p) {
@@ -16,6 +17,16 @@ function loadPricesMap(){
   const map = new Map();
   for (const r of arr) map.set(String(r.sku).trim(), r);
   return map;
+}
+
+function loadRate(){
+  try {
+    const j = JSON.parse(fs.readFileSync(RATE_PATH,'utf8'));
+    const r = Number(j?.rate);
+    if (Number.isFinite(r) && r > 0) return r;
+  } catch {}
+  // fallback
+  return Number(process.env.USD_BOB_RATE || '6.96');
 }
 
 function normalizeUnit(u=''){
@@ -54,7 +65,7 @@ function asMoney(n){
 
 export function buildQuoteFromSession(s, opts={}){
   const prices = loadPricesMap();
-  const rate   = Number(process.env.USD_BOB_RATE || '6.96'); // respaldo si usaras Bs
+  const rate   = loadRate(); // <= TC desde archivo (o env)
   const now    = new Date();
 
   // Datos del cliente
@@ -84,7 +95,6 @@ export function buildQuoteFromSession(s, opts={}){
     const price  = prices.get(sku) || {};
     const prod   = findCatalogBySKUorName(sku, nombreP);
 
-    // precio: preferimos USD. Si no hay, convertimos desde Bs como fallback
     let unit      = normalizeUnit(price?.unidad || qtyInf.unit || '');
     let pUSD      = Number(price?.precio_usd||0);
     if (!pUSD && Number(price?.precio_bs||0)) pUSD = Number(price.precio_bs)/rate;
@@ -103,11 +113,12 @@ export function buildQuoteFromSession(s, opts={}){
   }
 
   const subtotal = asMoney(items.reduce((a,b)=>a+(b.subtotal_usd||0),0));
-  const total    = subtotal; // si luego hay impuestos/descuentos, ajusta aquí
+  const total    = subtotal;
 
   return {
     id: `COT-${Date.now()}`,
     fecha: now,
+    rate,                // <= se envía a renderQuotePDF
     cliente: { nombre, departamento:dep, zona, cultivo, hectareas:ha, campana },
     items,
     subtotal_usd: subtotal,

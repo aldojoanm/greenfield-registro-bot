@@ -17,12 +17,19 @@ function agentAuth(req, res, next){
 }
 
 const PRICE_PATH = path.resolve('./knowledge/prices.json');
+const RATE_PATH  = path.resolve('./knowledge/rate.json');
 const BK_DIR     = path.resolve('./knowledge/backups');
 fs.mkdirSync(BK_DIR, { recursive: true });
 
 function loadPrices(){
   try { return JSON.parse(fs.readFileSync(PRICE_PATH,'utf8')); }
   catch { return []; }
+}
+function loadRate(){
+  try {
+    const j = JSON.parse(fs.readFileSync(RATE_PATH,'utf8'));
+    return Number(j?.rate) || 6.96;
+  } catch { return 6.96; }
 }
 function fileVersion(){
   try { return String(fs.statSync(PRICE_PATH).mtimeMs|0); }
@@ -50,6 +57,8 @@ router.put('/admin/prices', agentAuth, (req,res)=>{
     return res.status(409).json({ error:'version_conflict', currentVersion: current });
   }
 
+  const orderCat = { herbicida:0, insecticida:1, fungicida:2 };
+
   // sanitizar + validar
   const seen = new Set();
   const clean = [];
@@ -59,12 +68,16 @@ router.put('/admin/prices', agentAuth, (req,res)=>{
     if (seen.has(sku)) return res.status(400).json({ error:'dup_sku', detail:`SKU duplicado: ${sku}` });
     seen.add(sku);
 
-    const unidad = String(row?.unidad||'').trim(); // libre (L, KG, UNID, etc.)
+    const unidad = String(row?.unidad||'').trim();
     const usd = Number(row?.precio_usd ?? 0);
     const bs  = Number(row?.precio_bs  ?? 0);
     if (usd < 0 || bs < 0) return res.status(400).json({ error:'bad_price', detail:`Precios negativos en ${sku}` });
 
+    let categoria = String(row?.categoria||'').toLowerCase();
+    if (!['herbicida','insecticida','fungicida'].includes(categoria)) categoria = 'herbicida';
+
     clean.push({
+      categoria,
       sku,
       unidad,
       precio_usd: Number.isFinite(usd) ? +usd.toFixed(2) : 0,
@@ -72,10 +85,14 @@ router.put('/admin/prices', agentAuth, (req,res)=>{
     });
   }
 
-  // ordenar por SKU para consistencia
-  clean.sort((a,b)=> a.sku.localeCompare(b.sku));
+  // ordenar por categoría y luego por SKU
+  clean.sort((a,b)=>{
+    const ca = orderCat[a.categoria] ?? 9;
+    const cb = orderCat[b.categoria] ?? 9;
+    return ca - cb || a.sku.localeCompare(b.sku);
+  });
 
-  // backup antes de escribir (si existe archivo previo)
+  // backup antes de escribir
   try{
     if (fs.existsSync(PRICE_PATH)){
       const stamp = new Date().toISOString().replace(/[:\.]/g,'-');
@@ -83,9 +100,19 @@ router.put('/admin/prices', agentAuth, (req,res)=>{
     }
   }catch{}
 
-  // escritura atómica
   writeAtomic(PRICE_PATH, JSON.stringify(clean, null, 2));
   return res.json({ ok:true, version: fileVersion() });
+});
+
+// ===== TC (rate) =====
+router.get('/admin/rate', agentAuth, (_req,res)=>{
+  res.json({ rate: loadRate() });
+});
+router.put('/admin/rate', agentAuth, (req,res)=>{
+  const rate = Number(req.body?.rate);
+  if (!Number.isFinite(rate) || rate <= 0) return res.status(400).json({ error:'bad_rate' });
+  writeAtomic(RATE_PATH, JSON.stringify({ rate: +rate.toFixed(4) }, null, 2));
+  res.json({ ok:true, rate: +rate.toFixed(4) });
 });
 
 export default router;
