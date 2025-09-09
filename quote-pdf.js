@@ -29,6 +29,37 @@ function findAsset(...relPaths){
   return null;
 }
 
+function detectPackSize(it = {}){
+  // 1) Intento: desde el campo "envase" (ej: "10 L", "25KG")
+  if (it.envase) {
+    const m = String(it.envase).match(/(\d+(?:[.,]\d+)?)\s*(l|lt|lts|litros?|kg|kilos?)/i);
+    if (m) {
+      const size = parseFloat(m[1].replace(',','.'));
+      const unit = /kg/i.test(m[2]) ? 'KG' : 'L';
+      if (!isNaN(size) && size > 0) return { size, unit };
+    }
+  }
+  // 2) Intento: desde el SKU (ej: "SINERGY-10L", "LAYER-25KG")
+  if (it.sku) {
+    const m = String(it.sku).match(/-(\d+(?:\.\d+)?)(l|kg)\b/i);
+    if (m) {
+      const size = parseFloat(m[1]);
+      const unit = m[2].toUpperCase();
+      if (!isNaN(size) && size > 0) return { size, unit };
+    }
+  }
+  // 3) Intento: desde el nombre (por si viene "GLISATO 20L")
+  if (it.nombre) {
+    const m = String(it.nombre).match(/(\d+(?:[.,]\d+)?)\s*(l|lt|lts|kg)\b/i);
+    if (m) {
+      const size = parseFloat(m[1].replace(',','.'));
+      const unit = /kg/i.test(m[2]) ? 'KG' : 'L';
+      if (!isNaN(size) && size > 0) return { size, unit };
+    }
+  }
+  return null;
+}
+
 export async function renderQuotePDF(quote, outPath, company = {}){
   const dir = path.dirname(outPath);
   try{ fs.mkdirSync(dir, { recursive:true }); }catch{}
@@ -71,7 +102,6 @@ export async function renderQuotePDF(quote, outPath, company = {}){
 
   y = 100;
 
-  // Cliente (3 campos)
   const c = quote.cliente || {};
   const L = (label, val) => {
     doc.font('Helvetica-Bold').text(`${label}: `, xMargin, y, { continued: true });
@@ -81,6 +111,7 @@ export async function renderQuotePDF(quote, outPath, company = {}){
   L('Cliente', c.nombre);
   L('Departamento', c.departamento);
   L('Zona', c.zona);
+  L('Pago', 'Contado');
 
   y += 16;
 
@@ -142,10 +173,23 @@ export async function renderQuotePDF(quote, outPath, company = {}){
   for (const itRaw of (quote.items || [])){
     const precioUSD = Number(itRaw.precio_usd || 0);
     const precioBs  = precioUSD * rate;
-    const cant      = Number(itRaw.cantidad || 0);
+    const cantOrig  = Number(itRaw.cantidad || 0);
+
+    const pack = detectPackSize(itRaw);
+    let cant = cantOrig;
+    if (pack && cant > 0) {
+      const itemUnit = String(itRaw.unidad || '').toUpperCase();
+      if (!itemUnit || itemUnit === pack.unit) {
+        const eps = 1e-9;
+        cant = Math.ceil((cant + eps) / pack.size) * pack.size;
+      }
+    }
+    
     const subUSD    = precioUSD * cant;
     const subBs     = subUSD * rate;
+
     subtotalUSD += subUSD;
+
 
     const cellTexts = [
       String(itRaw.nombre || ''),
@@ -157,6 +201,7 @@ export async function renderQuotePDF(quote, outPath, company = {}){
       money(subUSD),
       money(subBs),
     ];
+
 
     const cellHeights = [];
     for (let i=0; i<cols.length; i++){
