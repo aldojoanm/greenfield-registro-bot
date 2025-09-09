@@ -5,7 +5,6 @@ import path from 'path';
 import { appendFromSession } from './sheets.js';
 import { sendAutoQuotePDF } from './quote.js';
 
-
 const router = express.Router();
 router.use(express.json());
 
@@ -1143,14 +1142,6 @@ if (isAdvisor(fromId)) {
       }
 
       if(id==='QR_FINALIZAR'){
-        // 1) Generar y ENVIAR PDF automático de la cotización
-        try {
-          await sendAutoQuotePDF(fromId, S(fromId));
-        } catch (err) {
-          console.error('AutoQuote error:', err);
-        }
-
-        // 2) Guardar en Google Sheets (igual que antes)
         try {
           if (!s._savedToSheet) {
             const cotId = await appendFromSession(s, fromId, 'nuevo');
@@ -1158,8 +1149,7 @@ if (isAdvisor(fromId)) {
           }
         } catch (err) { console.error('Sheets append error:', err); }
 
-        // 3) Mensaje al cliente
-        await toText(fromId,'¡Gracias por escribirnos! Te envió la *cotización en PDF*. Si requieres mas información, estamos a tu disposición.');
+        await toText(fromId,'¡Gracias por escribirnos! Nuestro encargado de negocios te enviará la cotización en breve. Si requieres más información, estamos a tu disposición.');
         await toText(fromId,'Para volver a activar el asistente, por favor, escribe *Asistente New Chem*.');
 
       if (ADVISOR_WA_NUMBERS.length) {

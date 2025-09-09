@@ -1,9 +1,9 @@
 [
   { "categoria":"herbicida",   "sku":"SEAL-20L",        "unidad":"L",  "precio_usd":6.88,  "precio_bs":0 },
-  { "categoria":"herbicida",   "sku":"SINERGY-10L",     "unidad":"L",  "precio_usd":15.10, "precio_bs":0 },
+  { "categoria":"herbicida",   "sku":"SINERGY-10L",     "unidad":"L",  "precio_usd":0.00, "precio_bs":0 },
   { "categoria":"herbicida",   "sku":"SINERGY-20L",     "unidad":"L",  "precio_usd":15.10, "precio_bs":0 },
   { "categoria":"herbicida",   "sku":"GLISATO-20L",     "unidad":"L",  "precio_usd":5.30,  "precio_bs":0 },
-  { "categoria":"herbicida",   "sku":"GLISATO-200L",    "unidad":"L",  "precio_usd":5.30,  "precio_bs":0 },
+  { "categoria":"herbicida",   "sku":"GLISATO-200L",    "unidad":"L",  "precio_usd":0.00,  "precio_bs":0 },
   { "categoria":"herbicida",   "sku":"DRIER-20L",       "unidad":"L",  "precio_usd":5.30,  "precio_bs":0 },
   { "categoria":"herbicida",   "sku":"DRIER-200L",      "unidad":"L",  "precio_usd":5.05,  "precio_bs":0 },
 
