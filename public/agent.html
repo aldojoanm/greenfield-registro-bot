@@ -434,8 +434,8 @@ function buildRequestMessages(){
   const nombre = (current && current.name) ? current.name.trim() : 'cliente';
 
   const part1 = [
-    `Hola ${nombre}, ¡gracias por su compra y confianza en New Chem! 😊`,
-    `Para emitir su factura y coordinar el recojo, por favor responda a este mensaje con los siguientes datos`,
+    `${nombre}, ¡gracias por su compra y confianza en New Chem! 😊`,
+    `Para emitir su factura y coordinar la fecha de entrega, por favor responda a este mensaje con los siguientes datos`,
     `Te recodamos que la facturación debe emitirse al mismo nombre de la persona que realizó el pago.`,
     `¡Quedamos atentos y a su disposición para cualquier consulta!`
   ].join('\n');

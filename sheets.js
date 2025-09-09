@@ -230,7 +230,110 @@ function normalizeDateDMY(s=''){
   if (!m) return t;
   let [_, d, mo, y] = m;
   if (y.length === 2) y = Number(y) >= 70 ? `19${y}` : `20${y}`;
-  return `${pad2(d)}\/${pad2(mo)}\/${y}`;
+  return `${pad2(d)}/${pad2(mo)}/${y}`;
+}
+const MONTH_MAP = {
+  'enero':1,'ene':1,
+  'febrero':2,'feb':2,
+  'marzo':3,'mar':3,
+  'abril':4,'abr':4,
+  'mayo':5,'may':5,
+  'junio':6,'jun':6,
+  'julio':7,'jul':7,
+  'agosto':8,'ago':8,
+  'septiembre':9,'setiembre':9,'sep':9,'set':9,
+  'octubre':10,'oct':10,
+  'noviembre':11,'nov':11,
+  'diciembre':12,'dic':12
+};
+
+const WEEKDAY_MAP = {
+  'domingo':0,
+  'lunes':1,
+  'martes':2,
+  'miercoles':3, 'miércoles':3,
+  'jueves':4,
+  'viernes':5,
+  'sabado':6, 'sábado':6
+};
+
+const NORM = (s='') => s.normalize('NFD').replace(/\p{Diacritic}/gu,'').toLowerCase().trim();
+
+// Fecha "hoy/mañana/pasado mañana" o "viernes / este viernes / próximo viernes"
+function nextDateFromWords(text){
+  const t = NORM(text);
+
+  // 1) hoy / mañana / pasado mañana
+  if (/\bhoy\b/.test(t)) return dmyFromOffset(0);
+  if (/\bmanana\b/.test(t)) return dmyFromOffset(1);
+  if (/\bpasado\s+manana\b/.test(t)) return dmyFromOffset(2);
+
+  // 2) día de semana (opcional: este|proximo)
+  const m = t.match(/\b(este|prox(?:imo)?)?\s*(domingo|lunes|martes|miercoles|jueves|viernes|sabado)\b/);
+  if (m){
+    const qualifier = m[1] || '';
+    const dayName   = m[2];
+    const targetDow = WEEKDAY_MAP[dayName];
+    if (typeof targetDow === 'number') {
+      return nextWeekdayDMY(targetDow, /prox/.test(qualifier));
+    }
+  }
+  return '';
+}
+
+// Fecha "11 de octubre (2025)" | "11 oct" | "11-oct"
+function dateFromDayMonthWords(text){
+  const t = NORM(text).replace(/-/g,' ');
+  const m = t.match(/\b([0-3]?\d)\s*(?:de\s*)?([a-záéíóúñ]{3,12})\.?(?:\s*de\s*(\d{2,4}))?\b/);
+  if (!m) return '';
+  const d = parseInt(m[1],10);
+  const monName = m[2];
+  const yRaw = m[3];
+
+  let mo = MONTH_MAP[monName];
+  if (!mo) return '';
+  let y;
+  if (yRaw) {
+    y = String(yRaw).length===2 ? (Number(yRaw)>=70 ? 1900+Number(yRaw) : 2000+Number(yRaw)) : Number(yRaw);
+  } else {
+    // sin año: usa el más próximo (si ya pasó este año, pasa al siguiente)
+    const { y:cy, m:cm, d:cd } = todayYMD();
+    y = cy;
+    if (mo < cm || (mo===cm && d < cd)) y = cy + 1;
+  }
+  return `${pad2(d)}/${pad2(mo)}/${y}`;
+}
+
+// Helpers para "hoy" en zona LOCAL_TZ
+function todayYMD(){
+  try{
+    const parts = new Intl.DateTimeFormat('en-GB', {
+      timeZone: LOCAL_TZ, year:'numeric', month:'2-digit', day:'2-digit'
+    }).formatToParts(new Date());
+    const get = t => parts.find(p=>p.type===t)?.value || '';
+    return { y: +get('year'), m: +get('month'), d: +get('day') };
+  }catch{
+    const d = new Date();
+    return { y:d.getFullYear(), m:d.getMonth()+1, d:d.getDate() };
+  }
+}
+
+function dmyFromOffset(days){
+  const { y, m, d } = todayYMD();
+  const base = new Date(Date.UTC(y, m-1, d));
+  const tgt  = new Date(base.getTime() + days*24*60*60*1000);
+  return `${pad2(tgt.getUTCDate())}/${pad2(tgt.getUTCMonth()+1)}/${tgt.getUTCFullYear()}`;
+}
+
+function nextWeekdayDMY(targetDow, forceNextWeek=false){
+  const { y, m, d } = todayYMD();
+  const base = new Date(Date.UTC(y, m-1, d));
+  const todayDow = base.getUTCDay(); // 0..6
+  let delta = (targetDow - todayDow + 7) % 7;
+  if (delta === 0 && (forceNextWeek || true)) delta = 7; 
+  // ↑ si escriben "viernes" y hoy es viernes, lo mandamos al siguiente viernes
+  const tgt = new Date(base.getTime() + delta*24*60*60*1000);
+  return `${pad2(tgt.getUTCDate())}/${pad2(tgt.getUTCMonth()+1)}/${tgt.getUTCFullYear()}`;
 }
 
 // Limpia y estandariza “placa”
@@ -271,18 +374,18 @@ export function parseClientResponse(text = '', fallbackName = '') {
   const reNIT    = /\b(nit)\s*[:\-]\s*([A-Za-z0-9.\-\/]+)/i;
   const reChofer = /(nombre\s+del\s+chofer|chofer|conductor)\s*[:\-]\s*(.+)/i;
   const rePlaca  = /(placa(?:\s+del\s+veh[ií]culo)?|placa)\s*[:\-]\s*([A-Za-z0-9\-\s]{4,})/i;
-  const reFecha  = /(fecha(?:\s+de)?\s*(recojo|retiro)?)\s*[:\-]\s*([0-3]?\d[\/\-][01]?\d[\/\-]\d{2,4})/i;
+  const reFecha  = /(fecha(?:\s+de)?\s*(recojo|retiro)?)(?:\s*\([^)]*\))?\s*[:\-]\s*([0-3]?\d[\/\-][01]?\d[\/\-]\d{2,4})/i;
 
-  // con títulos
+  // 1) Con títulos línea a línea
   for (const line of lines) {
     if (!out.nombreCliente) {
       const v = tryMatch(reNombre, line); if (v) out.nombreCliente = v;
     }
     if (!out.razonSocial) {
-      const v = tryMatch(reRazon, line); if (v) out.razonSocial = v;
+      const v = tryMatch(reRazon,  line); if (v) out.razonSocial = v;
     }
     if (!out.nit) {
-      const m = line.match(reNIT); if (m) out.nit = m[2].trim();
+      const m = line.match(reNIT);   if (m) out.nit = m[2].trim();
     }
     if (!out.nombreChofer) {
       const v = tryMatch(reChofer, line); if (v) out.nombreChofer = v;
@@ -295,27 +398,63 @@ export function parseClientResponse(text = '', fallbackName = '') {
     }
   }
 
-  // sin títulos
+  // === Fallbacks de FECHA (sin título / formatos flexibles) ===
+
+  // 2) dd/mm(/aa|aaaa) o dd-mm(/aa|aaaa) en todo el texto
+  if (!out.fechaRecojo) {
+    const m0 = String(text).match(/([0-3]?\d)[\/\-]([01]?\d)(?:[\/\-](\d{2,4}))?/);
+    if (m0) {
+      const d  = (+m0[1]);
+      const mo = (+m0[2]);
+      let y;
+      if (m0[3]) {
+        const yy = m0[3];
+        y = yy.length === 2 ? (Number(yy) >= 70 ? 1900 + Number(yy) : 2000 + Number(yy)) : Number(yy);
+      } else {
+        // sin año → usa el más próximo
+        const { y:cy, m:cm, d:cd } = todayYMD();
+        y = (mo < cm || (mo === cm && d < cd)) ? cy + 1 : cy;
+      }
+      out.fechaRecojo = `${pad2(d)}/${pad2(mo)}/${y}`;
+    }
+  }
+
+  // 3) "11 de octubre (2025)" | "11 oct"
+  if (!out.fechaRecojo) {
+    const dm = dateFromDayMonthWords(text);
+    if (dm) out.fechaRecojo = dm;
+  }
+
+  // 4) "hoy / mañana / pasado mañana" o "viernes / este viernes / próximo viernes"
+  if (!out.fechaRecojo) {
+    const w = nextDateFromWords(text);
+    if (w) out.fechaRecojo = w;
+  }
+
+  // 5) Variante con guion tras el título y paréntesis antes
+  if (!out.fechaRecojo) {
+    const m1 = String(text).match(/fecha(?:\s+de)?\s*(?:recojo|retiro)?(?:\s*\([^)]*\))?\s*-\s*([0-3]?\d[\/\-][01]?\d[\/\-]\d{2,4})/i);
+    if (m1) out.fechaRecojo = normalizeDateDMY(m1[1]);
+  }
+
+  // === Fallbacks de otros campos sin título ===
   const fbNorm = normName(fallbackName);
   const labeledHints = /(raz[oó]n|rs|nit|chofer|conductor|placa|fecha|cliente)\s*[:\-]/i;
   const bare = lines.filter(l => !labeledHints.test(l));
 
-  // solo el nombre (igual al del perfil) -> Razón social
   if (!out.razonSocial && bare.length) {
     const hit = bare.find(l => normName(l) === fbNorm);
     if (hit) out.razonSocial = hit.trim();
   }
-  // línea solo numérica larga -> NIT
   if (!out.nit) {
     const m = bare.map(l => l.match(/^\s*([0-9.\-\/]{5,})\s*$/)).find(Boolean);
     if (m) out.nit = m[1].trim();
   }
-  // una única línea de texto clara -> Razón social
   if (!out.razonSocial && bare.length === 1 && bare[0].length >= 3 && !/^\d+$/.test(bare[0])) {
     out.razonSocial = bare[0].trim();
   }
 
-  // fallbacks adicionales
+  // Fallbacks directos por regex sueltos
   if (!out.razonSocial) {
     const m = text.match(/rs\s*[:\-]\s*([^\n;]+)/i) || text.match(/raz[oó]n\s*social\s*[:\-]\s*([^\n;]+)/i);
     if (m) out.razonSocial = m[1].trim();
@@ -325,13 +464,14 @@ export function parseClientResponse(text = '', fallbackName = '') {
     if (m) out.nit = m[1].trim();
   }
 
-  // saneo final
+  // Limpieza final
   out.razonSocial   = out.razonSocial.replace(/\s+/g, ' ').trim();
   out.nombreChofer  = out.nombreChofer.replace(/\s+/g, ' ').trim();
   out.nombreCliente = out.nombreCliente.replace(/\s+/g, ' ').trim();
 
   return out;
 }
+
 
 export async function appendBillingPickupRow({ nombreCliente, razonSocial, nit, nombreChofer, placa, fechaRecojo }){
   const sheets = await getSheets();
