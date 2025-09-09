@@ -11,7 +11,6 @@ function fmtDateTZ(date = new Date(), tz = TZ) {
     }).format(date);
     return f; // DD/MM/YYYY
   } catch {
-    // fallback simple (podría variar si el server está en otro huso)
     const d = new Date(date);
     const pad = n => String(n).padStart(2,'0');
     return `${pad(d.getDate())}/${pad(d.getMonth()+1)}/${d.getFullYear()}`;
@@ -49,10 +48,10 @@ export async function renderQuotePDF(quote, outPath, company = {}){
   const qrPath = company.qrPath
     || findAsset('./public/qr-prueba.png','./public/qr.png','./public/privacidad.png','./image/qr.png');
 
-  // ===== Marca de agua (membrete) =====
+  // Membrete
   if (logoPath){
     doc.save();
-    doc.opacity(0.12); // más visible
+    doc.opacity(0.12);
     const mw = 420;
     const mx = (pageW - mw) / 2;
     const my = (pageH - mw*0.45) / 2;
@@ -60,8 +59,8 @@ export async function renderQuotePDF(quote, outPath, company = {}){
     doc.restore();
   }
 
-  // ===== Header =====
-  let y = 32; // un poco más de margen superior
+  // Header
+  let y = 32;
   if (logoPath){
     try { doc.image(logoPath, xMargin, y, { width: 120 }); } catch {}
   }
@@ -70,9 +69,9 @@ export async function renderQuotePDF(quote, outPath, company = {}){
      .text(fmtDateTZ(quote.fecha || new Date(), TZ), 0, y+14, { align: 'right' })
      .fillColor('black');
 
-  y = 100; // margen mayor antes de datos del cliente
+  y = 100;
 
-  // ===== Cliente (solo 3 campos) =====
+  // Cliente (3 campos)
   const c = quote.cliente || {};
   const L = (label, val) => {
     doc.font('Helvetica-Bold').text(`${label}: `, xMargin, y, { continued: true });
@@ -83,17 +82,17 @@ export async function renderQuotePDF(quote, outPath, company = {}){
   L('Departamento', c.departamento);
   L('Zona', c.zona);
 
-  y += 16; // más espacio
+  y += 16;
 
   // ===== Tabla =====
   const rate = Number(process.env.USD_BOB_RATE || quote.rate || 6.96);
 
-  // Suman 523 (= usableW) → no se sale
+  // Anchos (suman 523)
   const cols = [
-    { key:'nombre',             label:'Producto',           w:100, align:'left'  },
-    { key:'ingrediente_activo', label:'Ingrediente activo', w:110, align:'left'  },
-    { key:'envase',             label:'Envase',             w:40,  align:'left'  },
-    { key:'cantidad',           label:'Cantidad',           w:48,  align:'right' },
+    { key:'nombre',             label:'Producto',           w:90,  align:'left'  },
+    { key:'ingrediente_activo', label:'Ingrediente activo', w:104, align:'left'  },
+    { key:'envase',             label:'Envase',             w:48,  align:'left'  },  // +8
+    { key:'cantidad',           label:'Cantidad',           w:56,  align:'right' },  // +8
     { key:'precio_usd',         label:'Precio (USD)',       w:55,  align:'right' },
     { key:'precio_bs',          label:'Precio (Bs)',        w:50,  align:'right' },
     { key:'subtotal_usd',       label:'Subtotal (USD)',     w:60,  align:'right' },
@@ -102,8 +101,8 @@ export async function renderQuotePDF(quote, outPath, company = {}){
   const tableX = xMargin;
   const tableW = cols.reduce((a,c)=>a+c.w,0);
 
-  // Cabecera
-  const headerH = 26;
+  // Cabecera un poco más alta
+  const headerH = 28;
   doc.save();
   doc.rect(tableX, y, tableW, headerH).fill('#0a8e7b');
   doc.fillColor('white').font('Helvetica-Bold').fontSize(9);
@@ -117,7 +116,6 @@ export async function renderQuotePDF(quote, outPath, company = {}){
   doc.restore();
   y += headerH;
 
-  // page-break helper
   const ensureSpace = (need = 90) => {
     if (y + need > (pageH - 60)){
       doc.addPage();
@@ -160,7 +158,6 @@ export async function renderQuotePDF(quote, outPath, company = {}){
       money(subBs),
     ];
 
-    // altura
     const cellHeights = [];
     for (let i=0; i<cols.length; i++){
       const w = cols[i].w - 12;
@@ -171,12 +168,12 @@ export async function renderQuotePDF(quote, outPath, company = {}){
 
     ensureSpace(rowH + 10);
 
-    // Fondo cebra
+    // zebra
     doc.save();
     doc.rect(tableX, y, tableW, rowH).fillOpacity(0.06).fill('#0a8e7b').fillOpacity(1);
     doc.restore();
 
-    // Contenido + bordes
+    // contenido + bordes
     let tx = tableX;
     for (let i=0; i<cols.length; i++){
       const cdef = cols[i];
@@ -191,11 +188,11 @@ export async function renderQuotePDF(quote, outPath, company = {}){
     y += rowH;
   }
 
-  // Totales
+  // Totales (fila más alta y "Bs" después del número)
   const totalUSD = Number(quote.total_usd ?? subtotalUSD);
   const totalBs  = totalUSD * rate;
 
-  ensureSpace(52);
+  ensureSpace(56);
 
   const wUntilCol6 = cols.slice(0,6).reduce((a,c)=>a+c.w,0);
   const wCol7      = cols[6].w;
@@ -203,9 +200,9 @@ export async function renderQuotePDF(quote, outPath, company = {}){
 
   doc.moveTo(tableX, y).lineTo(tableX + tableW, y).strokeColor('#333').lineWidth(0.8).stroke();
 
-  const totalRowH = 22;
+  const totalRowH = 26; // más alto
   doc.rect(tableX, y, wUntilCol6, totalRowH).strokeColor('#333').lineWidth(0.8).stroke();
-  doc.font('Helvetica-Bold').text('Total', tableX, y+5, { width: wUntilCol6, align: 'center' });
+  doc.font('Helvetica-Bold').text('Total', tableX, y+6, { width: wUntilCol6, align: 'center' });
 
   doc.save();
   doc.rect(tableX + wUntilCol6, y, wCol7, totalRowH).fill('#fff59d');
@@ -215,19 +212,20 @@ export async function renderQuotePDF(quote, outPath, company = {}){
   doc.rect(tableX + wUntilCol6, y, wCol7, totalRowH).strokeColor('#333').lineWidth(0.8).stroke();
   doc.rect(tableX + wUntilCol6 + wCol7, y, wCol8, totalRowH).stroke();
 
-  doc.font('Helvetica-Bold').text(`$ ${money(totalUSD)}`, tableX + wUntilCol6, y+5, { width: wCol7-8, align:'right' });
-  doc.font('Helvetica-Bold').text(`Bs ${money(totalBs)}`, tableX + wUntilCol6 + wCol7 + 6, y+5, { width: wCol8-12, align:'left' });
+  doc.font('Helvetica-Bold').text(`$ ${money(totalUSD)}`, tableX + wUntilCol6, y+6, { width: wCol7-8, align:'right' });
+  // "Bs" DESPUÉS del número
+  doc.font('Helvetica-Bold').text(`${money(totalBs)} Bs`, tableX + wUntilCol6 + wCol7 + 6, y+6, { width: wCol8-12, align:'left' });
 
   y += totalRowH + 18;
 
-  // Nota precios (una sola línea, izquierda)
+  // Nota precios
   ensureSpace(24);
   doc.font('Helvetica').fontSize(9).fillColor('#333')
      .text('*Nuestros precios incluyen impuestos de ley.', xMargin, y, { width: usableW });
   doc.fillColor('black');
   y += 22;
 
-  // ===== Lugar de entrega =====
+  // Lugar de entrega
   const drawH2 = (t)=>{ ensureSpace(24); doc.font('Helvetica-Bold').fontSize(11).text(t, xMargin, y); doc.font('Helvetica').fontSize(10); y = doc.y + 12; };
   drawH2('Lugar de entrega');
   const entrega = [
@@ -236,7 +234,7 @@ export async function renderQuotePDF(quote, outPath, company = {}){
   ];
   for (const line of entrega){ ensureSpace(18); doc.text(line, xMargin, y); y = doc.y; }
 
-  // ===== Condiciones =====
+  // Condiciones
   y += 18;
   drawH2('Condiciones y validez de la oferta');
   const conds = [
@@ -247,7 +245,7 @@ export async function renderQuotePDF(quote, outPath, company = {}){
   ];
   for (const line of conds){ ensureSpace(18); doc.font('Helvetica').text(line, xMargin, y); y = doc.y; }
 
-  // ===== Aviso de facturación =====
+  // Aviso de facturación
   y += 18;
   ensureSpace(20);
   doc.font('Helvetica-Bold').fillColor('#000')
@@ -255,7 +253,7 @@ export async function renderQuotePDF(quote, outPath, company = {}){
   doc.fillColor('black');
   y = doc.y + 18;
 
-  // ===== Datos bancarios y QR =====
+  // Datos bancarios y QR
   drawH2('Datos bancarios y QR');
 
   const rightBoxW = 150;
@@ -263,7 +261,6 @@ export async function renderQuotePDF(quote, outPath, company = {}){
   const colW      = rightX - xMargin - 16;
   const bankTopY  = y;
 
-  // QR a la derecha
   if (qrPath){
     try { doc.image(qrPath, rightX, bankTopY, { width: rightBoxW }); }
     catch {
@@ -279,7 +276,7 @@ export async function renderQuotePDF(quote, outPath, company = {}){
        .fillColor('black');
   }
 
-  // Tabla bancaria a la izquierda
+  // Tabla bancaria
   y = bankTopY;
   const bankBox = (label, value)=>{
     ensureSpace(36);
