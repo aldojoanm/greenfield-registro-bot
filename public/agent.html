@@ -407,31 +407,59 @@ fileInput.onchange = async (e)=>{
   e.target.value = '';
 };
 
-/* ===== Botón: Solicitar datos (mensaje único, cordial y claro) ===== */
-function buildRequestMessage(){
+function buildRequestMessages(){
   const nombre = (current && current.name) ? current.name.trim() : 'cliente';
-  return [
+
+  const part1 = [
     `Hola ${nombre}, ¡gracias por su compra y confianza en New Chem! 😊`,
-    `Para emitir su factura y coordinar el recojo, por favor responda a este mensaje con los siguientes datos:`,
-    ``,
+    `Para emitir su factura y coordinar el recojo, por favor responda a este mensaje con los siguientes datos`,
+    `Te recodamos que la facturación debe emitirse al mismo nombre de la persona que realizó el pago.`,
+    `¡Quedamos atentos y a su disposición para cualquier consulta!`
+  ].join('\n');
+
+  const part2 = [
     `*FACTURACIÓN*`,
     `• Razón social:`,
     `• NIT:`,
-    `⚠️ Importante: la facturación debe emitirse al mismo nombre de la persona que realizó el pago.`,
     ``,
     `*ORDEN DE ENTREGA*`,
     `• Nombre del cliente: ${nombre}`,
     `• Nombre del chofer:`,
     `• Placa del vehículo:`,
-    `• Fecha de recojo (dd/mm/aaaa):`,
-    ``,
+    `• Fecha de recojo (dd/mm/aaaa):`
+  ].join('\n');
+
+  return { part1, part2 };
+}function buildRequestMessages(){
+  const nombre = (current && current.name) ? current.name.trim() : 'cliente';
+
+  const part1 = [
+    `Hola ${nombre}, ¡gracias por su compra y confianza en New Chem! 😊`,
+    `Para emitir su factura y coordinar el recojo, por favor responda a este mensaje con los siguientes datos`,
+    `Te recodamos que la facturación debe emitirse al mismo nombre de la persona que realizó el pago.`,
     `¡Quedamos atentos y a su disposición para cualquier consulta!`
   ].join('\n');
+
+  const part2 = [
+    `*FACTURACIÓN*`,
+    `• Razón social:`,
+    `• NIT:`,
+    ``,
+    `*ORDEN DE ENTREGA*`,
+    `• Nombre del cliente: ${nombre}`,
+    `• Nombre del chofer:`,
+    `• Placa del vehículo:`,
+    `• Fecha de recojo (dd/mm/aaaa):`
+  ].join('\n');
+
+  return { part1, part2 };
 }
+
 document.getElementById('requestInfo').onclick = async ()=>{
   if(!current) return;
-  const text = buildRequestMessage();
-  await api.send(current.id, text);
+  const { part1, part2 } = buildRequestMessages();
+  await api.send(current.id, part1);
+  await api.send(current.id, part2); 
 };
 
 (async function bootstrap(){

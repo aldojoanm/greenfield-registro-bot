@@ -1479,7 +1479,6 @@ if (isAdvisor(fromId)) {
         if (prod) {
           await showProduct(fromId, prod);
           if (productHasMultiPres(prod) && !S(fromId).vars.last_presentacion) {
-            // se pidió en showProduct
           } else if (!S(fromId).vars.cantidad && !S(fromId).asked.cantidad) {
             S(fromId).pending='cantidad'; S(fromId).lastPrompt='cantidad'; S(fromId).lastPromptTs=Date.now(); S(fromId).asked.cantidad=true; persistS(fromId);
             await toText(fromId,'¿Qué *cantidad* necesitas *(L/KG o unidades)* para este producto?');
@@ -1491,29 +1490,23 @@ if (isAdvisor(fromId)) {
           const deadline = s?.meta?.awaitBillingPickupUntil || 0;
           const withinWindow = deadline > Date.now();
 
-          // Heurística: solo intentamos si el texto parece contener alguno de los campos clave
-          const looksLikeBillingData =
-            /\bnit\b/i.test(text) ||
-            /raz[oó]n\s*social|^rs\b/i.test(text) ||
-            /chofer|conductor/i.test(text) ||
-            /placa/i.test(text) ||
-            /fecha\s*(de)?\s*(recojo|retiro)/i.test(text);
-
-          if (withinWindow && looksLikeBillingData) {
-            // Guarda en Hoja 2. Usa el nombre de la sesión como fallback del "Nombre Cliente".
+          if (withinWindow) {
             const parsed = await parseAndAppendClientResponse({
               text,
               clientName: s?.profileName || ''
             });
 
-            // Si al menos vino un campo fuerte (NIT o Razón Social o Placa/Fecha), da por cumplida la captura
-            const captured = parsed?.nit || parsed?.razonSocial || parsed?.placa || parsed?.fechaRecojo;
+            const captured =
+              parsed?.nit ||
+              parsed?.razonSocial ||
+              parsed?.placa ||
+              parsed?.fechaRecojo ||
+              parsed?.nombreChofer;
+
             if (captured) {
-              // cierra la ventana para evitar duplicados
               s.meta.awaitBillingPickupUntil = 0;
               persistS(fromId);
 
-              // (Opcional) notifica al asesor por el mismo chat del cliente (o podrías emitir un SSE si quieres)
               await toAgentText(fromId, '✅ Recibimos los datos para facturación/entrega. ¡Gracias!');
             }
           }
@@ -1521,8 +1514,9 @@ if (isAdvisor(fromId)) {
           console.error('guardar Hoja 2 error:', err);
         }
 
-      await nextStep(fromId);
-      res.sendStatus(200); return;
+        await nextStep(fromId);
+        res.sendStatus(200); return;
+
     }
 
     await nextStep(fromId);
