@@ -453,7 +453,6 @@ function buildRequestMessages(){
     `*ORDEN DE ENTREGA*`,
     `• Nombre del cliente: ${nombre}`,
     `• Nombre del chofer:`,
-    `• Carnet de Identidad Chofer:`,
     `• Placa del vehículo:`,
     `• Fecha de recojo (dd/mm/aaaa):`
   ].join('\n');
@@ -509,7 +508,7 @@ document.getElementById('sendAccounts').onclick = async ()=>{
     '',
     '*BANCO SOL*',
     '*Cuenta Corriente:* 2784368-000-001'
-  ].join('\\n');
+  ].join('\n');
 
   await api.send(current.id, cuentasMsg);
 };
