@@ -50,23 +50,32 @@ async function waSendDocument(to, mediaId, filename, caption=''){
 }
 
 export async function sendAutoQuotePDF(to, session){
-  // 1) Datos
+  // 1) Construir la cotización desde la sesión
   const quote = buildQuoteFromSession(session);
 
-  // 2) PDF
-  const fname = `${quote.id}.pdf`;
-  const fpath = path.join(QUOTES_DIR, fname);
-  await renderQuotePDF(quote, fpath, {
+  // 2) Armar nombre de archivo: "COT - NOMBRE DEL CLIENTE.pdf"
+  const safeName = (session.profileName || 'Cliente')
+    .replace(/[\\/:*?"<>|]+/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const fileName = `COT - ${safeName}.pdf`;
+  const filePath = path.join(QUOTES_DIR, fileName);
+
+  // 3) Renderizar el PDF en esa ruta
+  await renderQuotePDF(quote, filePath, {
     brand: 'New Chem Agroquímicos',
     tel:   '',
     dir:   ''
   });
 
-  // 3) Subir + enviar
-  const mediaId = await waUploadMediaFromFile(fpath, 'application/pdf');
+  // 4) Subir a WhatsApp y enviar
+  const mediaId = await waUploadMediaFromFile(filePath, 'application/pdf');
   if (!mediaId) throw new Error('No se pudo subir el PDF a WhatsApp.');
-  const ok = await waSendDocument(to, mediaId, fname, 'Tu cotización en PDF');
+
+  const caption = `Cotización ${quote.id || ''}`.trim();
+  const ok = await waSendDocument(to, mediaId, fileName, caption);
   if (!ok) throw new Error('No se pudo enviar el PDF por WhatsApp.');
 
-  return { ok:true, file: fpath, id: quote.id };
+  return { ok:true, file: filePath, id: quote.id, name: fileName };
 }
