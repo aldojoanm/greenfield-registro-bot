@@ -1,0 +1,12 @@
+[
+  { "sku": "SEAL-20L",         "unidad": "L",   "precio_usd": 0.00, "precio_bs": 0.00 },
+  { "sku": "SINERGY-10-20L",   "unidad": "L",   "precio_usd": 0.00, "precio_bs": 0.00 },
+  { "sku": "DRIER-20-200L",    "unidad": "L",   "precio_usd": 0.00, "precio_bs": 0.00 },
+  { "sku": "GLISATO-20-200L",  "unidad": "L",   "precio_usd": 0.00, "precio_bs": 0.00 },
+  { "sku": "NICOXAM-10L",      "unidad": "L",   "precio_usd": 0.00, "precio_bs": 0.00 },
+  { "sku": "TRENCH-10L",       "unidad": "L",   "precio_usd": 0.00, "precio_bs": 0.00 },
+  { "sku": "MEXIN-5-10L",      "unidad": "L",   "precio_usd": 0.00, "precio_bs": 0.00 },
+  { "sku": "FENPRONIL-1KG",    "unidad": "KG",  "precio_usd": 0.00, "precio_bs": 0.00 },
+  { "sku": "NOATO-1KG",        "unidad": "KG",  "precio_usd": 0.00, "precio_bs": 0.00 },
+  { "sku": "LAYER-20KG",       "unidad": "KG",  "precio_usd": 0.00, "precio_bs": 0.00 }
+]

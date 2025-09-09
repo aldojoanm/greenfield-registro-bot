@@ -3,6 +3,7 @@ import express from 'express';
 import fs from 'fs';
 import path from 'path';
 import { appendFromSession } from './sheets.js';
+import { sendAutoQuotePDF } from './quote.js';
 
 const router = express.Router();
 router.use(express.json());
@@ -124,6 +125,7 @@ const HA_LABEL = {
   HA_3001_5000:  '3,001–5,000 ha',
   HA_5000_MAS:   '+5,000 ha'
 };
+
 
 const linkMaps  = () => `https://www.google.com/maps?q=${encodeURIComponent(`${STORE_LAT},${STORE_LNG}`)}`;
 
@@ -1140,6 +1142,15 @@ if (isAdvisor(fromId)) {
       }
 
       if(id==='QR_FINALIZAR'){
+        // 1) Generar y ENVIAR PDF automático de la cotización
+        try {
+          await sendAutoQuotePDF(fromId, S(fromId));
+        } catch (err) {
+          console.error('AutoQuote error:', err);
+          // No frenamos el flujo aunque falle el PDF
+        }
+
+        // 2) Guardar en Google Sheets (igual que antes)
         try {
           if (!s._savedToSheet) {
             const cotId = await appendFromSession(s, fromId, 'nuevo');
@@ -1147,22 +1158,23 @@ if (isAdvisor(fromId)) {
           }
         } catch (err) { console.error('Sheets append error:', err); }
 
-        await toText(fromId,'¡Gracias por escribirnos! Nuestro encargado de negocios te enviará la cotización en breve. Si requieres más información, estamos a tu disposición.');
+        // 3) Mensaje al cliente
+        await toText(fromId,'¡Gracias por escribirnos! Te envié la **cotización en PDF** por este chat. Si quieres ajustar cantidades o productos, avísame y lo actualizamos enseguida.');
         await toText(fromId,'Para volver a activar el asistente, por favor, escribe *Asistente New Chem*.');
 
-if (ADVISOR_WA_NUMBERS.length) {
-  const txt = compileAdvisorAlert(S(fromId), fromId);
-  for (const advisor of ADVISOR_WA_NUMBERS) {
-    const ok = await waSendQ(advisor, {
-      messaging_product: 'whatsapp',
-      to: advisor,
-      type: 'text',
-      text: { body: txt.slice(0,4096) }
-    });
-    if (ok) console.log('[ADVISOR] alerta enviada a', advisor);
-    else console.warn('[ADVISOR] no se pudo enviar a', advisor, '(prob. fuera de 24h / sin sesión abierta).');
-  }
-}
+      if (ADVISOR_WA_NUMBERS.length) {
+        const txt = compileAdvisorAlert(S(fromId), fromId);
+        for (const advisor of ADVISOR_WA_NUMBERS) {
+          const ok = await waSendQ(advisor, {
+            messaging_product: 'whatsapp',
+            to: advisor,
+            type: 'text',
+            text: { body: txt.slice(0,4096) }
+          });
+          if (ok) console.log('[ADVISOR] alerta enviada a', advisor);
+          else console.warn('[ADVISOR] no se pudo enviar a', advisor, '(prob. fuera de 24h / sin sesión abierta).');
+        }
+      }
         humanOn(fromId, 4);
         s._closedAt = Date.now();         
         s.stage = 'closed';

@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Gestión de precios — New Chem</title>
+<style>
+  :root{ --bg:#0b141a; --panel:#111b21; --ring:#233138; --txt:#e9edef; --muted:#9bb0ba; --accent:#00a884; --danger:#ef4444; }
+  *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--txt);font:14px/1.4 system-ui,Segoe UI,Roboto}
+  .wrap{max-width:1000px;margin:28px auto;padding:0 16px}
+  .card{background:#101a21;border:1px solid var(--ring);border-radius:14px;box-shadow:0 8px 24px rgba(0,0,0,.25)}
+  .top{display:flex;gap:8px;align-items:center;padding:12px 14px;border-bottom:1px solid var(--ring)}
+  .top input{flex:1;background:#1c2b33;border:1px solid var(--ring);color:var(--txt);padding:10px;border-radius:10px}
+  .btn{background:var(--accent);color:#06372f;border:0;border-radius:10px;padding:10px 14px;font-weight:700;cursor:pointer}
+  .btn.ghost{background:#1c2b33;color:#cde; border:1px solid var(--ring)}
+  .btn.danger{background:var(--danger); color:#fff}
+  .muted{color:var(--muted);font-size:12px}
+  .bar{display:flex;gap:8px;align-items:center;justify-content:space-between;padding:10px 14px}
+  table{width:100%;border-collapse:collapse}
+  th,td{border-bottom:1px solid var(--ring);padding:10px 12px;text-align:left}
+  th{background:#0f1820;position:sticky;top:0}
+  tbody tr:hover{background:#0f1f27}
+  td[contenteditable="true"]{outline:none;border-radius:6px}
+  td[contenteditable="true"]:focus{box-shadow:0 0 0 2px #0aa; background:#0c1b22}
+  .right{text-align:right}
+  .del{cursor:pointer;color:#ffd6d6}
+  .toast{position:fixed;right:16px;bottom:16px;background:#092e25;color:#bff2e6;border:1px solid #125547;padding:10px 12px;border-radius:10px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <div class="top">
+      <input id="token" placeholder="Pega tu AGENT_TOKEN" autocomplete="off">
+      <button class="btn" id="load">Cargar</button>
+    </div>
+
+    <div class="bar">
+      <div class="muted" id="hint">Edita directamente en la tabla. USD y Bs con 2 decimales.</div>
+      <div style="display:flex;gap:8px">
+        <button class="btn ghost" id="addRow">+ Agregar fila</button>
+        <button class="btn ghost" id="reload">Deshacer cambios</button>
+        <button class="btn" id="save">Guardar</button>
+      </div>
+    </div>
+
+    <div style="overflow:auto;max-height:70vh;margin:0 14px 14px;border:1px solid var(--ring);border-radius:10px">
+      <table id="tbl">
+        <thead>
+          <tr>
+            <th style="width:36%">SKU</th>
+            <th style="width:14%">Unidad</th>
+            <th class="right" style="width:20%">Precio (USD)</th>
+            <th class="right" style="width:20%">Precio (Bs)</th>
+            <th style="width:10%"> </th>
+          </tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast" style="display:none"></div>
+
+<script>
+const $ = s=>document.querySelector(s);
+const tokenInput = $('#token');
+const tbody = $('#tbody');
+const toast = $('#toast');
+
+let TOKEN = localStorage.getItem('nc_token') || '';
+let VERSION = '0';
+tokenInput.value = TOKEN;
+
+function showToast(t){ toast.textContent = t; toast.style.display='block'; setTimeout(()=>toast.style.display='none', 2500); }
+function esc(s){ return String(s??'').replace(/[&<>"]/g, m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[m])); }
+function num(v){ const n = Number(String(v).replace(',','.')); return Number.isFinite(n)? n : 0; }
+function fmt2(n){ return (Number(n)||0).toFixed(2); }
+
+function rowTpl(p){
+  return `
+  <tr>
+    <td contenteditable="true" data-key="sku">${esc(p?.sku||'')}</td>
+    <td contenteditable="true" data-key="unidad">${esc(p?.unidad||'')}</td>
+    <td contenteditable="true" data-key="precio_usd" class="right">${fmt2(p?.precio_usd)}</td>
+    <td contenteditable="true" data-key="precio_bs"  class="right">${fmt2(p?.precio_bs)}</td>
+    <td class="right"><button class="btn danger del">Eliminar</button></td>
+  </tr>`;
+}
+
+function readTable(){
+  const rows = [];
+  for (const tr of Array.from(tbody.querySelectorAll('tr'))){
+    const get = k => tr.querySelector(`[data-key="${k}"]`)?.textContent?.trim() ?? '';
+    const sku = get('sku');
+    if (!sku) continue; // ignora filas vacías
+    rows.push({
+      sku,
+      unidad: get('unidad'),
+      precio_usd: num(get('precio_usd')),
+      precio_bs:  num(get('precio_bs'))
+    });
+  }
+  return rows;
+}
+
+function bindRowEvents(){
+  for (const btn of Array.from(document.querySelectorAll('.del'))){
+    btn.onclick = (e)=>{ e.target.closest('tr').remove(); };
+  }
+}
+
+async function load(){
+  TOKEN = tokenInput.value.trim();
+  if(!TOKEN){ alert('Pega tu AGENT_TOKEN'); return; }
+  localStorage.setItem('nc_token', TOKEN);
+
+  tbody.innerHTML = `<tr><td colspan="5">Cargando…</td></tr>`;
+  const r = await fetch('/admin/prices', { headers:{ 'Authorization':'Bearer '+TOKEN }});
+  if (r.status===401){ tbody.innerHTML=''; alert('Token inválido'); return; }
+  if (!r.ok){ tbody.innerHTML=''; alert('Error en /admin/prices'); return; }
+  const {prices=[], version='0'} = await r.json();
+  VERSION = version;
+  tbody.innerHTML = prices.map(rowTpl).join('') || rowTpl({}); // al menos 1 fila vacía
+  bindRowEvents();
+  showToast('Precios cargados');
+}
+
+async function save(){
+  const prices = readTable();
+
+  // validaciones básicas
+  const seen = new Set();
+  for (const p of prices){
+    if (!p.sku) return alert('Hay un SKU vacío.');
+    if (seen.has(p.sku)) return alert('SKU duplicado: '+p.sku);
+    seen.add(p.sku);
+    if (p.precio_usd < 0 || p.precio_bs < 0) return alert('No permitidos precios negativos.');
+  }
+
+  const r = await fetch('/admin/prices', {
+    method:'PUT',
+    headers:{ 'Authorization':'Bearer '+TOKEN, 'Content-Type':'application/json' },
+    body: JSON.stringify({ prices, version: VERSION })
+  });
+  if (r.status === 409){
+    const j = await r.json().catch(()=>({}));
+    alert('Otro usuario modificó la lista. Recargando para evitar perder cambios.');
+    await load(); // refresca
+    return;
+  }
+  if (!r.ok){ alert('No se pudo guardar'); return; }
+
+  const j = await r.json();
+  VERSION = j.version || VERSION;
+  showToast('Guardado ✓');
+}
+
+$('#load').onclick = load;
+$('#reload').onclick = load;
+$('#save').onclick = save;
+$('#addRow').onclick = ()=>{
+  tbody.insertAdjacentHTML('beforeend', rowTpl({}));
+  bindRowEvents();
+};
+
+(async ()=>{ /* opcional: auto-cargar si hay token guardado */ if (TOKEN) load(); })();
+</script>
+</body>
+</html>
