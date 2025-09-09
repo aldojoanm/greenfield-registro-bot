@@ -230,7 +230,7 @@ export async function renderQuotePDF(quote, outPath, company = {}){
   drawH2('Lugar de entrega');
   const entrega = [
     'Almacenes Orange Cargo SRL., ubicados en el km9 zona norte, lado del surtidor bioceánico.',
-    'Horarios de atención: 08:00 - 12:00 / 13:00 - 17:00'
+    'Horarios de atención: 08:00 - 17:00'
   ];
   for (const line of entrega){ ensureSpace(18); doc.text(line, xMargin, y); y = doc.y; }
 
