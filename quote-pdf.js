@@ -46,7 +46,7 @@ export async function renderQuotePDF(quote, outPath, company = {}){
   const logoPath = company.logoPath
     || findAsset('./public/logo_newchem.png','./logo_newchem.png','./image/logo_newchem.png');
   const qrPath = company.qrPath
-    || findAsset('./public/qr-prueba.png','./public/qr.png','./public/privacidad.png','./image/qr.png');
+    || findAsset('./public/qr-pagos.png','./public/qr.png','./public/privacidad.png','./image/qr.png');
 
   // Membrete
   if (logoPath){

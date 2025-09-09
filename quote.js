@@ -9,6 +9,16 @@ const WA_PHONE_ID = process.env.WHATSAPP_PHONE_ID || '';
 const QUOTES_DIR  = path.resolve('./data/quotes');
 try { fs.mkdirSync(QUOTES_DIR, { recursive:true }); } catch {}
 
+function cleanName(s = '') {
+  // Quita acentos y caracteres problemáticos para filename/caption
+  return String(s)
+    .normalize('NFD').replace(/\p{Diacritic}/gu, '')
+    .replace(/[\\/:*?"<>|]+/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 80);
+}
+
 async function waUploadMediaFromFile(filePath, mime='application/pdf'){
   const url = `https://graph.facebook.com/v20.0/${encodeURIComponent(WA_PHONE_ID)}/media`;
   const buf = fs.readFileSync(filePath);
@@ -53,29 +63,29 @@ export async function sendAutoQuotePDF(to, session){
   // 1) Construir la cotización desde la sesión
   const quote = buildQuoteFromSession(session);
 
-  // 2) Armar nombre de archivo: "COT - NOMBRE DEL CLIENTE.pdf"
-  const safeName = (session.profileName || 'Cliente')
-    .replace(/[\\/:*?"<>|]+/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
+  // 2) Determinar nombre del cliente y normalizar
+  const clienteName = cleanName(quote?.cliente?.nombre || session?.profileName || 'Cliente');
 
-  const fileName = `COT - ${safeName}.pdf`;
+  // 3) Nombre de archivo: "COT - NOMBRE DEL CLIENTE.pdf"
+  const fileName = `COT - ${clienteName}.pdf`;
   const filePath = path.join(QUOTES_DIR, fileName);
 
-  // 3) Renderizar el PDF en esa ruta
+  // 4) Renderizar el PDF en esa ruta
   await renderQuotePDF(quote, filePath, {
     brand: 'New Chem Agroquímicos',
     tel:   '',
     dir:   ''
   });
 
-  // 4) Subir a WhatsApp y enviar
+  // 5) Subir a WhatsApp y enviar
   const mediaId = await waUploadMediaFromFile(filePath, 'application/pdf');
   if (!mediaId) throw new Error('No se pudo subir el PDF a WhatsApp.');
 
-  const caption = `Cotización ${quote.id || ''}`.trim();
+  // Caption amigable (en vez de usar el ID)
+  const caption = `Cotización - ${clienteName}`;
+
   const ok = await waSendDocument(to, mediaId, fileName, caption);
   if (!ok) throw new Error('No se pudo enviar el PDF por WhatsApp.');
 
-  return { ok:true, file: filePath, id: quote.id, name: fileName };
+  return { ok:true, file: filePath, id: quote.id, name: fileName, caption };
 }

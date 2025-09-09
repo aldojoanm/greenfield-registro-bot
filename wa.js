@@ -1159,7 +1159,7 @@ if (isAdvisor(fromId)) {
         } catch (err) { console.error('Sheets append error:', err); }
 
         // 3) Mensaje al cliente
-        await toText(fromId,'¡Gracias por escribirnos! Te envié la **cotización en PDF** por este chat. Si quieres ajustar cantidades o productos, avísame y lo actualizamos enseguida.');
+        await toText(fromId,'¡Gracias por escribirnos! Te envió la *cotización en PDF*. Si requieres mas información, estamos a tu disposición.');
         await toText(fromId,'Para volver a activar el asistente, por favor, escribe *Asistente New Chem*.');
 
       if (ADVISOR_WA_NUMBERS.length) {
