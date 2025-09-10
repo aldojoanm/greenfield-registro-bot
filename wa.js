@@ -1099,6 +1099,9 @@ const PROCESSED_TTL = 5 * 60 * 1000;
 setInterval(()=>{ const now=Date.now(); for(const [k,ts] of processed){ if(now-ts>PROCESSED_TTL) processed.delete(k); } }, 60*1000);
 function seenWamid(id){ if(!id) return false; const now=Date.now(); const old=processed.get(id); processed.set(id,now); return !!old && (now-old)<PROCESSED_TTL; }
 
+const textRaw = (msg?.type === 'text' ? (msg.text?.body || '').trim() : '');
+const leadData = (msg?.type === 'text') ? parseMessengerLead(textRaw) : null;
+
 router.post('/wa/webhook', async (req,res)=>{
   try{
     const entry  = req.body?.entry?.[0];
@@ -1209,8 +1212,7 @@ if (isAdvisor(fromId)) {
       }
     }
 
-    // 👋 Saludo inicial (evitar duplicado)
-    const isLeadMsg = msg.type==='text' && !!parseMessengerLead(msg.text?.body);
+    const isLeadMsg = !!leadData;
     if(!s.greeted){
       s.greeted = true; 
       persistS(fromId);
@@ -1439,7 +1441,47 @@ if (isAdvisor(fromId)) {
       const text = (msg.text?.body||'').trim();
       remember(fromId,'user',text);
       const tnorm = norm(text);
-    if (!s.asked.nombre && s.pending !== 'nombre') {
+        // ---- Lead de Messenger (alta prioridad) ----
+  if (leadData) {
+    s.meta.origin = 'messenger'; 
+    s.greeted = true;
+
+    if (leadData.name) {
+      s.profileName = canonName(leadData.name);
+      s.asked.nombre = true;
+      if (s.pending === 'nombre') s.pending = null;
+      if (s.lastPrompt === 'nombre') s.lastPrompt = null;
+    }
+
+    if (leadData.dptoZ) {
+      const dep = detectDepartamento(leadData.dptoZ) || title((leadData.dptoZ.split('/')[0] || ''));
+      if (dep) s.vars.departamento = dep;
+      const zonaFromSlash = (leadData.dptoZ.split('/')[1] || '').trim();
+      if (!s.vars.subzona && zonaFromSlash) s.vars.subzona = title(zonaFromSlash);
+      if ((/santa\s*cruz/i.test(leadData.dptoZ)) && detectSubzona(leadData.dptoZ)) {
+        s.vars.subzona = detectSubzona(leadData.dptoZ);
+      }
+    }
+    if (!s.vars.subzona && leadData.zona) s.vars.subzona = title(leadData.zona);
+
+    if (leadData.crops) {
+      const picks = (leadData.crops || '')
+        .split(/[,\s]+y\s+|,\s*|\s+y\s+/i)
+        .map(t => norm(t.trim()))
+        .filter(Boolean);
+      const mapped = Array.from(new Set(picks.map(x => CROP_SYN[x]).filter(Boolean)));
+      if (mapped.length) s.vars.cultivos = [mapped[0]];
+    }
+
+    persistS(fromId);
+    const quien = s.profileName ? ` ${s.profileName}` : '';
+    await toText(fromId, `👋 Hola${quien}, gracias por continuar con *New Chem* vía WhatsApp.\nAquí encontrarás los agroquímicos esenciales para tu cultivo, al mejor precio. 🌱`);
+    await askCultivo(fromId);
+    res.sendStatus(200);
+    return;
+  }
+
+    if (!s.asked.nombre && s.pending !== 'nombre' && !leadData) {
     if (!hasEarlyIntent(text)) {
       await askNombre(fromId); 
       res.sendStatus(200);
