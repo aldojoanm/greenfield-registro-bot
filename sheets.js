@@ -220,7 +220,6 @@ export async function appendFromSession(s, fromPhone, estado = 'NUEVO') {
   return values[0][14]; // cotizacion_id
 }
 
-
 const TAB2_DEFAULT = process.env.SHEETS_TAB2_NAME || 'Hoja 2';
 
 // Normaliza fechas dd/mm/aaaa o dd-mm-aaaa -> dd/mm/aaaa
@@ -322,7 +321,7 @@ function dmyFromOffset(days){
   const { y, m, d } = todayYMD();
   const base = new Date(Date.UTC(y, m-1, d));
   const tgt  = new Date(base.getTime() + days*24*60*60*1000);
-  return `${pad2(tgt.getUTCDate())}/${pad2(tgt.getUTCMonth()+1)}/${tgt.getUTCFullYear()}`;
+  return `${pad2(tgt.getUTCDate())}/${pad2(tgt.getUTCMonth()+1)}/${pad2(tgt.getUTCFullYear())}`;
 }
 
 function nextWeekdayDMY(targetDow, forceNextWeek=false){
@@ -330,10 +329,10 @@ function nextWeekdayDMY(targetDow, forceNextWeek=false){
   const base = new Date(Date.UTC(y, m-1, d));
   const todayDow = base.getUTCDay(); // 0..6
   let delta = (targetDow - todayDow + 7) % 7;
-  if (delta === 0 && (forceNextWeek || true)) delta = 7; 
+  if (delta === 0 && (forceNextWeek || true)) delta = 7;
   // ↑ si escriben "viernes" y hoy es viernes, lo mandamos al siguiente viernes
   const tgt = new Date(base.getTime() + delta*24*60*60*1000);
-  return `${pad2(tgt.getUTCDate())}/${pad2(tgt.getUTCMonth()+1)}/${tgt.getUTCFullYear()}`;
+  return `${pad2(tgt.getUTCDate())}/${pad2(tgt.getUTCMonth()+1)}/${pad2(tgt.getUTCFullYear())}`;
 }
 
 // Limpia y estandariza “placa”
@@ -355,6 +354,7 @@ export function parseClientResponse(text = '', fallbackName = '') {
     razonSocial: '',
     nit: '',
     nombreChofer: '',
+    ciChofer: '',     // <— NUEVO
     placa: '',
     fechaRecojo: ''
   };
@@ -376,6 +376,9 @@ export function parseClientResponse(text = '', fallbackName = '') {
   const rePlaca  = /(placa(?:\s+del\s+veh[ií]culo)?|placa)\s*[:\-]\s*([A-Za-z0-9\-\s]{4,})/i;
   const reFecha  = /(fecha(?:\s+de)?\s*(recojo|retiro)?)(?:\s*\([^)]*\))?\s*[:\-]\s*([0-3]?\d[\/\-][01]?\d[\/\-]\d{2,4})/i;
 
+  // CI / Carnet de Identidad (acepta C.I., CI, cédula, etc.)
+  const reCI     = /(c\.?\s*i\.?|ci|carnet(?:\s+de)?\s+identidad|cedula|c[eé]dula)(?:\s+(?:del|de)\s+chofer)?\s*[:\-]\s*([A-Za-z0-9.\-\/\s]+)/i;
+
   // 1) Con títulos línea a línea
   for (const line of lines) {
     if (!out.nombreCliente) {
@@ -389,6 +392,9 @@ export function parseClientResponse(text = '', fallbackName = '') {
     }
     if (!out.nombreChofer) {
       const v = tryMatch(reChofer, line); if (v) out.nombreChofer = v;
+    }
+    if (!out.ciChofer) {
+      const m = line.match(reCI);    if (m) out.ciChofer = onlyDigits(m[2]);
     }
     if (!out.placa) {
       const m = line.match(rePlaca); if (m) out.placa = normalizePlate(m[2]);
@@ -437,9 +443,16 @@ export function parseClientResponse(text = '', fallbackName = '') {
     if (m1) out.fechaRecojo = normalizeDateDMY(m1[1]);
   }
 
+  // === Fallbacks de CI (sin título / variantes) ===
+  if (!out.ciChofer) {
+    // patrón “CI ... 123456 LP” o “carnet identidad 987654 SC”
+    const mCI = String(text).match(/(?:c\.?\s*i\.?|ci|carnet(?:\s+de)?\s+identidad|cedula|c[eé]dula)[^0-9]{0,15}([0-9.\-\/\s]{5,})/i);
+    if (mCI) out.ciChofer = onlyDigits(mCI[1]);
+  }
+
   // === Fallbacks de otros campos sin título ===
   const fbNorm = normName(fallbackName);
-  const labeledHints = /(raz[oó]n|rs|nit|chofer|conductor|placa|fecha|cliente)\s*[:\-]/i;
+  const labeledHints = /(raz[oó]n|rs|nit|chofer|conductor|placa|fecha|cliente|carnet|ci|cedula|c[eé]dula)\s*[:\-]/i;
   const bare = lines.filter(l => !labeledHints.test(l));
 
   if (!out.razonSocial && bare.length) {
@@ -468,14 +481,19 @@ export function parseClientResponse(text = '', fallbackName = '') {
   out.razonSocial   = out.razonSocial.replace(/\s+/g, ' ').trim();
   out.nombreChofer  = out.nombreChofer.replace(/\s+/g, ' ').trim();
   out.nombreCliente = out.nombreCliente.replace(/\s+/g, ' ').trim();
+  out.ciChofer      = onlyDigits(out.ciChofer); // ← asegurar solo dígitos
 
   return out;
 }
 
-export async function appendBillingPickupRow({ nombreCliente, razonSocial, nit, nombreChofer, placa, fechaRecojo }){
+/**
+ * Guarda en Hoja 2 con columnas:
+ * Nombre Cliente | Razón Social | NIT | Nombre Chofer | CI Chofer | Placa | Fecha de Recojo
+ */
+export async function appendBillingPickupRow({ nombreCliente, razonSocial, nit, nombreChofer, ciChofer, placa, fechaRecojo }){
   const sheets = await getSheets();
   const spreadsheetId = process.env.SHEETS_SPREADSHEET_ID;
-  const tab2 = TAB2_DEFAULT; 
+  const tab2 = TAB2_DEFAULT;
 
   if (!spreadsheetId) {
     throw new Error('Falta SHEETS_SPREADSHEET_ID en el entorno.');
@@ -486,6 +504,7 @@ export async function appendBillingPickupRow({ nombreCliente, razonSocial, nit, 
     razonSocial   || '',
     nit           || '',
     nombreChofer  || '',
+    onlyDigits(ciChofer || ''), // ← normalizado a dígitos
     placa         || '',
     fechaRecojo   || ''
   ]];

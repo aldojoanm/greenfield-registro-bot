@@ -440,8 +440,8 @@ function buildRequestMessages(){
 
   const part1 = [
     `${nombre}, ¡gracias por su compra y confianza en New Chem! 😊`,
-    `Para emitir su factura y coordinar la fecha de entrega, por favor responda a este mensaje con los siguientes datos`,
-    `Te recodamos que la facturación debe emitirse al mismo nombre de la persona que realizó el pago.`,
+    `Para *emitir su factura* y coordinar la fecha de entrega, por favor responda a este mensaje con los siguientes datos`,
+    `Te recordamos que la facturación debe emitirse al mismo nombre de la persona que realizó el pago.`,
     `¡Quedamos atentos y a su disposición para cualquier consulta!`
   ].join('\n');
 
@@ -453,6 +453,7 @@ function buildRequestMessages(){
     `*ORDEN DE ENTREGA*`,
     `• Nombre del cliente: ${nombre}`,
     `• Nombre del chofer:`,
+    `• Carnet de Identidad:`,
     `• Placa del vehículo:`,
     `• Fecha de recojo (dd/mm/aaaa):`
   ].join('\n');
