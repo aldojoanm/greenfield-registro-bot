@@ -1,4 +1,4 @@
-// index.js (Messenger Router) — flujo robusto con anti-dobles
+// index.js (Messenger Router) — flujo robusto con anti-dobles + sesiones efímeras (TTL/LRU)
 import 'dotenv/config';
 import express from 'express';
 import fs from 'fs';
@@ -36,32 +36,53 @@ const DPTO_SYNONYMS = {
   'Pando'      : []
 };
 
-// ===== SESIONES =====
+// ===== SESIONES (efímeras con TTL + LRU) =====
+const SESSION_TTL_MS = 48 * 60 * 60 * 1000; // 48h
+const SESSIONS_MAX   = 500;
 const sessions = new Map();
+
+function newSession(){
+  return {
+    pending: null,  // 'nombre' | 'departamento' | 'subzona' | 'subzona_free' | 'prod_from_catalog'
+    vars: {
+      departamento:null, subzona:null,
+      hectareas:null, phone:null,
+      productIntent:null,
+      intent:null
+    },
+    profileName: null,
+    flags: { greeted:false, finalShown:false, finalShownAt:0, justOpenedAt:0, helpShownAt:0 },
+    memory: [],
+    lastPrompt: null, // { key, at }
+    lastSeen: Date.now(),
+    expiresAt: Date.now() + SESSION_TTL_MS
+  };
+}
 function getSession(psid){
-  if(!sessions.has(psid)){
-    sessions.set(psid,{
-      pending: null,  // 'nombre' | 'departamento' | 'subzona' | 'subzona_free' | 'prod_from_catalog'
-      vars: {
-        departamento:null, subzona:null,
-        hectareas:null, phone:null,
-        productIntent:null,
-        intent:null
-      },
-      profileName: null,
-      flags: { greeted:false, finalShown:false, finalShownAt:0, justOpenedAt:0, helpShownAt:0 },
-      memory: [],
-      lastPrompt: null // { key, at }
-    });
-  }
-  return sessions.get(psid);
+  let s = sessions.get(psid);
+  if(!s){ s = newSession(); sessions.set(psid, s); }
+  s.lastSeen = Date.now();
+  s.expiresAt = s.lastSeen + SESSION_TTL_MS;
+  return s;
 }
 function clearSession(psid){ sessions.delete(psid); }
 function remember(psid, role, content){
   const s=getSession(psid);
   s.memory.push({role,content,ts:Date.now()});
-  if(s.memory.length>12) s.memory=s.memory.slice(-12);
+  if(s.memory.length>10) s.memory=s.memory.slice(-10); // límite estricto
 }
+// Purga periódica: TTL + LRU
+setInterval(() => {
+  const now = Date.now();
+  // TTL
+  for (const [id, s] of sessions) if ((s.expiresAt || 0) <= now) sessions.delete(id);
+  // LRU si supera SESSIONS_MAX
+  if (sessions.size > SESSIONS_MAX) {
+    const sorted = [...sessions.entries()].sort((a,b) => (a[1].lastSeen||0) - (b[1].lastSeen||0));
+    const drop = sessions.size - SESSIONS_MAX;
+    for (let i = 0; i < drop; i++) sessions.delete(sorted[i][0]);
+  }
+}, 10 * 60 * 1000);
 
 // ===== De-dup de mensajes FB (message.mid) =====
 const seenMIDs = [];
@@ -123,7 +144,7 @@ const isGreeting = (t='') => {
   const reWithSpace = /\b(?:ola|hola|holi|holis|holu|hello|helo|hey|hi|wena|wenas|wuenas|buen(?:os|as)?(?:\s*(?:d(?:ia|ias)|tard(?:e|es)|n(?:och|coh)e?s?))?)\b/;
   const reNoSpace   = /^(?:hola|holi|holis|hello|hey|hi|wenas|wuenas|buen(?:os|as)?(?:d(?:ia|ias)|tard(?:e|es)|n(?:och|coh)e?s?)|bn(?:d(?:ia|ias)|tard(?:e|es)|n(?:och|coh)e?s?)|bns(?:d(?:ia|ias)|tard(?:e|es)|n(?:och|coh)e?s?))$/;
   if (/^(?:bn|bns)\b/.test(s)) {
-    const rest = s.replace(/^(?:bn|bns)\b\s*/,'');
+    const rest = s.replace(/^(?:bn|bns)\b\s*/, '');
     if (/^(?:d(?:ia|ias)|tard(?:e|es)|n(?:och|coh)e?s?)$/.test(rest) || rest==='') return true;
   }
   return reWithSpace.test(s) || reNoSpace.test(sNoSpace);
@@ -297,7 +318,6 @@ async function finishAndWhatsApp(psid){
     { title:'Finalizar', payload:'QR_FINALIZAR' }
   ]);
 }
-
 
 // Debounce de showHelp para evitar dobles
 async function showHelp(psid){
