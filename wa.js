@@ -567,6 +567,39 @@ function productImageSource(prod){
   return null;
 }
 
+// ===== RESET PRODUCT STATE =====
+function resetProductState(s, { clearCategory = true } = {}) {
+  if (!s || !s.vars) return;
+
+  // Limpiar únicamente lo relacionado a productos
+  s.vars.last_product = null;
+  s.vars.last_sku = null;
+  s.vars.last_presentacion = null;
+  s.vars.cantidad = null;
+  s.vars.cart = [];
+  s.vars.catOffset = 0;
+
+  // Aux de detalle/candidato
+  s.vars.candidate_sku = null;
+  s.vars.last_detail_sku = null;
+  s.vars.last_detail_ts = 0;
+
+  // Re-preguntar categoría en el nuevo flujo
+  if (clearCategory) {
+    s.vars.category = null;
+    s.asked.categoria = false;
+  }
+
+  // Volver a pedir cantidad cuando corresponda
+  s.asked.cantidad = false;
+
+  // Reset de control de flujo (sin tocar nombre/dpto/zona/cultivo/ha/campaña)
+  s.stage = 'product';
+  s.pending = null;
+  s.lastPrompt = null;
+}
+
+
 // ===== ENVÍO WA =====
 const sendQueues = new Map();
 const sleep = (ms=350)=>new Promise(r=>setTimeout(r,ms));
@@ -1132,11 +1165,15 @@ if (isHuman(fromId)) {
     console.error('guardar Hoja 2 (modo humano) error:', err);
   }
 
-  // permitir reactivar el bot
   if (textRaw && wantsBotBack(textRaw)) {
     humanOff(fromId);
+    resetProductState(s, { clearCategory: true });
+    persistS(fromId);
     const quien = s.profileName ? `, ${s.profileName}` : '';
-    await toText(fromId, `Listo${quien} 🙌. Reactivé el *asistente automático*. ¿En qué puedo ayudarte?`);
+    await toText(fromId, `Listo${quien} 🙌. Reactivé el *Asistente Virtual de New Chem Agroquímicos*.`);
+    await askCategory(fromId);
+
+    return res.sendStatus(200);
   }
 
   persistS(fromId);
