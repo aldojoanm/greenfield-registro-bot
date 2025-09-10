@@ -59,6 +59,14 @@ async function waSendDocument(to, mediaId, filename, caption=''){
   return true;
 }
 
+/**
+ * Genera la cotización (PDF), la sube a WhatsApp y la envía al cliente.
+ * Devuelve información útil para reenviar el mismo PDF al asesor.
+ *
+ * @param {string} to - WA ID del cliente
+ * @param {object} session - Estado de sesión para construir la cotización
+ * @returns {Promise<{ok:boolean, mediaId:string|null, path:string, filename:string, caption:string, quoteId?:string}>}
+ */
 export async function sendAutoQuotePDF(to, session){
   // 1) Construir la cotización desde la sesión
   const quote = buildQuoteFromSession(session);
@@ -67,8 +75,8 @@ export async function sendAutoQuotePDF(to, session){
   const clienteName = cleanName(quote?.cliente?.nombre || session?.profileName || 'Cliente');
 
   // 3) Nombre de archivo: "COT - NOMBRE DEL CLIENTE.pdf"
-  const fileName = `COT - ${clienteName}.pdf`;
-  const filePath = path.join(QUOTES_DIR, fileName);
+  const filename = `COT - ${clienteName}.pdf`;
+  const filePath = path.join(QUOTES_DIR, filename);
 
   // 4) Renderizar el PDF en esa ruta
   await renderQuotePDF(quote, filePath, {
@@ -81,11 +89,19 @@ export async function sendAutoQuotePDF(to, session){
   const mediaId = await waUploadMediaFromFile(filePath, 'application/pdf');
   if (!mediaId) throw new Error('No se pudo subir el PDF a WhatsApp.');
 
-  // Caption amigable (en vez de usar el ID)
+  // Caption amigable
   const caption = `Cotización - ${clienteName}`;
 
-  const ok = await waSendDocument(to, mediaId, fileName, caption);
+  const ok = await waSendDocument(to, mediaId, filename, caption);
   if (!ok) throw new Error('No se pudo enviar el PDF por WhatsApp.');
 
-  return { ok:true, file: filePath, id: quote.id, name: fileName, caption };
+  // ⬇️ DEVOLVEMOS claves esperadas por tu wa.js:
+  return {
+    ok: true,
+    mediaId,       // para reutilizarlo con los asesores
+    path: filePath, // respaldo: si hubiera que re-subir
+    filename,       // nombre visible del documento
+    caption,
+    quoteId: quote?.id
+  };
 }
