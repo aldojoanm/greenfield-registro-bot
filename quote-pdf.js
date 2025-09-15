@@ -6,11 +6,11 @@ import PDFDocument from 'pdfkit';
 const TZ = process.env.TIMEZONE || 'America/La_Paz';
 
 /* ===== Paleta =====
-   Base corporativa (suministrada):
+   Colores corporativos:
    - Morado:  #8364a2
    - Índigo:  #5a66ac
    - Celeste: #46acc4
-   Tintes suaves y énfasis pedidos:
+   Ajustes sutiles solicitados:
 */
 const BRAND = {
   purple: '#8364a2',
@@ -19,10 +19,10 @@ const BRAND = {
 };
 const TINT = {
   headerPurple: '#C9B3E0', // morado un poco más fuerte para títulos de tabla
-  rowPurple:    '#F4EFFA', // morado muy bajito para filas
-  cyanEmph:     '#C9ECF4', // celeste un poco más fuerte para totales
+  rowPurple:    '#E6DBF1', // morado más notorio (sutil pero visible) para filas
+  totalYellow:  '#FFF6C7', // amarillo sutil para celdas de totales (USD/Bs)
 };
-const GRID = '#000000';     // líneas negras
+const GRID = '#000000';     // líneas negras en toda la tabla
 
 function fmtDateTZ(date = new Date(), tz = TZ) {
   try {
@@ -326,7 +326,7 @@ export async function renderQuotePDF(quote, outPath, company = {}){
     const rowH = Math.max(...cellHeights);
     ensureSpace(rowH + 10);
 
-    // Fondo morado muy sutil en alternancia
+    // Fondo morado más notorio en alternancia
     if (rowIndex % 2 === 1){
       doc.save();
       doc.rect(tableX, y, tableW, rowH).fill(TINT.rowPurple);
@@ -368,10 +368,10 @@ export async function renderQuotePDF(quote, outPath, company = {}){
   doc.rect(tableX, y, wUntilCol6, totalRowH).strokeColor(GRID).lineWidth(0.9).stroke();
   doc.font('Helvetica-Bold').fillColor('#111').text('Total', tableX, y+6, { width: wUntilCol6, align: 'center' });
 
-  // Celdas de montos USD y Bs — celeste un poco más fuerte
+  // Celdas de montos USD y Bs — AMARILLO sutil
   doc.save();
-  doc.rect(tableX + wUntilCol6, y, wCol7, totalRowH).fill(TINT.cyanEmph);
-  doc.rect(tableX + wUntilCol6 + wCol7, y, wCol8, totalRowH).fill(TINT.cyanEmph);
+  doc.rect(tableX + wUntilCol6, y, wCol7, totalRowH).fill(TINT.totalYellow);
+  doc.rect(tableX + wUntilCol6 + wCol7, y, wCol8, totalRowH).fill(TINT.totalYellow);
   doc.restore();
 
   // Bordes negros
@@ -429,7 +429,7 @@ export async function renderQuotePDF(quote, outPath, company = {}){
   const textH = doc.heightOfString(important, { width: maxW - pad*2, align: 'center' });
   const boxH = Math.max(28, textH + pad*2);
   doc.save();
-  doc.roundedRect(xMargin, y, maxW, boxH, 10).fill('#EAF7FA'); // suave sobre la línea corporativa
+  doc.roundedRect(xMargin, y, maxW, boxH, 10).fill('#EAF7FA'); // suave
   doc.roundedRect(xMargin, y, maxW, boxH, 10).strokeColor(BRAND.cyan).lineWidth(1.2).stroke();
   doc.font('Helvetica-Bold').fillColor('#062b33')
      .text(important, xMargin + pad, y + (boxH - textH)/2, { width: maxW - pad*2, align: 'center' });
@@ -479,28 +479,15 @@ export async function renderQuotePDF(quote, outPath, company = {}){
   bankBox('Banco:', 'BANCO UNIÓN');        bankBox('Cuenta Corriente:', '10000047057563');
   bankBox('Banco:', 'BANCO SOL');          bankBox('Cuenta Corriente:', '2784368-000-001');
 
-  // NIT — presentación estética (banda centrada tipo "chip")
-  y += 16;
-  ensureSpace(40);
-  const nitLine1 = 'New Chem Agroquímicos SRL';
-  const nitLine2 = 'NIT: 154920027';
-  const chipPadH = 8;
-  const chipPadW = 14;
-  const chipW = 360;
-  const chipH = 36;
-  const chipX = xMargin + (usableW - chipW)/2;
-  const chipY = y;
-
-  doc.save();
-  doc.roundedRect(chipX, chipY, chipW, chipH, 18).fill(TINT.rowPurple);
-  doc.roundedRect(chipX, chipY, chipW, chipH, 18).strokeColor(BRAND.purple).lineWidth(1).stroke();
-  doc.font('Helvetica-Bold').fillColor('#2b2340')
-     .text(nitLine1, chipX + chipPadW, chipY + 6, { width: chipW - chipPadW*2, align: 'center' });
-  doc.font('Helvetica').fillColor('#2b2340')
-     .text(nitLine2, chipX + chipPadW, doc.y - 2, { width: chipW - chipPadW*2, align: 'center' });
-  doc.restore();
-
-  y += chipH + 10;
+  // NIT — sin caja, tabulado a la izquierda, elegante
+  y += 14;
+  ensureSpace(28);
+  doc.font('Helvetica-Bold').fontSize(10).fillColor('#222')
+     .text('New Chem Agroquímicos SRL', xMargin, y, { width: usableW, align: 'left' });
+  y = doc.y + 2;
+  doc.font('Helvetica').fontSize(10).fillColor('#333')
+     .text('NIT: 154920027', xMargin, y, { width: usableW, align: 'left' });
+  y = doc.y + 6;
 
   doc.end();
   await new Promise((res, rej)=>{ stream.on('finish', res); stream.on('error', rej); });
