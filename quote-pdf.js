@@ -393,47 +393,21 @@ export async function renderQuotePDF(quote, outPath, company = {}){
   doc.fillColor('black');
   y += 22;
 
-  // Lugar de entrega (con el botón/link ENTRE Almacén y Horario)
+  // Lugar de entrega + link
   const drawH2 = (t)=>{ ensureSpace(24); doc.font('Helvetica-Bold').fontSize(11).fillColor('#000').text(t, xMargin, y); doc.font('Helvetica').fontSize(10).fillColor('#000'); y = doc.y + 12; };
   drawH2('Lugar de entrega');
+  const entrega = [
+    'Almacén Central',
+    'Horarios de atención: 08:00 - 17:00'
+  ];
+  for (const line of entrega){ ensureSpace(18); doc.text(line, xMargin, y); y = doc.y; }
 
-  // 1) Almacén
-  ensureSpace(18);
-  doc.text('Almacén Central', xMargin, y);
-  y = doc.y + 6;
-
-  // 2) Botón/Link Google Maps (clickeable)
+  // Link clickeable Google Maps
   const mapsUrl = 'https://maps.app.goo.gl/UPSh75QbWpfWccgz9';
-  const btnLabel = 'Ver ubicación en Google Maps';
-  const savedFont = doc._font;
-  const savedSize = doc._fontSize;
-
-  doc.font('Helvetica-Bold').fontSize(10);
-  const tw = doc.widthOfString(btnLabel);
-  const th = doc.currentLineHeight();
-  const padX = 10, padY = 6;
-  const btnW = tw + padX*2;
-  const btnH = th + padY*2;
-  const bx = xMargin;
-  const by = y;
-
-  ensureSpace(btnH + 10);
-  doc.save();
-  // chip sutil
-  doc.roundedRect(bx, by, btnW, btnH, 8).fill('#EAF7FA');
-  doc.roundedRect(bx, by, btnW, btnH, 8).strokeColor(BRAND.cyan).lineWidth(1).stroke();
-  doc.fillColor('#075E69').text(btnLabel, bx + padX, by + padY - 1, { width: btnW - padX*2, align: 'center', link: mapsUrl });
-  // clickable sobre todo el rectángulo
-  doc.link(bx, by, btnW, btnH, mapsUrl);
-  doc.restore();
-  // restaurar fuente
-  doc.font(savedFont ? savedFont.font ? savedFont.font : 'Helvetica' : 'Helvetica').fontSize(savedSize || 10);
-
-  y += btnH + 8;
-
-  // 3) Horario
   ensureSpace(18);
-  doc.text('Horarios de atención: 08:00 - 17:00', xMargin, y);
+  doc.fillColor(BRAND.cyan)
+     .text('Ver ubicación en Google Maps', xMargin, y, { width: usableW, link: mapsUrl, underline: true });
+  doc.fillColor('black');
   y = doc.y + 12;
 
   // Condiciones
@@ -505,7 +479,7 @@ export async function renderQuotePDF(quote, outPath, company = {}){
   bankBox('Banco:', 'BANCO UNIÓN');        bankBox('Cuenta Corriente:', '10000047057563');
   bankBox('Banco:', 'BANCO SOL');          bankBox('Cuenta Corriente:', '2784368-000-001');
 
-
+  // NIT — sin caja, tabulado a la izquierda, elegante
   y += 14;
   ensureSpace(28);
   doc.font('Helvetica-Bold').fontSize(10).fillColor('#222')
