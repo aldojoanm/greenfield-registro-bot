@@ -1240,38 +1240,85 @@ if (isAdvisor(fromId)) {
         remember(fromId, 'user', `✅ ${id}`);
       }
 
-      if(id==='QR_FINALIZAR'){
+      if (id === 'QR_FINALIZAR') {
+        // 1) Generar y ENVIAR PDF al cliente, y obtener info para reenvío
+        let pdfInfo = null;
+        try {
+          pdfInfo = await sendAutoQuotePDF(fromId, S(fromId)); // { mediaId? , path?, filename? }
+        } catch (err) {
+          console.error('AutoQuote error:', err);
+        }
+
+        // 2) Guardar en Google Sheets (igual que antes)
         try {
           if (!s._savedToSheet) {
             const cotId = await appendFromSession(s, fromId, 'nuevo');
             s.vars.cotizacion_id = cotId; s._savedToSheet = true; persistS(fromId);
           }
-        } catch (err) { console.error('Sheets append error:', err); }
-
-        await toText(fromId,'¡Gracias por escribirnos! Nuestro encargado de negocios te enviará la cotización en breve. Si requieres más información, estamos a tu disposición.');
-        await toText(fromId,'Para volver a activar el asistente, por favor, escribe *Asistente New Chem*.');
-
-      if (ADVISOR_WA_NUMBERS.length) {
-        const txt = compileAdvisorAlert(S(fromId), fromId);
-        for (const advisor of ADVISOR_WA_NUMBERS) {
-          const ok = await waSendQ(advisor, {
-            messaging_product: 'whatsapp',
-            to: advisor,
-            type: 'text',
-            text: { body: txt.slice(0,4096) }
-          });
-          if (ok) console.log('[ADVISOR] alerta enviada a', advisor);
-          else console.warn('[ADVISOR] no se pudo enviar a', advisor, '(prob. fuera de 24h / sin sesión abierta).');
+        } catch (err) {
+          console.error('Sheets append error:', err);
         }
-      }
+
+        // 3) Mensajes al cliente (igual que antes)
+        await toText(fromId, '¡Gracias por escribirnos! Te envió la *cotización en PDF*. Si requieres mas información, estamos a tu disposición.');
+        await toText(fromId, 'Para volver a activar el asistente, por favor, escribe *Asistente New Chem*.');
+
+        // 4) Aviso al/los asesores + REENVÍO DEL PDF
+        if (ADVISOR_WA_NUMBERS.length) {
+          const txt = compileAdvisorAlert(S(fromId), fromId);
+
+          // (4.1) Aviso de texto (como antes)
+          for (const advisor of ADVISOR_WA_NUMBERS) {
+            const okTxt = await waSendQ(advisor, {
+              messaging_product: 'whatsapp',
+              to: advisor,
+              type: 'text',
+              text: { body: txt.slice(0, 4096) }
+            });
+            if (okTxt) console.log('[ADVISOR] alerta enviada a', advisor);
+            else console.warn('[ADVISOR] no se pudo enviar alerta a', advisor, '(prob. fuera de 24h / sin sesión abierta).');
+          }
+
+          // (4.2) Reenviar el PDF
+          try {
+            // Intenta reutilizar mediaId; si no hay, sube desde path
+            let mediaId = pdfInfo?.mediaId || null;
+            let filename = pdfInfo?.filename ||
+              `Cotizacion_${(s.profileName || String(fromId)).replace(/[^\w\s\-.]/g,'').replace(/\s+/g,'_')}.pdf`;
+            const caption = `Cotización — ${s.profileName || fromId}`;
+
+            if (!mediaId && pdfInfo?.path) {
+              mediaId = await waUploadMediaFromFile(pdfInfo.path, 'application/pdf');
+            }
+
+            if (mediaId) {
+              for (const advisor of ADVISOR_WA_NUMBERS) {
+                const okDoc = await waSendQ(advisor, {
+                  messaging_product: 'whatsapp',
+                  to: advisor,
+                  type: 'document',
+                  document: { id: mediaId, filename, caption }
+                });
+                if (!okDoc) console.warn('[ADVISOR] PDF no enviado a', advisor, '(prob. fuera de 24h / sin sesión abierta).');
+              }
+            } else {
+              console.warn('[ADVISOR] No se obtuvo mediaId ni path del PDF para reenviar al asesor.');
+            }
+          } catch (err) {
+            console.error('[ADVISOR] error al reenviar PDF:', err);
+          }
+        }
+
+        // 5) Cierre (igual que antes)
         humanOn(fromId, 4);
-        s._closedAt = Date.now();         
+        s._closedAt = Date.now();
         s.stage = 'closed';
         persistS(fromId);
-        broadcastAgent('convos', { id: fromId }); 
-        res.sendStatus(200); 
+        broadcastAgent('convos', { id: fromId });
+        res.sendStatus(200);
         return;
       }
+
 
       if(id==='QR_SEGUIR'){ await toText(fromId,'Perfecto, vamos a añadir un nuevo producto 🙌.'); await askCategory(fromId); res.sendStatus(200); return; }
       if(id==='ADD_MORE'){ s.vars.catOffset=0; s.vars.last_product=null; s.vars.last_sku=null; s.vars.last_presentacion=null; s.vars.cantidad=null; s.asked.cantidad=false; persistS(fromId); await toButtons(fromId,'Dime el *nombre del otro producto* o elige una categoría 👇', CAT_QR.map(c=>({title:c.title,payload:c.payload}))); res.sendStatus(200); return; }

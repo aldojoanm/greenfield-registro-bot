@@ -10,7 +10,7 @@ function fmtDateTZ(date = new Date(), tz = TZ) {
     const f = new Intl.DateTimeFormat('es-BO', {
       timeZone: tz, day: '2-digit', month: '2-digit', year: 'numeric'
     }).format(date);
-    return f; // DD/MM/YYYY
+    return f; 
   } catch {
     const d = new Date(date);
     const pad = n => String(n).padStart(2,'0');
@@ -30,7 +30,6 @@ function findAsset(...relPaths){
   return null;
 }
 
-/* ===== Helpers de normalización/pack (mismos que en el engine) ===== */
 function canonSku(s=''){
   return String(s||'')
     .trim()
@@ -65,17 +64,14 @@ function splitSku(s=''){
 function lookupFromCatalog(priceList=[], item={}){
   if (!Array.isArray(priceList) || !priceList.length) return 0;
 
-  // 1) Por SKU exacto / canónico
   const cs = canonSku(item.sku||'');
   let row = priceList.find(r => canonSku(r.sku||'') === cs);
 
-  // 2) Recomponer con nombre + envase
   if (!row && item.nombre && item.envase){
     const cs2 = canonSku(`${item.nombre}-${item.envase}`);
     row = priceList.find(r => canonSku(r.sku||'') === cs2);
   }
 
-  // 3) Por nombre base + pack
   if (!row){
     const nm = String(item.nombre||'').trim() || splitSku(String(item.sku||'')).base;
     const pack = parsePackFromText(String(item.envase||'')) || splitSku(String(item.sku||'')).pack;
@@ -93,7 +89,6 @@ function lookupFromCatalog(priceList=[], item={}){
   return Number.isFinite(usd) ? usd : 0;
 }
 
-/* ===== Detección de pack para redondeo ===== */
 function detectPackSize(it = {}){
   if (it.envase) {
     const m = String(it.envase).match(/(\d+(?:[.,]\d+)?)\s*(l|lt|lts|litros?|kg|kilos?)/i);

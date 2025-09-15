@@ -5,7 +5,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import waRouter from './wa.js';
 import messengerRouter from './index.js';
-import pricesRouter from './prices.js';      // ⬅️ nuevo
+import pricesRouter from './prices.js';
 
 const app = express();
 app.disable('x-powered-by');
@@ -26,7 +26,7 @@ app.get('/privacidad', (_req, res) => {
 
 app.use(messengerRouter);
 app.use(waRouter);
-app.use(pricesRouter);                       // ⬅️ monta /admin/prices (GET y PUT)
+app.use(pricesRouter);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
