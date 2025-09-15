@@ -5,25 +5,31 @@ import PDFDocument from 'pdfkit';
 
 const TZ = process.env.TIMEZONE || 'America/La_Paz';
 
-// ====== Paleta (tonos suaves) ======
+/* ===== Paleta =====
+   Base corporativa (suministrada):
+   - Morado:  #8364a2
+   - Índigo:  #5a66ac
+   - Celeste: #46acc4
+   Tintes suaves y énfasis pedidos:
+*/
 const BRAND = {
   purple: '#8364a2',
   indigo: '#5a66ac',
   cyan:   '#46acc4',
 };
-const PASTEL = {
-  purple: '#EFE9F5', // #8364a2 suavizado
-  indigo: '#E9ECF7', // #5a66ac suavizado
-  cyan:   '#E6F5F8', // #46acc4 suavizado
+const TINT = {
+  headerPurple: '#C9B3E0', // morado un poco más fuerte para títulos de tabla
+  rowPurple:    '#F4EFFA', // morado muy bajito para filas
+  cyanEmph:     '#C9ECF4', // celeste un poco más fuerte para totales
 };
-const GRID = '#000000';
+const GRID = '#000000';     // líneas negras
 
 function fmtDateTZ(date = new Date(), tz = TZ) {
   try {
     const f = new Intl.DateTimeFormat('es-BO', {
       timeZone: tz, day: '2-digit', month: '2-digit', year: 'numeric'
     }).format(date);
-    return f; 
+    return f;
   } catch {
     const d = new Date(date);
     const pad = n => String(n).padStart(2,'0');
@@ -35,9 +41,9 @@ function money(n){
   return s.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 }
 
-// === util de redondeo contable a 2 decimales ===
+// — Redondeo contable a 2 decimales (half-away-from-zero de Math.round) —
 function round2(n){ return Math.round((Number(n)||0) * 100) / 100; }
-// acumular en centavos para evitar drift
+// — Acumular en centavos para evitar drift —
 function toCents(n){ return Math.round((Number(n)||0) * 100); }
 
 function ensure(v, def){ return v==null || v==='' ? def : v; }
@@ -179,7 +185,7 @@ export async function renderQuotePDF(quote, outPath, company = {}){
   const qrPath = company.qrPath
     || findAsset('./public/qr-pagos.png','./public/qr.png','./public/privacidad.png','./image/qr.png');
 
-  // Membrete (marca de agua sutil)
+  // Marca de agua sutil
   if (logoPath){
     doc.save();
     doc.opacity(0.10);
@@ -190,7 +196,7 @@ export async function renderQuotePDF(quote, outPath, company = {}){
     doc.restore();
   }
 
-  // Header
+  // Header superior
   let y = 32;
   if (logoPath){
     try { doc.image(logoPath, xMargin, y, { width: 120 }); } catch {}
@@ -216,7 +222,7 @@ export async function renderQuotePDF(quote, outPath, company = {}){
 
   y += 16;
 
-  // ===== Tabla =====
+  /* ===== Tabla ===== */
   const rate = Number(process.env.USD_BOB_RATE || quote.rate || 6.96);
 
   const cols = [
@@ -232,19 +238,18 @@ export async function renderQuotePDF(quote, outPath, company = {}){
   const tableX = xMargin;
   const tableW = cols.reduce((a,c)=>a+c.w,0);
 
+  // Encabezado: morado un poco más fuerte
   const headerH = 28;
-
-  // Encabezado: fondo pastel indigo, texto negro, rejilla negra
   doc.save();
-  doc.rect(tableX, y, tableW, headerH).fill(PASTEL.indigo);
+  doc.rect(tableX, y, tableW, headerH).fill(TINT.headerPurple);
   doc.fillColor('#111').font('Helvetica-Bold').fontSize(9);
   {
     let cx = tableX;
     for (const cdef of cols){
       const innerX = cx + 6;
       doc.text(cdef.label, innerX, y + (headerH-10)/2, { width: cdef.w-12, align: 'center' });
-      // borde de celda del header
-      doc.rect(cx, y, cdef.w, headerH).strokeColor(GRID).lineWidth(0.8).stroke();
+      // Bordes negros del header
+      doc.rect(cx, y, cdef.w, headerH).strokeColor(GRID).lineWidth(0.9).stroke();
       cx += cdef.w;
     }
   }
@@ -272,7 +277,7 @@ export async function renderQuotePDF(quote, outPath, company = {}){
 
   doc.fontSize(9).fillColor('black');
 
-  // acumuladores en centavos (contable)
+  // Acumuladores exactos
   let accUsdCents = 0;
   let accBsCents  = 0;
 
@@ -284,16 +289,16 @@ export async function renderQuotePDF(quote, outPath, company = {}){
     if (!(precioUSD > 0)) {
       precioUSD = lookupFromCatalog(quote.price_catalog || company.priceList || [], itRaw) || 0;
     }
-    precioUSD = round2(precioUSD);                    // asegurar 2 decimales en USD
-    const precioBsUnit  = round2(precioUSD * rate);   // **estrictamente 2 decimales** en Bs
+    precioUSD = round2(precioUSD);
+    const precioBsUnit  = round2(precioUSD * rate); // 2 decimales estrictos
 
-    // 2) Cantidad (con redondeo por presentación si aplica)
+    // 2) Cantidad (respeta redondeo por pack)
     const cantOrig  = Number(itRaw.cantidad || 0);
     const pack      = detectPackSize(itRaw);
     let cantidad = cantOrig;
     if (pack) cantidad = roundQuantityByPack(cantOrig, pack, itRaw.unidad);
 
-    // 3) Subtotales (a dos decimales, con la regla pedida)
+    // 3) Subtotales a 2 decimales exactos
     const subUSD = round2(precioUSD   * cantidad);
     const subBs  = round2(precioBsUnit * cantidad);
 
@@ -311,7 +316,7 @@ export async function renderQuotePDF(quote, outPath, company = {}){
       money(subBs),
     ];
 
-    // Altura de la fila
+    // Altura de fila
     const cellHeights = [];
     for (let i=0; i<cols.length; i++){
       const w = cols[i].w - 12;
@@ -319,17 +324,16 @@ export async function renderQuotePDF(quote, outPath, company = {}){
       cellHeights.push(Math.max(h + rowPadV*2, minRowH));
     }
     const rowH = Math.max(...cellHeights);
-
     ensureSpace(rowH + 10);
 
-    // Fondo zebra (alternando entre blanco y cian pastel)
+    // Fondo morado muy sutil en alternancia
     if (rowIndex % 2 === 1){
       doc.save();
-      doc.rect(tableX, y, tableW, rowH).fill(PASTEL.cyan);
+      doc.rect(tableX, y, tableW, rowH).fill(TINT.rowPurple);
       doc.restore();
     }
 
-    // contenido + rejilla negra
+    // Contenido + bordes negros
     let tx = tableX;
     for (let i=0; i<cols.length; i++){
       const cdef = cols[i];
@@ -345,7 +349,7 @@ export async function renderQuotePDF(quote, outPath, company = {}){
     rowIndex++;
   }
 
-  // Totales exactos (suma de subtotales, no conversión del total)
+  // Totales (suma de subtotales)
   const totalUSD = accUsdCents / 100;
   const totalBs  = accBsCents  / 100;
 
@@ -355,27 +359,24 @@ export async function renderQuotePDF(quote, outPath, company = {}){
   const wCol7      = cols[6].w;
   const wCol8      = cols[7].w;
 
-  // separación superior
-  doc.moveTo(tableX, y).lineTo(tableX + tableW, y).strokeColor(GRID).lineWidth(0.8).stroke();
+  // Línea superior separadora
+  doc.moveTo(tableX, y).lineTo(tableX + tableW, y).strokeColor(GRID).lineWidth(0.9).stroke();
 
   const totalRowH = 26;
 
-  // Celda "Total" (fondo pastel morado)
-  doc.save();
-  doc.rect(tableX, y, wUntilCol6, totalRowH).fill(PASTEL.purple);
+  // Celda "Total" — EN BLANCO (solo bordes)
   doc.rect(tableX, y, wUntilCol6, totalRowH).strokeColor(GRID).lineWidth(0.9).stroke();
-  doc.fillColor('#111').font('Helvetica-Bold').text('Total', tableX, y+6, { width: wUntilCol6, align: 'center' });
-  doc.restore();
+  doc.font('Helvetica-Bold').fillColor('#111').text('Total', tableX, y+6, { width: wUntilCol6, align: 'center' });
 
-  // Celdas de monto (USD y Bs) con fondo pastel índigo/cian
+  // Celdas de montos USD y Bs — celeste un poco más fuerte
   doc.save();
-  doc.rect(tableX + wUntilCol6, y, wCol7, totalRowH).fill(PASTEL.indigo);
-  doc.rect(tableX + wUntilCol6 + wCol7, y, wCol8, totalRowH).fill(PASTEL.cyan);
+  doc.rect(tableX + wUntilCol6, y, wCol7, totalRowH).fill(TINT.cyanEmph);
+  doc.rect(tableX + wUntilCol6 + wCol7, y, wCol8, totalRowH).fill(TINT.cyanEmph);
   doc.restore();
 
   // Bordes negros
   doc.rect(tableX + wUntilCol6, y, wCol7, totalRowH).strokeColor(GRID).lineWidth(0.9).stroke();
-  doc.rect(tableX + wUntilCol6 + wCol7, y, wCol8, totalRowH).strokeColor(GRID).stroke();
+  doc.rect(tableX + wUntilCol6 + wCol7, y, wCol8, totalRowH).strokeColor(GRID).lineWidth(0.9).stroke();
 
   // Valores
   doc.font('Helvetica-Bold').fillColor('#111')
@@ -392,16 +393,16 @@ export async function renderQuotePDF(quote, outPath, company = {}){
   doc.fillColor('black');
   y += 22;
 
-  // Lugar de entrega (con link clickeable)
+  // Lugar de entrega + link
   const drawH2 = (t)=>{ ensureSpace(24); doc.font('Helvetica-Bold').fontSize(11).fillColor('#000').text(t, xMargin, y); doc.font('Helvetica').fontSize(10).fillColor('#000'); y = doc.y + 12; };
   drawH2('Lugar de entrega');
   const entrega = [
-    'Almacenes Orange Cargo SRL., ubicados en el km 9 zona norte, lado del surtidor Bioceánico.',
+    'Almacén Central',
     'Horarios de atención: 08:00 - 17:00'
   ];
   for (const line of entrega){ ensureSpace(18); doc.text(line, xMargin, y); y = doc.y; }
 
-  // Link de Google Maps
+  // Link clickeable Google Maps
   const mapsUrl = 'https://maps.app.goo.gl/UPSh75QbWpfWccgz9';
   ensureSpace(18);
   doc.fillColor(BRAND.cyan)
@@ -419,19 +420,19 @@ export async function renderQuotePDF(quote, outPath, company = {}){
   ];
   for (const line of conds){ ensureSpace(18); doc.font('Helvetica').text(line, xMargin, y); y = doc.y; }
 
-  // Aviso de facturación — destacado bonito
+  // Aviso de facturación — centrado vertical y horizontal dentro del recuadro
   y += 18;
   ensureSpace(36);
   const important = 'IMPORTANTE: LA FACTURACIÓN DEBE EMITIRSE A NOMBRE DE QUIEN REALIZA EL PAGO.';
-  const boxPad = 10;
-  const boxW = usableW;
-  const boxH = Math.max(26, doc.heightOfString(important, { width: boxW - boxPad*2, align: 'center' }) + boxPad*2);
-  // caja con borde color y fondo pastel cian
+  const pad = 12;
+  const maxW = usableW;
+  const textH = doc.heightOfString(important, { width: maxW - pad*2, align: 'center' });
+  const boxH = Math.max(28, textH + pad*2);
   doc.save();
-  doc.roundedRect(xMargin, y, boxW, boxH, 10).fill(PASTEL.cyan);
-  doc.roundedRect(xMargin, y, boxW, boxH, 10).strokeColor(BRAND.cyan).lineWidth(1.2).stroke();
+  doc.roundedRect(xMargin, y, maxW, boxH, 10).fill('#EAF7FA'); // suave sobre la línea corporativa
+  doc.roundedRect(xMargin, y, maxW, boxH, 10).strokeColor(BRAND.cyan).lineWidth(1.2).stroke();
   doc.font('Helvetica-Bold').fillColor('#062b33')
-     .text(important, xMargin + boxPad, y + (boxH - 12)/2 - 2, { width: boxW - boxPad*2, align: 'center' });
+     .text(important, xMargin + pad, y + (boxH - textH)/2, { width: maxW - pad*2, align: 'center' });
   doc.restore();
   y += boxH + 18;
 
@@ -458,14 +459,13 @@ export async function renderQuotePDF(quote, outPath, company = {}){
        .fillColor('black');
   }
 
-  // Tabla bancaria (resalta nombre del banco)
+  // Tabla bancaria — nombres de bancos en NEGRITA (mismo color)
   y = bankTopY;
   const bankBox = (label, value)=>{
     ensureSpace(36);
     doc.font('Helvetica-Bold').fillColor('#000').text(label, xMargin, y, { width: 100 });
     if (label.toLowerCase().startsWith('banco')) {
-      doc.font('Helvetica-Bold').fillColor(BRAND.indigo).text(value, xMargin+100, y, { width: colW-100 });
-      doc.fillColor('#000');
+      doc.font('Helvetica-Bold').fillColor('#000').text(value, xMargin+100, y, { width: colW-100 });
     } else {
       doc.font('Helvetica').fillColor('#000').text(value, xMargin+100, y, { width: colW-100 });
     }
@@ -479,14 +479,28 @@ export async function renderQuotePDF(quote, outPath, company = {}){
   bankBox('Banco:', 'BANCO UNIÓN');        bankBox('Cuenta Corriente:', '10000047057563');
   bankBox('Banco:', 'BANCO SOL');          bankBox('Cuenta Corriente:', '2784368-000-001');
 
-  // Footer con NIT
-  y += 18;
-  ensureSpace(24);
-  doc.moveTo(xMargin, y).lineTo(xMargin + usableW, y).strokeColor('#ddd').lineWidth(0.8).stroke();
-  y += 8;
-  doc.font('Helvetica').fontSize(9).fillColor('#333')
-     .text('New Chem Agroquímicos SRL — NIT: 154920027', xMargin, y, { width: usableW, align: 'center' });
-  doc.fillColor('black');
+  // NIT — presentación estética (banda centrada tipo "chip")
+  y += 16;
+  ensureSpace(40);
+  const nitLine1 = 'New Chem Agroquímicos SRL';
+  const nitLine2 = 'NIT: 154920027';
+  const chipPadH = 8;
+  const chipPadW = 14;
+  const chipW = 360;
+  const chipH = 36;
+  const chipX = xMargin + (usableW - chipW)/2;
+  const chipY = y;
+
+  doc.save();
+  doc.roundedRect(chipX, chipY, chipW, chipH, 18).fill(TINT.rowPurple);
+  doc.roundedRect(chipX, chipY, chipW, chipH, 18).strokeColor(BRAND.purple).lineWidth(1).stroke();
+  doc.font('Helvetica-Bold').fillColor('#2b2340')
+     .text(nitLine1, chipX + chipPadW, chipY + 6, { width: chipW - chipPadW*2, align: 'center' });
+  doc.font('Helvetica').fillColor('#2b2340')
+     .text(nitLine2, chipX + chipPadW, doc.y - 2, { width: chipW - chipPadW*2, align: 'center' });
+  doc.restore();
+
+  y += chipH + 10;
 
   doc.end();
   await new Promise((res, rej)=>{ stream.on('finish', res); stream.on('error', rej); });
