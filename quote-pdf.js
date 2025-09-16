@@ -10,7 +10,7 @@ const BRAND = {
   cyan:   '#46acc4',
 };
 const TINT = {
-  headerPurple: '#BFC6CE', // morado un poco más fuerte para el encabezado
+  headerPurple: '#9E9AAE', // morado un poco más fuerte para el encabezado
   rowPurple:    '#F2F4F6', // morado muy suave para TODAS las filas de la tabla
   totalBlue:    '#E9C46A', // celeste muy suave para los "Total USD/Bs"
 };
