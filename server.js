@@ -105,38 +105,40 @@ app.post('/wa/agent/import-whatsapp', auth, async (req, res) => {
   }
 });
 
-// Lista de conversaciones (lee Hoja 4)
-// Lista de conversaciones (Hoja 4 + STATE para garantizar que aparezcan tras el import)
+// Lista de conversaciones (une Sheets + STATE)
 app.get('/wa/agent/convos', auth, async (_req, res) => {
   try {
-    const items = await summariesLastNDays(3650); // lee Hoja 4
-    const map = new Map(items.map(it => [String(it.id), { ...it }]));
+    // 1) Trae de Sheets (hasta ~10 años)
+    const items = await summariesLastNDays(3650); // [{ id, name, last, lastTs }]
 
-    // Mezcla STATE (precargado por /import-whatsapp)
-    for (const [id, st] of STATE.entries()) {
-      if (!map.has(id)) {
-        map.set(id, { id, name: st.name || id, last: st.last || '', lastTs: 0 });
-      } else {
-        const it = map.get(id);
-        it.name = st.name || it.name || id;
-        it.last = st.last || it.last || '';
-        map.set(id, it);
-      }
+    // 2) Indexa por id lo que vino de Sheets
+    const byId = new Map();
+    for (const it of items) {
+      byId.set(it.id, {
+        id: it.id,
+        name: it.name || it.id,
+        last: it.last || '',
+        lastTs: it.lastTs || 0,
+        human: false,
+        unread: 0,
+      });
     }
 
-    const convos = [...map.values()]
-      .map(it => {
-        const st = STATE.get(String(it.id)) || { human: false, unread: 0 };
-        return {
-          id: String(it.id),
-          name: it.name || String(it.id),
-          last: it.last || '',
-          unread: st.unread || 0,
-          human: !!st.human,
-          lastTs: it.lastTs || 0,
-        };
-      })
-      .sort((a, b) => b.lastTs - a.lastTs)
+    // 3) Mezcla con STATE (lo importado queda visible aunque Sheets no responda)
+    for (const [id, st] of STATE.entries()) {
+      const cur = byId.get(id) || { id, name: id, last: '', lastTs: 0, human: false, unread: 0 };
+      byId.set(id, {
+        ...cur,
+        name: st.name || cur.name || id,
+        last: st.last || cur.last || '',
+        human: !!st.human,
+        unread: st.unread || 0,
+      });
+    }
+
+    // 4) Ordena por último ts (si lo hay) y devuelve sin lastTs
+    const convos = [...byId.values()]
+      .sort((a, b) => (b.lastTs || 0) - (a.lastTs || 0))
       .map(({ lastTs, ...rest }) => rest);
 
     res.json({ convos });
@@ -145,6 +147,7 @@ app.get('/wa/agent/convos', auth, async (_req, res) => {
     res.status(500).json({ error: 'no se pudo leer Hoja 4' });
   }
 });
+
 
 
 
