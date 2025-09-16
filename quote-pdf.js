@@ -4,24 +4,17 @@ import path from 'path';
 import PDFDocument from 'pdfkit';
 
 const TZ = process.env.TIMEZONE || 'America/La_Paz';
-
-/* ===== Paleta =====
-   Colores corporativos:
-   - Morado:  #8364a2
-   - Índigo:  #5a66ac
-   - Celeste: #46acc4
-   Ajustes sutiles solicitados:
-*/
 const BRAND = {
   purple: '#8364a2',
   indigo: '#5a66ac',
   cyan:   '#46acc4',
 };
 const TINT = {
-  headerPurple: '#C9B3E0', // morado un poco más fuerte para títulos de tabla
-  rowPurple:    '#E6DBF1', // morado más notorio (sutil pero visible) para filas
-  totalYellow:  '#FFF6C7', // amarillo sutil para celdas de totales (USD/Bs)
+  headerPurple: '#C9B3E0', // morado un poco más fuerte para el encabezado
+  rowPurple:    '#F2ECF7', // morado muy suave para TODAS las filas de la tabla
+  totalBlue:    '#EAF7FB', // celeste muy suave para los "Total USD/Bs"
 };
+
 const GRID = '#000000';     // líneas negras en toda la tabla
 
 function fmtDateTZ(date = new Date(), tz = TZ) {
@@ -326,12 +319,10 @@ export async function renderQuotePDF(quote, outPath, company = {}){
     const rowH = Math.max(...cellHeights);
     ensureSpace(rowH + 10);
 
-    // Fondo morado más notorio en alternancia
-    if (rowIndex % 2 === 1){
-      doc.save();
-      doc.rect(tableX, y, tableW, rowH).fill(TINT.rowPurple);
-      doc.restore();
-    }
+    doc.save();
+    doc.rect(tableX, y, tableW, rowH).fill(TINT.rowPurple);
+    doc.restore();
+    
 
     // Contenido + bordes negros
     let tx = tableX;
@@ -368,11 +359,11 @@ export async function renderQuotePDF(quote, outPath, company = {}){
   doc.rect(tableX, y, wUntilCol6, totalRowH).strokeColor(GRID).lineWidth(0.9).stroke();
   doc.font('Helvetica-Bold').fillColor('#111').text('Total', tableX, y+6, { width: wUntilCol6, align: 'center' });
 
-  // Celdas de montos USD y Bs — AMARILLO sutil
   doc.save();
-  doc.rect(tableX + wUntilCol6, y, wCol7, totalRowH).fill(TINT.totalYellow);
-  doc.rect(tableX + wUntilCol6 + wCol7, y, wCol8, totalRowH).fill(TINT.totalYellow);
+  doc.rect(tableX + wUntilCol6, y, wCol7, totalRowH).fill(TINT.totalBlue);
+  doc.rect(tableX + wUntilCol6 + wCol7, y, wCol8, totalRowH).fill(TINT.totalBlue);
   doc.restore();
+
 
   // Bordes negros
   doc.rect(tableX + wUntilCol6, y, wCol7, totalRowH).strokeColor(GRID).lineWidth(0.9).stroke();
