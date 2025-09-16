@@ -1,148 +1,208 @@
 // prices.js
 import express from 'express';
-import fs from 'fs';
-import path from 'path';
+import { getSheets } from './sheets.js';
 
 const router = express.Router();
-router.use(express.json());
 
-const AGENT_TOKEN = process.env.AGENT_TOKEN || '';
+/* =========================
+   Config
+   ========================= */
+const SPREADSHEET_ID = process.env.SHEETS_SPREADSHEET_ID;
+const TAB3 = process.env.SHEETS_TAB3_NAME || 'Hoja 3';
+// Celdas opcionales para versión y tipo de cambio
+const VERSION_CELL = process.env.SHEETS_PRICES_VERSION_CELL || ''; // ej: 'Hoja 3!J1'
+const RATE_CELL    = process.env.SHEETS_PRICES_RATE_CELL    || ''; // ej: 'Hoja 3!J2'
 
-function agentAuth(req, res, next){
-  const header = req.headers.authorization || '';
-  const bearer = header.replace(/^Bearer\s+/i,'').trim();
-  const token  = bearer || String(req.query.token||'');
-  if(!AGENT_TOKEN || token !== AGENT_TOKEN) return res.sendStatus(401);
-  next();
-}
+const DEFAULT_RATE = Number(process.env.DEFAULT_RATE || 6.96);
+const TTL_MS = Number(process.env.PRICES_TTL_MS || 60_000);
 
-const PRICE_PATH = path.resolve('./knowledge/prices.json');
-const RATE_PATH  = path.resolve('./knowledge/rate.json');
-const BK_DIR     = path.resolve('./knowledge/backups');
-fs.mkdirSync(BK_DIR, { recursive: true });
+/* =========================
+   Helpers
+   ========================= */
+const norm = (s='') => String(s).normalize('NFD').replace(/\p{Diacritic}/gu,'').toLowerCase().trim();
+const to2  = (n) => Number.isFinite(+n) ? +(+n).toFixed(2) : 0;
+const buildSku = (prod='', pres='') => {
+  prod = String(prod||'').trim();
+  pres = String(pres||'').trim();
+  return pres ? `${prod}-${pres}` : prod;
+};
+const normCat = (c='') => {
+  const t = norm(c);
+  if (t.startsWith('inse')) return 'insecticida';
+  if (t.startsWith('fung')) return 'fungicida';
+  return 'herbicida';
+};
 
-function loadPrices(){
-  try { return JSON.parse(fs.readFileSync(PRICE_PATH,'utf8')); }
-  catch { return []; }
-}
-function loadRate(){
+/* =========================
+   Lectura desde Sheets
+   ========================= */
+async function readVersionAndRate(sheets){
+  let version = '';
+  let rate = NaN;
+
   try {
-    const j = JSON.parse(fs.readFileSync(RATE_PATH,'utf8'));
-    return Number(j?.rate) || 6.96;
-  } catch { return 6.96; }
-}
-function fileVersion(){
-  try { return String(fs.statSync(PRICE_PATH).mtimeMs|0); }
-  catch { return '0'; }
-}
-function writeAtomic(p, data){
-  const tmp = p + '.tmp';
-  fs.writeFileSync(tmp, data);
-  fs.renameSync(tmp, p);
-}
-
-/* ===== Normalización canónica ===== */
-function canonSKU(s=''){
-  return String(s||'')
-    .trim()
-    .toUpperCase()
-    .replace(/\s+/g,'')               // "5 L" -> "5L"
-    .replace(/LTS?|LT|LITROS?/g,'L')  // LTS/LT/LITROS -> L
-    .replace(/KGS?|KILOS?/g,'KG');    // KGS/KILOS -> KG
-}
-function canonUnidad(u=''){
-  const t = String(u||'').trim().toUpperCase();
-  if (/^KG|KILO/.test(t)) return 'KG';
-  if (/^L|LT|LTS|LITRO/.test(t)) return 'L';
-  if (/^UNID|UND|UNIDAD/.test(t)) return 'UNID';
-  return t || '';
-}
-function canonCategoria(c=''){
-  const t = String(c||'').toLowerCase();
-  return ['herbicida','insecticida','fungicida'].includes(t) ? t : 'herbicida';
-}
-function to2(n){ return Number.isFinite(n) ? +Number(n).toFixed(2) : 0; }
-
-/* ===== GET: leer precios (con versión) ===== */
-router.get('/admin/prices', agentAuth, (_req,res)=>{
-  res.json({ prices: loadPrices(), version: fileVersion() });
-});
-
-/* ===== PUT: guardar precios (normalizado) ===== */
-router.put('/admin/prices', agentAuth, (req,res)=>{
-  const { prices, version } = req.body || {};
-  if (!Array.isArray(prices)) {
-    return res.status(400).json({ error:'bad_request', detail:'prices debe ser array' });
-  }
-
-  // control de versión para evitar pisadas
-  const current = fileVersion();
-  if (version && version !== current){
-    return res.status(409).json({ error:'version_conflict', currentVersion: current });
-  }
-
-  const orderCat = { herbicida:0, insecticida:1, fungicida:2 };
-
-  // sanitizar + **normalizar**
-  const seen = new Set();
-  const clean = [];
-  for (const row of prices){
-    const rawSku = String(row?.sku||'').trim();
-    if (!rawSku) return res.status(400).json({ error:'bad_row', detail:'SKU vacío' });
-
-    const sku     = canonSKU(rawSku);                // <— clave
-    const unidad  = canonUnidad(row?.unidad || '');  // <— clave
-    const usd     = Number(row?.precio_usd ?? 0);
-    const bs      = Number(row?.precio_bs  ?? 0);
-    if (usd < 0 || bs < 0) {
-      return res.status(400).json({ error:'bad_price', detail:`Precios negativos en ${rawSku}` });
+    if (VERSION_CELL) {
+      const vres = await sheets.spreadsheets.values.get({
+        spreadsheetId: SPREADSHEET_ID,
+        range: VERSION_CELL
+      });
+      version = String(vres.data.values?.[0]?.[0] ?? '').trim();
     }
+  } catch {}
 
-    // duplicados después de normalizar
-    if (seen.has(sku)) {
-      return res.status(400).json({ error:'dup_sku', detail:`SKU duplicado tras normalizar: ${sku}` });
+  try {
+    if (RATE_CELL) {
+      const rres = await sheets.spreadsheets.values.get({
+        spreadsheetId: SPREADSHEET_ID,
+        range: RATE_CELL
+      });
+      const raw = String(rres.data.values?.[0]?.[0] ?? '').replace(',','.');
+      const n = Number(raw);
+      if (Number.isFinite(n) && n > 0) rate = n;
     }
-    seen.add(sku);
+  } catch {}
 
-    const categoria = canonCategoria(row?.categoria);
+  return { version, rate };
+}
 
-    clean.push({
-      categoria,
-      sku,
-      unidad,
-      precio_usd: to2(usd),
-      precio_bs:  to2(bs)     // el editor recalcula en pantalla; guardamos como referencia
+/**
+ * Lee Hoja 3 con columnas:
+ * TIPO | PRODUCTO | PRESENTACION | UNIDAD | PRECIO (USD) | PRECIO (BS)
+ */
+async function _fetchPricesRaw() {
+  if (!SPREADSHEET_ID) throw new Error('Falta SHEETS_SPREADSHEET_ID');
+  const sheets = await getSheets();
+
+  // 1) leer tabla principal
+  const { data } = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${TAB3}!A1:F`
+  });
+  const values = data.values || [];
+  if (values.length === 0) return { prices: [], version: '', rate: DEFAULT_RATE };
+
+  // 2) mapear cabeceras
+  const header = values[0].map(h => norm(h));
+  const col = (nameCandidates) => {
+    for (const name of nameCandidates) {
+      const i = header.indexOf(norm(name));
+      if (i >= 0) return i;
+    }
+    return -1;
+  };
+
+  const idx = {
+    tipo:   col(['tipo', 'categoria']),
+    prod:   col(['producto', 'nombre']),
+    pres:   col(['presentacion', 'presentación']),
+    unidad: col(['unidad', 'u']),
+    usd:    col(['precio (usd)', 'preciousd', 'usd']),
+    bs:     col(['precio (bs)', 'preciobs', 'bs']),
+  };
+
+  // 3) filas -> objeto normalizado
+  const body = values.slice(1);
+  const items = [];
+  for (const row of body) {
+    const tipo   = row[idx.tipo]   ?? '';
+    const prod   = row[idx.prod]   ?? '';
+    const pres   = row[idx.pres]   ?? '';
+    const unidad = row[idx.unidad] ?? '';
+    const usdRaw = (row[idx.usd]   ?? '').toString().replace(',','.');
+    const bsRaw  = (row[idx.bs]    ?? '').toString().replace(',','.');
+
+    if (!prod && !pres) continue; // fila vacía
+
+    const precio_usd = to2(Number(usdRaw));
+    const precio_bs  = to2(Number(bsRaw));
+
+    items.push({
+      categoria: normCat(tipo),
+      sku: buildSku(prod, pres),
+      unidad: String(unidad||'').toUpperCase(),
+      precio_usd,
+      precio_bs
     });
   }
 
-  // ordenar por categoría y luego por SKU
-  clean.sort((a,b)=>{
-    const ca = orderCat[a.categoria] ?? 9;
-    const cb = orderCat[b.categoria] ?? 9;
-    return ca - cb || a.sku.localeCompare(b.sku);
+  // 4) metadatos (versión / tc)
+  let { version, rate } = await readVersionAndRate(sheets);
+
+  // Si no hay TC en celda, intenta inferirlo con mediana(Bs/Usd)
+  if (!Number.isFinite(rate) || rate <= 0) {
+    const ratios = items
+      .map(r => (r.precio_usd > 0 && r.precio_bs > 0) ? (r.precio_bs / r.precio_usd) : NaN)
+      .filter(x => Number.isFinite(x) && x > 0)
+      .sort((a,b)=>a-b);
+    if (ratios.length) {
+      const mid = Math.floor(ratios.length/2);
+      rate = ratios.length % 2 ? ratios[mid] : (ratios[mid-1] + ratios[mid]) / 2;
+    } else {
+      rate = DEFAULT_RATE;
+    }
+  }
+
+  // Si faltan Bs en alguna fila, complétalos con tc
+  for (const r of items) {
+    if (!(r.precio_bs > 0) && (r.precio_usd > 0)) {
+      r.precio_bs = to2(r.precio_usd * rate);
+    }
+  }
+
+  // Si no hay versión, usa timestamp
+  if (!version) version = String(Date.now());
+
+  // Orden por categoría y SKU
+  items.sort((a,b)=>{
+    const ord = { herbicida:0, insecticida:1, fungicida:2 };
+    return (ord[a.categoria]??9) - (ord[b.categoria]??9) || a.sku.localeCompare(b.sku);
   });
 
-  // backup antes de escribir
-  try{
-    if (fs.existsSync(PRICE_PATH)){
-      const stamp = new Date().toISOString().replace(/[:\.]/g,'-');
-      fs.writeFileSync(path.join(BK_DIR, `prices-${stamp}.json`), fs.readFileSync(PRICE_PATH));
-    }
-  }catch{}
+  return { prices: items, version, rate: +to2(rate) };
+}
 
-  writeAtomic(PRICE_PATH, JSON.stringify(clean, null, 2));
-  return res.json({ ok:true, version: fileVersion() });
+/* =========================
+   Caché en memoria
+   ========================= */
+let _cache = { prices: [], version: '0', rate: DEFAULT_RATE, ts: 0 };
+export async function getPrices({ force=false } = {}) {
+  const now = Date.now();
+  if (!force && _cache.ts && (now - _cache.ts) < TTL_MS) return _cache;
+  const fresh = await _fetchPricesRaw();
+  _cache = { ...fresh, ts: now };
+  return _cache;
+}
+export async function listPrices(){ return (await getPrices({})).prices; }
+export async function getBySku(sku=''){
+  const s = String(sku||'').trim().toLowerCase();
+  return (await listPrices()).find(r => r.sku.toLowerCase() === s) || null;
+}
+export async function findPrice({ producto, presentacion='' }){
+  const sku = buildSku(producto, presentacion).toLowerCase();
+  return (await listPrices()).find(r => r.sku.toLowerCase() === sku) || null;
+}
+
+/* =========================
+   Rutas públicas (read-only)
+   ========================= */
+router.get('/api/prices', async (_req,res) => {
+  try {
+    const { prices, version, rate, ts } = await getPrices({});
+    res.json({ prices, version, rate, updatedAt: ts });
+  } catch (e) {
+    console.error('[prices] /api/prices error:', e?.message || e);
+    res.status(500).json({ error: 'PRICE_READ_FAILED' });
+  }
 });
 
-/* ===== TC (rate) ===== */
-router.get('/admin/rate', agentAuth, (_req,res)=>{
-  res.json({ rate: loadRate() });
-});
-router.put('/admin/rate', agentAuth, (req,res)=>{
-  const rate = Number(req.body?.rate);
-  if (!Number.isFinite(rate) || rate <= 0) return res.status(400).json({ error:'bad_rate' });
-  writeAtomic(RATE_PATH, JSON.stringify({ rate: +rate.toFixed(4) }, null, 2));
-  res.json({ ok:true, rate: +rate.toFixed(4) });
+// Legacy para frontends que esperaban un JSON "plano"
+router.get('/price-data.json', async (_req,res) => {
+  try {
+    const { prices, version, rate } = await getPrices({});
+    res.json({ prices, version, rate });
+  } catch {
+    res.status(500).json({ error: 'PRICE_READ_FAILED' });
+  }
 });
 
 export default router;

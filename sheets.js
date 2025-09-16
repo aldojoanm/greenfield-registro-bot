@@ -526,4 +526,326 @@ export async function parseAndAppendClientResponse({ text, clientName }){
   return parsed;
 }
 
+/* =========================================================
+   NUEVO: Hoja 3 (PRECIOS) y Hoja 4 (HISTORIAL) — MISMA PLANILLA
+   ========================================================= */
+
+const SPREADSHEET_ID = process.env.SHEETS_SPREADSHEET_ID;
+
+// Nombres por defecto (puedes cambiarlos con variables de entorno)
+const TAB3_PRECIOS = process.env.SHEETS_TAB3_NAME || 'Hoja 3';
+const TAB4_HIST    = process.env.SHEETS_TAB4_NAME || 'Hoja 4';
+
+// Celdas para control de versión y TC (tipo de cambio) en Hoja 3.
+// Como tu fila 1 ya es encabezado (A:F), guardamos estos metadatos fuera (por defecto J1/J2).
+const PRECIOS_VERSION_CELL = process.env.SHEETS_PRICES_VERSION_CELL || `${TAB3_PRECIOS}!J1`;
+const PRECIOS_RATE_CELL    = process.env.SHEETS_PRICES_RATE_CELL    || `${TAB3_PRECIOS}!J2`;
+
+/**
+ * Lee precios desde Hoja 3 con encabezados:
+ * A: TIPO | B: PRODUCTO | C: PRESENTACION | D: UNIDAD | E: PRECIO (USD) | F: PRECIO (BS)
+ * Devuelve: { prices:[{categoria, sku, unidad, precio_usd, precio_bs}], version, rate }
+ */
+export async function readPrices() {
+  const sheets = await getSheets();
+
+  // 1) Leer versión y TC (si no existen, defaults)
+  let version = 1;
+  let rate = 6.96;
+
+  try {
+    const meta = await sheets.spreadsheets.values.batchGet({
+      spreadsheetId: SPREADSHEET_ID,
+      ranges: [PRECIOS_VERSION_CELL, PRECIOS_RATE_CELL],
+    });
+    const vRaw = meta.data.valueRanges?.[0]?.values?.[0]?.[0];
+    const rRaw = meta.data.valueRanges?.[1]?.values?.[0]?.[0];
+    version = Number(vRaw || 1);
+    rate = Number(rRaw || 6.96);
+  } catch {
+    // sin romper si no existen
+  }
+
+  // 2) Leer tabla (desde fila 2 porque fila 1 son encabezados)
+  const r = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${TAB3_PRECIOS}!A2:F`,
+  });
+
+  const rows = r.data.values || [];
+  const prices = rows
+    .filter(row => (row[0] || row[1] || row[2] || row[3] || row[4] || row[5]))
+    .map(row => {
+      const tipo = row[0] || '';
+      const producto = row[1] || '';
+      const presentacion = row[2] || '';
+      const unidad = row[3] || '';
+      const pUsd = Number((row[4] || '').toString().replace(',', '.')) || 0;
+      const pBs  = Number((row[5] || '').toString().replace(',', '.')) || 0;
+
+      // UI consume sku unificado "PRODUCTO-PRESENTACION"
+      const sku = presentacion ? `${producto}-${presentacion}` : producto;
+
+      return {
+        categoria: tipo,
+        sku,
+        unidad,
+        precio_usd: pUsd,
+        precio_bs: pBs
+      };
+    });
+
+  return { prices, version, rate };
+}
+
+/**
+ * Escribe precios en Hoja 3 (sobrescribe desde A2:F) con control de versión.
+ * expectedVersion: la versión que leyó el cliente; si no coincide con la actual → 409.
+ */
+export async function writePrices(prices, expectedVersion) {
+  const sheets = await getSheets();
+
+  // 1) Chequear versión actual
+  let currentVersion = 1;
+  try {
+    const cur = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_ID,
+      range: PRECIOS_VERSION_CELL,
+    });
+    currentVersion = Number(cur.data.values?.[0]?.[0] || 1);
+  } catch {}
+
+  if (Number(expectedVersion) !== Number(currentVersion)) {
+    const err = new Error('VERSION_MISMATCH');
+    err.code = 409;
+    throw err;
+  }
+
+  // 2) Preparar valores para A2:F
+  const body = {
+    values: (prices || []).map(p => {
+      // sku -> (producto, presentacion) separados para tu encabezado
+      let producto = '';
+      let presentacion = '';
+      const sku = String(p.sku || '').trim();
+      if (sku.includes('-')) {
+        const parts = sku.split('-');
+        producto = parts.shift() || '';
+        presentacion = parts.join('-') || '';
+      } else {
+        producto = sku;
+        presentacion = '';
+      }
+      return [
+        p.categoria || '',       // A: TIPO
+        producto || '',          // B: PRODUCTO
+        presentacion || '',      // C: PRESENTACION
+        p.unidad || '',          // D: UNIDAD
+        Number(p.precio_usd || 0), // E: PRECIO (USD)
+        Number(p.precio_bs || 0)   // F: PRECIO (BS)
+      ];
+    }),
+  };
+
+  // 3) Limpiar rango y reescribir
+  await sheets.spreadsheets.values.clear({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${TAB3_PRECIOS}!A2:F`,
+  });
+
+  if (body.values.length) {
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: SPREADSHEET_ID,
+      range: `${TAB3_PRECIOS}!A2`,
+      valueInputOption: 'RAW',
+      requestBody: body,
+    });
+  }
+
+  // 4) Incrementar versión
+  const nextVersion = Number(currentVersion) + 1;
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: SPREADSHEET_ID,
+    range: PRECIOS_VERSION_CELL,
+    valueInputOption: 'RAW',
+    requestBody: { values: [[ nextVersion ]] },
+  });
+
+  return nextVersion;
+}
+
+/** Lee el tipo de cambio (TC) desde Hoja 3 (celda PRECIOS_RATE_CELL). */
+export async function readRate() {
+  const sheets = await getSheets();
+  try {
+    const r = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_ID,
+      range: PRECIOS_RATE_CELL,
+    });
+    return Number(r.data.values?.[0]?.[0] || 6.96);
+  } catch {
+    return 6.96;
+  }
+}
+
+/** Escribe el tipo de cambio (TC) en Hoja 3 (celda PRECIOS_RATE_CELL). */
+export async function writeRate(rate) {
+  const sheets = await getSheets();
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: SPREADSHEET_ID,
+    range: PRECIOS_RATE_CELL,
+    valueInputOption: 'RAW',
+    requestBody: { values: [[ Number(rate || 0) ]] },
+  });
+  return true;
+}
+
+/* =============================
+   Hoja 4: HISTORIAL de mensajes
+   ============================= */
+
+/**
+ * Append de mensaje:
+ * Columnas: wa_id | nombre | ts_iso | role | content
+ */
+export async function appendMessage({ waId, name, ts, role, content }) {
+  const sheets = await getSheets();
+  const row = [
+    String(waId || ''),
+    String(name || ''),
+    new Date(ts || Date.now()).toISOString(),
+    String(role || ''),
+    String(content || ''),
+  ];
+  await sheets.spreadsheets.values.append({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${TAB4_HIST}!A1:E`,
+    valueInputOption: 'RAW',
+    insertDataOption: 'INSERT_ROWS',
+    requestBody: { values: [row] },
+  });
+}
+
+/**
+ * Lee historial (últimos N días) para un wa_id.
+ * Retorna [{wa_id,name,ts,role,content}] ordenado por ts asc.
+ */
+export async function historyForIdLastNDays(waId, days = 7) {
+  const sheets = await getSheets();
+  const r = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${TAB4_HIST}!A1:E`,
+  });
+  const since = Date.now() - days * 24 * 60 * 60 * 1000;
+  const rows = r.data.values || [];
+
+  // Si hay encabezado en fila 1, los datos empiezan en fila 2
+  const data = rows.slice(1);
+
+  return data
+    .map(row => ({
+      wa_id: row[0],
+      name: row[1],
+      ts: Date.parse(row[2]),
+      role: row[3],
+      content: row[4],
+    }))
+    .filter(x =>
+      x.wa_id === String(waId) &&
+      Number.isFinite(x.ts) &&
+      x.ts >= since
+    )
+    .sort((a, b) => a.ts - b.ts);
+}
+
+/**
+ * Resúmenes para Inbox (últimos N días).
+ * Retorna [{ id, name, last, lastTs }]
+ */
+export async function summariesLastNDays(days = 7) {
+  const sheets = await getSheets();
+  const r = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${TAB4_HIST}!A1:E`,
+  });
+  const since = Date.now() - days * 24 * 60 * 60 * 1000;
+  const rows = r.data.values || [];
+  const data = rows.slice(1);
+
+  const map = new Map(); // wa_id -> { id, name, last, lastTs }
+  for (const row of data) {
+    const wa_id = row[0];
+    const name  = row[1] || '';
+    const ts    = Date.parse(row[2]);
+    const role  = row[3] || '';
+    const content = row[4] || '';
+    if (!wa_id || !Number.isFinite(ts) || ts < since) continue;
+    const cur = map.get(wa_id) || { id: wa_id, name: name || wa_id, last: '', lastTs: 0 };
+    if (ts >= cur.lastTs) {
+      cur.name = name || wa_id;
+      cur.last = content || (role ? `[${role}]` : '');
+      cur.lastTs = ts;
+    }
+    map.set(wa_id, cur);
+  }
+  return [...map.values()];
+}
+
+/**
+ * Purga por chat (Hoja 4):
+ * Si un wa_id no tiene mensajes en los últimos N días, elimina TODAS sus filas.
+ * Mantiene la fila de encabezados.
+ */
+export async function pruneExpiredConversations(days = 7) {
+  const sheets = await getSheets();
+  const r = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${TAB4_HIST}!A1:E`,
+  });
+  const rows = r.data.values || [];
+  if (!rows.length) return { kept: 0, removed: 0 };
+
+  const header = rows[0] || ['wa_id','nombre','ts_iso','role','content'];
+  const data = rows.slice(1);
+
+  // agrupar por wa_id
+  const byId = new Map();
+  for (const row of data) {
+    const wa = row[0];
+    const ts = Date.parse(row[2]);
+    if (!wa || !Number.isFinite(ts)) continue;
+    const arr = byId.get(wa) || [];
+    arr.push({ row, ts });
+    byId.set(wa, arr);
+  }
+
+  const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+  const keepRows = [];
+  let removed = 0;
+  for (const [, arr] of byId.entries()) {
+    const lastTs = Math.max(...arr.map(x => x.ts));
+    if (lastTs >= cutoff) {
+      for (const x of arr) keepRows.push(x.row);
+    } else {
+      removed += arr.length;
+    }
+  }
+
+  // reescribir la hoja completa
+  const all = [header, ...keepRows];
+  await sheets.spreadsheets.values.clear({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${TAB4_HIST}!A1:E`,
+  });
+  if (all.length) {
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: SPREADSHEET_ID,
+      range: `${TAB4_HIST}!A1`,
+      valueInputOption: 'RAW',
+      requestBody: { values: all },
+    });
+  }
+  return { kept: keepRows.length, removed };
+}
+
 export { getSheets, buildRowFromSession };

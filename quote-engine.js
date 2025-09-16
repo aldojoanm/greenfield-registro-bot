@@ -1,27 +1,27 @@
-// quote-engine.js
+// quote-engine.js  (Lee precios desde Google Sheets vía prices.js)
+import { getPrices } from './prices.js';
 import fs from 'fs';
 import path from 'path';
 
-const PRICE_PATH = path.resolve('./knowledge/prices.json');
-const RATE_PATH  = path.resolve('./knowledge/rate.json');
-const CATALOG    = readJSON('./knowledge/catalog.json');
-
+const CATALOG = readJSON('./knowledge/catalog.json');
 function readJSON(p) {
-  try { return JSON.parse(fs.readFileSync(path.resolve(p),'utf8')); }
+  try { return JSON.parse(fs.readFileSync(path.resolve(p), 'utf8')); }
   catch { return Array.isArray ? [] : {}; }
 }
 
-/* ===== Normalización SKU / nombre / pack ===== */
+/* ===== Normalización ===== */
 function canonUnit(u=''){
   const t = String(u).toUpperCase();
   if (/KG|KILO/.test(t)) return 'KG';
-  return 'L';
+  if (/L|LT|LTS|LITRO/.test(t)) return 'L';
+  if (/UNID|UND|UNIDAD/.test(t)) return 'UNID';
+  return t || '';
 }
 function canonSku(s=''){
   return String(s||'')
     .trim()
     .toUpperCase()
-    .replace(/\s+/g,'')            // quita espacios (ej. "5 L" -> "5L")
+    .replace(/\s+/g,'')
     .replace(/LTS?|LT|LITROS?/g,'L')
     .replace(/KGS?|KILOS?/g,'KG');
 }
@@ -49,21 +49,17 @@ function splitSku(s=''){
   return { base, pack, canon: canonSku(raw) };
 }
 
-/* ===== Carga de precios con índice flexible ===== */
-function loadPricesIndex(){
-  let arr = [];
-  try { arr = JSON.parse(fs.readFileSync(PRICE_PATH,'utf8')); } catch {}
-
-  const bySku = new Map();           // clave: SKU tal cual
+/* ===== Índices flexibles sobre la lista de precios ===== */
+function buildPriceIndex(list=[]) {
+  const bySku = new Map();           // clave: SKU exacto
   const byCanon = new Map();         // clave: SKU canónico
   const byBasePack = new Map();      // clave: NOMBRE|UNIDAD|TAMANIO
 
   const keyBP = (base,unit,size)=> `${normName(base)}|${unit}|${size}`;
 
-  for (const r of arr){
+  for (const r of (list||[])) {
     const sku = String(r.sku||'').trim();
     if (!sku) continue;
-
     const cs = canonSku(sku);
     bySku.set(sku, r);
     byCanon.set(cs, r);
@@ -73,17 +69,7 @@ function loadPricesIndex(){
       byBasePack.set(keyBP(base, pack.unit, pack.size), r);
     }
   }
-  return { list: arr, bySku, byCanon, byBasePack };
-}
-
-function loadRate(){
-  try {
-    const j = JSON.parse(fs.readFileSync(RATE_PATH,'utf8'));
-    const r = Number(j?.rate);
-    if (Number.isFinite(r) && r > 0) return r;
-  } catch {}
-  // fallback
-  return Number(process.env.USD_BOB_RATE || '6.96');
+  return { list, bySku, byCanon, byBasePack };
 }
 
 function normalizeUnit(u=''){
@@ -115,26 +101,23 @@ function findCatalogBySKUorName(sku, name){
   return prod || {};
 }
 
-function asMoney(n){
-  const x = Number(n||0);
-  return Math.round(x * 100) / 100;
-}
+const asMoney = (n)=> Math.round((Number(n)||0) * 100) / 100;
 
-/* ===== Resolver precio siguiendo varias rutas ===== */
+/* ===== Resolver precio contra índices ===== */
 function resolvePriceUSD(idx, { sku, nombre, presentacion }, rate){
-  // 1) Directo por SKU exacto
+  // 1) Por SKU exacto
   let row = idx.bySku.get(String(sku||'').trim());
   if (!row){
-    // 2) Por SKU canónico (espacios/mayúsculas)
+    // 2) Por SKU canónico
     row = idx.byCanon.get(canonSku(sku||''));
   }
   if (!row && nombre && presentacion){
-    // 3) Recomponer el SKU a partir de nombre + presentación
+    // 3) Recomponer sku = nombre-presentación
     const candidate = `${String(nombre).trim()}-${String(presentacion).trim()}`;
     row = idx.byCanon.get(canonSku(candidate));
   }
   if (!row){
-    // 4) Por nombre base + pack (20L, 200L, 1KG, etc.)
+    // 4) Por nombre base + pack (20L, 200L, 1KG, ...)
     const nm = String(nombre||'').trim() || splitSku(String(sku||'')).base;
     const pack = parsePackFromText(String(presentacion||'')) || splitSku(String(sku||'')).pack;
     if (nm && pack){
@@ -148,10 +131,13 @@ function resolvePriceUSD(idx, { sku, nombre, presentacion }, rate){
   return asMoney(usd || 0);
 }
 
-export function buildQuoteFromSession(s, opts={}){
-  const idx    = loadPricesIndex();
-  const rate   = loadRate();
-  const now    = new Date();
+/* ====== Público ====== */
+export async function buildQuoteFromSession(s, opts={}) {
+  // Trae precios y TC desde Sheets (Hoja 3) usando prices.js
+  const { prices: sheetList = [], rate } = await getPrices({});
+
+  const idx  = buildPriceIndex(sheetList);
+  const now  = new Date();
 
   // Datos del cliente
   const nombre   = s.profileName || 'Cliente';
@@ -161,7 +147,7 @@ export function buildQuoteFromSession(s, opts={}){
   const ha       = s?.vars?.hectareas || 'ND';
   const campana  = s?.vars?.campana || 'ND';
 
-  // Productos (carrito o último producto)
+  // Ítems (carrito o último producto)
   const itemsRaw = (s?.vars?.cart && s.vars.cart.length)
     ? s.vars.cart
     : (s?.vars?.last_sku && s?.vars?.cantidad ? [{
@@ -208,6 +194,6 @@ export function buildQuoteFromSession(s, opts={}){
     total_usd: total,
     min_order_usd: 3000,
     moneda: 'USD',
-    price_catalog: idx.list
+    price_catalog: idx.list   // ← para lookup en el PDF
   };
 }

@@ -3,22 +3,16 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Gestión de precios — New Chem</title>
+<title>Lista de precios — New Chem</title>
 <style>
-  :root{ --bg:#0b141a; --panel:#111b21; --ring:#233138; --txt:#e9edef; --muted:#9bb0ba; --accent:#00a884; --danger:#ef4444; }
-  *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--txt);font:14px/1.4 system-ui,Segoe UI,Roboto}
+  :root{ --bg:#0b141a; --panel:#111b21; --ring:#233138; --txt:#e9edef; --muted:#9bb0ba; --accent:#00a884; }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);font:14px/1.45 system-ui,Segoe UI,Roboto}
   .wrap{max-width:1100px;margin:28px auto;padding:0 16px}
   .card{background:#101a21;border:1px solid var(--ring);border-radius:14px;box-shadow:0 8px 24px rgba(0,0,0,.25)}
-  .top{display:flex;gap:8px;align-items:center;padding:12px 14px;border-bottom:1px solid var(--ring)}
-  .top input{flex:1;background:#1c2b33;border:1px solid var(--ring);color:var(--txt);padding:10px;border-radius:10px}
-  .btn{background:var(--accent);color:#06372f;border:0;border-radius:10px;padding:10px 14px;font-weight:700;cursor:pointer}
-  .btn.ghost{background:#1c2b33;color:#cde;border:1px solid var(--ring)}
+  .header{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--ring)}
+  .title{font-weight:800}
   .muted{color:var(--muted);font-size:12px}
-  .bar{display:flex;gap:8px;align-items:center;justify-content:space-between;padding:10px 14px}
-  .bar-right{display:flex;gap:8px;align-items:center}
-  .tc{display:flex;gap:6px;align-items:center;background:#0f1820;border:1px solid var(--ring);padding:8px 10px;border-radius:10px}
-  .tc label{color:#9bb0ba;font-size:12px}
-  .tc input{width:90px;background:#1c2b33;border:1px solid var(--ring);color:#fff;padding:6px 8px;border-radius:8px}
   .section{margin:0 14px 18px;border:1px solid var(--ring);border-radius:10px;overflow:auto;max-height:60vh}
   .section-head{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--ring);background:#0f1820;border-top-left-radius:10px;border-top-right-radius:10px}
   .section-title{font-weight:700}
@@ -26,50 +20,34 @@
   th,td{border-bottom:1px solid var(--ring);padding:10px 12px;text-align:left;vertical-align:middle}
   th{background:#0f1820;position:sticky;top:0}
   tbody tr:hover{background:#0f1f27}
-  td[contenteditable="true"]{outline:none;border-radius:6px}
-  td[contenteditable="true"]:focus{box-shadow:0 0 0 2px #0aa;background:#0c1b22}
   .right{text-align:right}
   .center{text-align:center}
-  .toast{position:fixed;right:16px;bottom:16px;background:#092e25;color:#bff2e6;border:1px solid #125547;padding:10px 12px;border-radius:10px}
-  tr[data-editing="1"] td{ background:#0c1b22; }
-  tr.empty td{ color:var(--muted); font-style:italic; }
+  .empty{color:var(--muted);font-style:italic}
+  .pill{background:#0f1820;border:1px solid var(--ring);padding:6px 10px;border-radius:999px}
 </style>
 </head>
 <body>
 <div class="wrap">
   <div class="card">
-    <div class="top">
-      <input id="token" placeholder="Pega tu AGENT_TOKEN" autocomplete="off">
-      <button class="btn" id="load">Cargar</button>
-    </div>
-
-    <div class="bar">
-      <div class="muted" id="hint">Usa “Editar” por fila. Solo USD es editable; Bs se calcula con el TC.</div>
-      <div class="bar-right">
-        <div class="tc">
-          <label for="tc">TC</label>
-          <input id="tc" type="number" step="0.01" min="0" value="6.96" />
-        </div>
-        <button class="btn ghost" id="reload">Deshacer cambios</button>
-        <button class="btn" id="save">Guardar</button>
-      </div>
+    <div class="header">
+      <div class="title">Lista de precios</div>
+      <div class="muted"><span id="price-meta">Cargando…</span></div>
     </div>
 
     <!-- HERBICIDAS -->
-    <div class="section" id="sec-herb">
+    <div class="section">
       <div class="section-head">
         <div class="section-title">Herbicidas</div>
-        <!-- (sin botón Agregar fila) -->
+        <div class="pill">USD y Bs calculados con TC</div>
       </div>
       <table>
         <thead>
           <tr>
-            <th style="width:28%">Producto</th>
-            <th style="width:16%">Presentación</th>
-            <th style="width:10%">Unidad</th>
-            <th class="right" style="width:20%">Precio (USD)</th>
-            <th class="right" style="width:20%">Precio (Bs)</th>
-            <th style="width:6%"></th>
+            <th style="width:32%">Producto</th>
+            <th style="width:18%">Presentación</th>
+            <th style="width:12%">Unidad</th>
+            <th class="right" style="width:19%">Precio (USD)</th>
+            <th class="right" style="width:19%">Precio (Bs)</th>
           </tr>
         </thead>
         <tbody id="tbody-herb"></tbody>
@@ -77,20 +55,19 @@
     </div>
 
     <!-- INSECTICIDAS -->
-    <div class="section" id="sec-insec">
+    <div class="section">
       <div class="section-head">
         <div class="section-title">Insecticidas</div>
-        <!-- (sin botón Agregar fila) -->
+        <div class="pill">USD y Bs calculados con TC</div>
       </div>
       <table>
         <thead>
           <tr>
-            <th style="width:28%">Producto</th>
-            <th style="width:16%">Presentación</th>
-            <th style="width:10%">Unidad</th>
-            <th class="right" style="width:20%">Precio (USD)</th>
-            <th class="right" style="width:20%">Precio (Bs)</th>
-            <th style="width:6%"></th>
+            <th style="width:32%">Producto</th>
+            <th style="width:18%">Presentación</th>
+            <th style="width:12%">Unidad</th>
+            <th class="right" style="width:19%">Precio (USD)</th>
+            <th class="right" style="width:19%">Precio (Bs)</th>
           </tr>
         </thead>
         <tbody id="tbody-insec"></tbody>
@@ -98,36 +75,29 @@
     </div>
 
     <!-- FUNGICIDAS -->
-    <div class="section" id="sec-fung">
+    <div class="section">
       <div class="section-head">
         <div class="section-title">Fungicidas</div>
-        <!-- (sin botón Agregar fila) -->
+        <div class="pill">USD y Bs calculados con TC</div>
       </div>
       <table>
         <thead>
           <tr>
-            <th style="width:28%">Producto</th>
-            <th style="width:16%">Presentación</th>
-            <th style="width:10%">Unidad</th>
-            <th class="right" style="width:20%">Precio (USD)</th>
-            <th class="right" style="width:20%">Precio (Bs)</th>
-            <th style="width:6%"></th>
+            <th style="width:32%">Producto</th>
+            <th style="width:18%">Presentación</th>
+            <th style="width:12%">Unidad</th>
+            <th class="right" style="width:19%">Precio (USD)</th>
+            <th class="right" style="width:19%">Precio (Bs)</th>
           </tr>
         </thead>
         <tbody id="tbody-fung"></tbody>
       </table>
     </div>
-
   </div>
 </div>
 
-<div id="toast" class="toast" style="display:none"></div>
-
 <script>
 const $ = s => document.querySelector(s);
-const tokenInput = $('#token');
-const tcInput = $('#tc');
-const toast = $('#toast');
 
 const TBODYS = {
   herb: $('#tbody-herb'),
@@ -135,228 +105,61 @@ const TBODYS = {
   fung: $('#tbody-fung'),
 };
 
-let TOKEN = localStorage.getItem('nc_token') || '';
-let VERSION = '0';
-let TC = Number(localStorage.getItem('nc_tc') || '6.96') || 6.96;
-tokenInput.value = TOKEN;
-tcInput.value = TC.toFixed(2);
-
-function showToast(t){ toast.textContent = t; toast.style.display='block'; setTimeout(()=>toast.style.display='none', 2500); }
 function esc(s){ return String(s ?? '').replace(/[&<>"]/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m])); }
-function num(v){ const n = Number(String(v).replace(',', '.')); return Number.isFinite(n) ? n : 0; }
-function fmt2(n){ return (Number(n)||0).toFixed(2); }
+function fmt2(n){ n = Number(n)||0; return n.toFixed(2); }
 
 function parseSKU(sku=''){
-  const parts = String(sku).trim().split('-');
-  if (parts.length <= 1) return { producto: parts[0] || '', presentacion: '' };
+  const parts = String(sku).split('-');
+  if (parts.length <= 1) return { producto: sku, presentacion: '' };
   return { producto: parts[0], presentacion: parts.slice(1).join('-') };
 }
-function buildSKU(producto='', presentacion=''){
-  producto = String(producto||'').trim();
-  presentacion = String(presentacion||'').trim();
-  return presentacion ? `${producto}-${presentacion}` : producto;
-}
 
-function rowTpl(p){
-  const {producto, presentacion} = parseSKU(p?.sku || '');
+function rowTpl(p, rate){
+  const { producto, presentacion } = parseSKU(p?.sku || '');
+  const usd = Number(p?.precio_usd || 0);
+  const bs  = Number(p?.precio_bs  || (usd*rate));
   return `
-  <tr data-editing="0">
-    <td data-key="producto">${esc(producto)}</td>
-    <td data-key="presentacion">${esc(presentacion)}</td>
-    <td data-key="unidad">${esc(p?.unidad||'')}</td>
-    <td data-key="precio_usd" class="right">${fmt2(p?.precio_usd)}</td>
-    <td data-key="precio_bs"  class="right">${fmt2(p?.precio_bs)}</td>
-    <td class="right"><button class="btn ghost edit">Editar</button></td>
-  </tr>`;
+    <tr>
+      <td>${esc(producto)}</td>
+      <td>${esc(presentacion)}</td>
+      <td>${esc(p?.unidad || '')}</td>
+      <td class="right">${fmt2(usd)}</td>
+      <td class="right">${fmt2(bs)}</td>
+    </tr>`;
 }
 
-function emptyTpl(msg='Sin productos en esta categoría'){
-  return `<tr class="empty"><td class="center" colspan="6">${esc(msg)}</td></tr>`;
-}
-
-function computeBsForRow(tr){
-  const usdEl = tr.querySelector('[data-key="precio_usd"]');
-  const bsEl  = tr.querySelector('[data-key="precio_bs"]');
-  if(!usdEl || !bsEl) return;
-  const usd = num(usdEl.textContent || 0);
-  const bs = usd * TC;
-  bsEl.textContent = fmt2(bs);
-}
-function recalcAllBs(){
-  document.querySelectorAll('tbody tr:not(.empty)').forEach(tr => computeBsForRow(tr));
-}
-
-function enterEdit(tr, btn){
-  const usdCell = tr.querySelector('[data-key="precio_usd"]');
-  tr.dataset.editing = '1';
-  btn.textContent = 'Guardar';
-  usdCell.setAttribute('contenteditable','true');
-  // enfocar al final
-  const range = document.createRange();
-  range.selectNodeContents(usdCell); range.collapse(false);
-  const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
-  usdCell.focus();
-}
-function exitEdit(tr, btn){
-  const usdCell = tr.querySelector('[data-key="precio_usd"]');
-  tr.dataset.editing = '0';
-  btn.textContent = 'Editar';
-  usdCell.textContent = fmt2(num(usdCell.textContent));
-  computeBsForRow(tr);
-  usdCell.setAttribute('contenteditable','false');
-}
-
-function bindRowEvents(scope){
-  // Evitar enlazar sobre filas vacías
-  scope.querySelectorAll('tr:not(.empty) .edit').forEach(btn=>{
-    btn.onclick = (e)=>{
-      const tr = e.target.closest('tr');
-      const editing = tr?.dataset.editing === '1';
-      if (!editing) enterEdit(tr, e.target);
-      else exitEdit(tr, e.target);
-    };
-  });
-
-  // Recalcular Bs mientras se edita USD
-  scope.querySelectorAll('tr:not(.empty) [data-key="precio_usd"]').forEach(cell=>{
-    cell.addEventListener('input', ()=> computeBsForRow(cell.closest('tr')));
-    cell.addEventListener('blur',  ()=> {
-      const tr = cell.closest('tr');
-      if (tr?.dataset.editing === '1'){
-        cell.textContent = fmt2(num(cell.textContent));
-        computeBsForRow(tr);
-      }
-    });
-  });
-}
-
-function renderSections(prices){
-  // limpiar
-  Object.values(TBODYS).forEach(tb=> tb.innerHTML = '');
-  // dividir por categoría
-  const norm = s => String(s||'').toLowerCase();
+function render(prices, rate){
   const groups = { herb: [], insec: [], fung: [] };
+  const norm = s => String(s||'').toLowerCase();
+
   for (const p of prices){
     const c = norm(p.categoria);
     if (c === 'insecticida') groups.insec.push(p);
     else if (c === 'fungicida') groups.fung.push(p);
     else groups.herb.push(p);
   }
-  // pintar
-  TBODYS.herb.innerHTML  = groups.herb.length  ? groups.herb.map(rowTpl).join('')  : emptyTpl();
-  TBODYS.insec.innerHTML = groups.insec.length ? groups.insec.map(rowTpl).join('') : emptyTpl();
-  TBODYS.fung.innerHTML  = groups.fung.length  ? groups.fung.map(rowTpl).join('')  : emptyTpl();
 
-  bindRowEvents(TBODYS.herb);
-  bindRowEvents(TBODYS.insec);
-  bindRowEvents(TBODYS.fung);
-  recalcAllBs();
+  const empty = `<tr><td class="center empty" colspan="5">Sin productos</td></tr>`;
+  TBODYS.herb.innerHTML  = groups.herb.length  ? groups.herb.map(x=>rowTpl(x,rate)).join('')  : empty;
+  TBODYS.insec.innerHTML = groups.insec.length ? groups.insec.map(x=>rowTpl(x,rate)).join('') : empty;
+  TBODYS.fung.innerHTML  = groups.fung.length  ? groups.fung.map(x=>rowTpl(x,rate)).join('')  : empty;
 }
 
-function readTable(){
-  const rows = [];
-  const grab = (tbody, categoria) => {
-    tbody.querySelectorAll('tr:not(.empty)').forEach(tr=>{
-      const get = k => tr.querySelector(`[data-key="${k}"]`)?.textContent?.trim() ?? '';
-      const prod = get('producto');
-      const pres = get('presentacion');
-      const sku = buildSKU(prod, pres);
-      if (!sku) return;
-      rows.push({
-        categoria,
-        sku,
-        unidad: get('unidad'),
-        precio_usd: num(get('precio_usd')),
-        precio_bs:  num(get('precio_bs'))
-      });
-    });
-  };
-  grab(TBODYS.herb, 'herbicida');
-  grab(TBODYS.insec,'insecticida');
-  grab(TBODYS.fung, 'fungicida');
-  return rows;
-}
+(async function init(){
+  try{
+    const res = await fetch('/api/prices', { cache: 'no-store' });
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    const { prices=[], rate=0, version='' } = await res.json();
 
-async function load(){
-  const token = tokenInput.value.trim();
-  if(!token){ alert('Pega tu AGENT_TOKEN'); return; }
-  TOKEN = token; localStorage.setItem('nc_token', TOKEN);
-
-  const [rp, rr] = await Promise.all([
-    fetch('/admin/prices', { headers:{ 'Authorization':'Bearer '+TOKEN }}),
-    fetch('/admin/rate',   { headers:{ 'Authorization':'Bearer '+TOKEN }})
-  ]);
-  if (rp.status===401 || rr.status===401){ alert('Token inválido'); return; }
-  if (!rp.ok){ alert('Error al leer /admin/prices'); return; }
-
-  const {prices=[], version='0'} = await rp.json();
-  VERSION = version;
-
-  if (rr.ok){
-    const { rate } = await rr.json();
-    if (Number.isFinite(rate)){
-      TC = Number(rate);
-      tcInput.value = TC.toFixed(2);
-      localStorage.setItem('nc_tc', TC.toFixed(2));
-    }
+    $('#price-meta').textContent = `Versión ${version} • TC ${fmt2(rate)}`;
+    render(prices, rate);
+  }catch(e){
+    console.error(e);
+    $('#price-meta').textContent = 'Error cargando precios';
+    TBODYS.herb.innerHTML = TBODYS.insec.innerHTML = TBODYS.fung.innerHTML =
+      `<tr><td class="center empty" colspan="5">No se pudo cargar</td></tr>`;
   }
-
-  renderSections(prices);
-  showToast('Precios cargados');
-}
-
-async function save(){
-  const prices = readTable();
-
-  // validaciones
-  const seen = new Set();
-  for (const p of prices){
-    if (!p.sku) return alert('Hay un SKU vacío.');
-    if (seen.has(p.sku)) return alert('SKU duplicado: ' + p.sku);
-    seen.add(p.sku);
-    if (p.precio_usd < 0 || p.precio_bs < 0) return alert('No permitidos precios negativos.');
-  }
-
-  // 1) guardar TC
-  const r1 = await fetch('/admin/rate', {
-    method:'PUT',
-    headers:{ 'Authorization':'Bearer '+TOKEN, 'Content-Type':'application/json' },
-    body: JSON.stringify({ rate: Number(tcInput.value) || 0 })
-  });
-  if (!r1.ok){ alert('No se pudo guardar TC'); return; }
-
-  // 2) guardar precios
-  const r2 = await fetch('/admin/prices', {
-    method:'PUT',
-    headers:{ 'Authorization':'Bearer '+TOKEN, 'Content-Type':'application/json' },
-    body: JSON.stringify({ prices, version: VERSION })
-  });
-  if (r2.status === 409){
-    alert('Otro usuario modificó la lista. Recargando.');
-    await load();
-    return;
-  }
-  if (!r2.ok){ alert('No se pudo guardar precios'); return; }
-
-  const j = await r2.json().catch(()=>({}));
-  VERSION = j.version || VERSION;
-  showToast('Guardado ✓');
-}
-
-// botones
-$('#load').onclick   = load;
-$('#reload').onclick = load;
-$('#save').onclick   = save;
-
-// TC -> recalcular y persistir en local
-tcInput.addEventListener('input', ()=>{
-  const v = Number(tcInput.value) || 0;
-  TC = v;
-  localStorage.setItem('nc_tc', TC.toFixed(2));
-  recalcAllBs();
-});
-
-(async ()=>{ if (TOKEN) load(); })();
+})();
 </script>
 </body>
 </html>

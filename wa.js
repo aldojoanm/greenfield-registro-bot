@@ -3,6 +3,7 @@ import express from 'express';
 import fs from 'fs';
 import path from 'path';
 import { appendFromSession, parseAndAppendClientResponse } from './sheets.js';
+import { appendChatHistoryRow, purgeOldChatHistory } from './sheets.js'; // ← NUEVO (Hoja 4)
 import { sendAutoQuotePDF } from './quote.js';
 
 const router = express.Router();
@@ -281,16 +282,36 @@ function guessMimeByExt(filePath='') {
 
 function remember(id, role, content){
   const s = S(id);
+  const now = Date.now();
+
   if (role === 'user' && s._closedAt) delete s._closedAt;
-  s.memory.push({ role, content, ts: Date.now() });
+
+  // Memoria local (para tu panel)
+  s.memory.push({ role, content, ts: now });
   if (s.memory.length > 500) s.memory = s.memory.slice(-500);
+
   s.meta = s.meta || {};
-  s.meta.lastMsg = { role, content, ts: Date.now() };
-  s.meta.lastAt  = Date.now();
+  s.meta.lastMsg = { role, content, ts: now };
+  s.meta.lastAt  = now;
   if (role === 'user') s.meta.unread = (s.meta.unread || 0) + 1;
+
   persistS(id);
-  broadcastAgent('msg', { id, role, content, ts: Date.now() });
+  broadcastAgent('msg', { id, role, content, ts: now });
+
+  // === Respaldo en Google Sheets: Hoja 4 (wa_id | nombre | ts_iso | role | content)
+  try {
+    const nombre = s.profileName || '';
+    const ts_iso = new Date(now).toISOString();
+    // ⚠️ NO esperes esta promesa para no frenar el flujo de WhatsApp
+    appendChatHistoryRow({ wa_id: id, nombre, ts_iso, role, content }).catch(() => {});
+  } catch {}
 }
+
+// purga automática cada 6h (borra filas con ts_iso > 7 días)
+setInterval(() => {
+  try { purgeOldChatHistory(7).catch(() => {}); } catch {}
+}, 6 * 60 * 60 * 1000).unref?.();
+
 
 const normalizeCatLabel = (c='')=>{
   const t=norm(c);
