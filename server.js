@@ -106,29 +106,47 @@ app.post('/wa/agent/import-whatsapp', auth, async (req, res) => {
 });
 
 // Lista de conversaciones (lee Hoja 4)
+// Lista de conversaciones (Hoja 4 + STATE para garantizar que aparezcan tras el import)
 app.get('/wa/agent/convos', auth, async (_req, res) => {
   try {
-    const items = await summariesLastNDays(3650); // mostrará todo lo que haya
-    const convos = items
+    const items = await summariesLastNDays(3650); // lee Hoja 4
+    const map = new Map(items.map(it => [String(it.id), { ...it }]));
+
+    // Mezcla STATE (precargado por /import-whatsapp)
+    for (const [id, st] of STATE.entries()) {
+      if (!map.has(id)) {
+        map.set(id, { id, name: st.name || id, last: st.last || '', lastTs: 0 });
+      } else {
+        const it = map.get(id);
+        it.name = st.name || it.name || id;
+        it.last = st.last || it.last || '';
+        map.set(id, it);
+      }
+    }
+
+    const convos = [...map.values()]
       .map(it => {
-        const st = STATE.get(it.id) || { human:false, unread:0 };
+        const st = STATE.get(String(it.id)) || { human: false, unread: 0 };
         return {
-          id: it.id,
-          name: st.name || it.name || it.id,
-          last: st.last || it.last || '',
+          id: String(it.id),
+          name: it.name || String(it.id),
+          last: it.last || '',
           unread: st.unread || 0,
           human: !!st.human,
           lastTs: it.lastTs || 0,
         };
       })
-      .sort((a,b)=> b.lastTs - a.lastTs)
-      .map(({lastTs, ...rest}) => rest); // la UI no necesita lastTs
+      .sort((a, b) => b.lastTs - a.lastTs)
+      .map(({ lastTs, ...rest }) => rest);
+
     res.json({ convos });
   } catch (e) {
     console.error('[convos]', e);
     res.status(500).json({ error: 'no se pudo leer Hoja 4' });
   }
 });
+
+
 
 // Historial por chat
 app.get('/wa/agent/history/:id', auth, async (req, res) => {

@@ -81,7 +81,7 @@
     <div class="top">
       <input id="search" placeholder="Buscar...">
       <button class="btn sm" id="refresh" title="Refrescar (Sheets)">⟳</button>
-      <button class="btn sm" id="importAll" title="Importar WhatsApp (Sheets)">⬇️ Importar WA</button>
+      <button class="btn sm" id="importWA" title="Importar WhatsApp (Sheets)">📥 Importar WA</button>
       <button class="btn sm" id="logout" title="Salir">Salir</button>
     </div>
     <div class="list" id="list"></div>
@@ -265,23 +265,28 @@ async function openChat(id){
   }finally{ openLock = false; }
 }
 
-document.getElementById('importAll').onclick = async () => {
-  if (!confirm('Importar todos los chats desde Sheets (Hoja 4)?')) return;
+// Botón Importar WA (tras bootstrap y junto a los otros onClick)
+document.getElementById('importWA').onclick = async ()=>{
   try{
     const r = await fetch('/wa/agent/import-whatsapp', {
       method: 'POST',
       headers: api.headers(),
-      body: JSON.stringify({ days: 3650 }) // ~10 años, ajusta si quieres
+      body: JSON.stringify({ days: 3650 }) // leer todo
     });
-    if (r.status === 401){ await forceReauth(); return document.getElementById('importAll').click(); }
-    if (!r.ok) throw 0;
-    const data = await r.json();
-    alert(`Listo. Importados ${data.imported||0} chats.`);
-    await refresh(true);
-  }catch{
+    if (r.status === 401){ await forceReauth(); return document.getElementById('importWA').click(); }
+    const j = await r.json();
+    if (!r.ok) throw new Error(j?.error || 'Error');
+
+    alert(`Listo. Importados ${j.imported} chats.`);
+    await refresh(true);                  // ← clave: recargar y abrir el primero
+    if (window.innerWidth < 900) {        // en móvil, mostrar la columna izquierda
+      app.classList.add('show-left');
+    }
+  }catch(e){
     alert('No se pudo importar desde Sheets.');
   }
 };
+
 
 document.getElementById('send').onclick = async ()=>{
   const txt = box.value.trim(); if(!txt || !current) return;
