@@ -9,6 +9,8 @@ const BRAND = {
   indigo: '#5a66ac',
   cyan:   '#46acc4',
 };
+
+// Valores que tú configuras (pueden venir mal, por eso los saneamos abajo)
 const TINT = {
   headerPurple: '#A6A2B6', // morado un poco más fuerte para el encabezado
   rowPurple:    '#F2F4F6', // morado muy suave para TODAS las filas de la tabla
@@ -17,6 +19,44 @@ const TINT = {
 
 const GRID = '#000000';     // líneas negras en toda la tabla
 
+/* ========= Helpers de color (robustos) ========= */
+function normalizeHex(s) {
+  let v = String(s ?? '').trim();
+  if (!v) return null;
+  if (v[0] !== '#') v = `#${v}`;
+  if (/^#([0-9a-fA-F]{3})$/.test(v)) {
+    // expandimos #ABC -> #AABBCC
+    const r = v[1], g = v[2], b = v[3];
+    return `#${r}${r}${g}${g}${b}${b}`.toUpperCase();
+  }
+  if (/^#([0-9a-fA-F]{6})$/.test(v)) return v.toUpperCase();
+  return null;
+}
+const safeTINT = {
+  headerPurple: normalizeHex(TINT.headerPurple) || '#A6A2B6',
+  rowPurple:    normalizeHex(TINT.rowPurple)    || '#F2F4F6',
+  totalBlue:    normalizeHex(TINT.totalBlue)    || '#E9C46A',
+};
+
+// Relleno seguro (si el color fallara, usa negro muy clarito)
+function fillRect(doc, x, y, w, h, color) {
+  const c = normalizeHex(color) || '#EEEEEE';
+  try {
+    doc.save();
+    doc.fillColor(c);
+    doc.rect(x, y, w, h).fill();
+    doc.restore();
+  } catch {
+    // último recurso, sin color
+    try {
+      doc.save();
+      doc.rect(x, y, w, h).fill();
+      doc.restore();
+    } catch {}
+  }
+}
+
+/* ========= Otros helpers ========= */
 function fmtDateTZ(date = new Date(), tz = TZ) {
   try {
     const f = new Intl.DateTimeFormat('es-BO', {
@@ -33,8 +73,7 @@ function money(n){
   const s = (Number(n||0)).toFixed(2);
   return s.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 }
-
-// — Redondeo contable a 2 decimales (half-away-from-zero de Math.round) —
+// — Redondeo contable a 2 decimales —
 function round2(n){ return Math.round((Number(n)||0) * 100) / 100; }
 // — Acumular en centavos para evitar drift —
 function toCents(n){ return Math.round((Number(n)||0) * 100); }
@@ -231,10 +270,9 @@ export async function renderQuotePDF(quote, outPath, company = {}){
   const tableX = xMargin;
   const tableW = cols.reduce((a,c)=>a+c.w,0);
 
-  // Encabezado: morado un poco más fuerte
+  // Encabezado
   const headerH = 28;
-  doc.save();
-  doc.rect(tableX, y, tableW, headerH).fill(TINT.headerPurple);
+  fillRect(doc, tableX, y, tableW, headerH, safeTINT.headerPurple);
   doc.fillColor('#111').font('Helvetica-Bold').fontSize(9);
   {
     let cx = tableX;
@@ -246,7 +284,6 @@ export async function renderQuotePDF(quote, outPath, company = {}){
       cx += cdef.w;
     }
   }
-  doc.restore();
   y += headerH;
 
   const ensureSpace = (need = 90) => {
@@ -274,8 +311,6 @@ export async function renderQuotePDF(quote, outPath, company = {}){
   let accUsdCents = 0;
   let accBsCents  = 0;
 
-  let rowIndex = 0;
-
   for (const itRaw of (quote.items || [])){
     // 1) Precio unitario
     let precioUSD = Number(itRaw.precio_usd || 0);
@@ -283,7 +318,7 @@ export async function renderQuotePDF(quote, outPath, company = {}){
       precioUSD = lookupFromCatalog(quote.price_catalog || company.priceList || [], itRaw) || 0;
     }
     precioUSD = round2(precioUSD);
-    const precioBsUnit  = round2(precioUSD * rate); // 2 decimales estrictos
+    const precioBsUnit  = round2(precioUSD * rate);
 
     // 2) Cantidad (respeta redondeo por pack)
     const cantOrig  = Number(itRaw.cantidad || 0);
@@ -291,7 +326,7 @@ export async function renderQuotePDF(quote, outPath, company = {}){
     let cantidad = cantOrig;
     if (pack) cantidad = roundQuantityByPack(cantOrig, pack, itRaw.unidad);
 
-    // 3) Subtotales a 2 decimales exactos
+    // 3) Subtotales
     const subUSD = round2(precioUSD   * cantidad);
     const subBs  = round2(precioBsUnit * cantidad);
 
@@ -319,10 +354,7 @@ export async function renderQuotePDF(quote, outPath, company = {}){
     const rowH = Math.max(...cellHeights);
     ensureSpace(rowH + 10);
 
-    doc.save();
-    doc.rect(tableX, y, tableW, rowH).fill(TINT.rowPurple);
-    doc.restore();
-    
+    fillRect(doc, tableX, y, tableW, rowH, safeTINT.rowPurple);
 
     // Contenido + bordes negros
     let tx = tableX;
@@ -337,10 +369,9 @@ export async function renderQuotePDF(quote, outPath, company = {}){
       tx += cdef.w;
     }
     y += rowH;
-    rowIndex++;
   }
 
-  // Totales (suma de subtotales)
+  // Totales
   const totalUSD = accUsdCents / 100;
   const totalBs  = accBsCents  / 100;
 
@@ -355,15 +386,12 @@ export async function renderQuotePDF(quote, outPath, company = {}){
 
   const totalRowH = 26;
 
-  // Celda "Total" — EN BLANCO (solo bordes)
+  // Celda "Total"
   doc.rect(tableX, y, wUntilCol6, totalRowH).strokeColor(GRID).lineWidth(0.9).stroke();
   doc.font('Helvetica-Bold').fillColor('#111').text('Total', tableX, y+6, { width: wUntilCol6, align: 'center' });
 
-  doc.save();
-  doc.rect(tableX + wUntilCol6, y, wCol7, totalRowH).fill(TINT.totalBlue);
-  doc.rect(tableX + wUntilCol6 + wCol7, y, wCol8, totalRowH).fill(TINT.totalBlue);
-  doc.restore();
-
+  fillRect(doc, tableX + wUntilCol6, y, wCol7, totalRowH, safeTINT.totalBlue);
+  fillRect(doc, tableX + wUntilCol6 + wCol7, y, wCol8, totalRowH, safeTINT.totalBlue);
 
   // Bordes negros
   doc.rect(tableX + wUntilCol6, y, wCol7, totalRowH).strokeColor(GRID).lineWidth(0.9).stroke();
@@ -411,7 +439,7 @@ export async function renderQuotePDF(quote, outPath, company = {}){
   ];
   for (const line of conds){ ensureSpace(18); doc.font('Helvetica').text(line, xMargin, y); y = doc.y; }
 
-  // Aviso de facturación — centrado vertical y horizontal dentro del recuadro
+  // Aviso de facturación
   y += 18;
   ensureSpace(36);
   const important = 'IMPORTANTE: LA FACTURACIÓN DEBE EMITIRSE A NOMBRE DE QUIEN REALIZA EL PAGO.';
@@ -420,7 +448,7 @@ export async function renderQuotePDF(quote, outPath, company = {}){
   const textH = doc.heightOfString(important, { width: maxW - pad*2, align: 'center' });
   const boxH = Math.max(28, textH + pad*2);
   doc.save();
-  doc.roundedRect(xMargin, y, maxW, boxH, 10).fill('#EAF7FA'); // suave
+  doc.roundedRect(xMargin, y, maxW, boxH, 10).fill('#EAF7FA');
   doc.roundedRect(xMargin, y, maxW, boxH, 10).strokeColor(BRAND.cyan).lineWidth(1.2).stroke();
   doc.font('Helvetica-Bold').fillColor('#062b33')
      .text(important, xMargin + pad, y + (boxH - textH)/2, { width: maxW - pad*2, align: 'center' });
@@ -450,7 +478,7 @@ export async function renderQuotePDF(quote, outPath, company = {}){
        .fillColor('black');
   }
 
-  // Tabla bancaria — nombres de bancos en NEGRITA (mismo color)
+  // Tabla bancaria
   y = bankTopY;
   const bankBox = (label, value)=>{
     ensureSpace(36);
@@ -470,7 +498,7 @@ export async function renderQuotePDF(quote, outPath, company = {}){
   bankBox('Banco:', 'BANCO UNIÓN');        bankBox('Cuenta Corriente:', '10000047057563');
   bankBox('Banco:', 'BANCO SOL');          bankBox('Cuenta Corriente:', '2784368-000-001');
 
-  // NIT — sin caja, tabulado a la izquierda, elegante
+  // NIT
   y += 14;
   ensureSpace(28);
   doc.font('Helvetica-Bold').fontSize(10).fillColor('#222')
