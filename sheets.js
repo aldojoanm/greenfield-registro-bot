@@ -847,5 +847,14 @@ export async function pruneExpiredConversations(days = 7) {
   }
   return { kept: keepRows.length, removed };
 }
+// Reemplaza tus no-ops del final de src/sheets.js por esto:
+export async function appendChatHistoryRow({ wa_id, nombre, ts_iso, role, content }) {
+  return appendMessage({ waId: wa_id, name: nombre, ts: ts_iso, role, content });
+}
+
+export async function purgeOldChatHistory(days = 7) {
+  return pruneExpiredConversations(days);
+}
+
 
 export { getSheets, buildRowFromSession };
