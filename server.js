@@ -2,19 +2,13 @@
 import 'dotenv/config';
 import express from 'express';
 import path from 'path';
+import fs from 'fs';
 import multer from 'multer';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 
 import waRouter from './wa.js';
 import messengerRouter from './index.js';
 import pricesRouter from './prices.js';
-
-// 🟣 Sheets (Hoja 4 = historial de chats)
-import {
-  summariesLastNDays,
-  historyForIdLastNDays,
-  appendMessage,
-} from './src/sheets.js';
 
 const app = express();
 app.disable('x-powered-by');
@@ -24,42 +18,69 @@ app.use(express.json({ limit: '2mb' }));
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
 
-// ========= ESTÁTICOS =========
+// ---------------- Sheets loader (acepta ./src/sheets.js o ./sheets.js) ----------------
+async function loadSheetsModule() {
+  const candidates = [
+    path.join(__dirname, 'src', 'sheets.js'),
+    path.join(__dirname, 'sheets.js'),
+  ];
+  for (const p of candidates) {
+    try {
+      const mod = await import(pathToFileURL(p).href);
+      console.log('[server] sheets cargado desde', p);
+      return mod;
+    } catch (e) {
+      // sigue probando
+    }
+  }
+  throw new Error('No encontré sheets.js. Colócalo en ./src/sheets.js o ./sheets.js');
+}
+
+const {
+  summariesLastNDays,
+  historyForIdLastNDays,
+  appendMessage,
+  readPrices,
+  writePrices,
+  readRate,
+  writeRate,
+} = await loadSheetsModule();
+
+// ---------------- Estáticos ----------------
 app.use('/image', express.static(path.join(__dirname, 'image')));
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Sirve el Inbox UI en /inbox
+// Sirve el Inbox UI (agent.html) desde /inbox
 app.get('/inbox', (_req, res) =>
-  res.sendFile(path.join(__dirname, 'public', 'inbox.html'))
+  res.sendFile(path.join(__dirname, 'public', 'agent.html'))
 );
 
-// ========= BÁSICOS =========
+// ---------------- Básicos ----------------
 app.get('/', (_req, res) => res.send('OK'));
 app.get('/healthz', (_req, res) => res.json({ ok: true }));
 app.get('/privacidad', (_req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'privacidad.html'));
 });
 
-// ========= ROUTERS EXISTENTES =========
+// ---------------- Routers existentes ----------------
 app.use(messengerRouter);
 app.use(waRouter);
-app.use(pricesRouter); // expone /api/prices y /price-data.json
+app.use(pricesRouter);
 
-// ========= AUTH SIMPLE PARA INBOX AGENTE =========
-const AGENT_TOKEN = process.env.AGENT_TOKEN || ''; // si está vacío, acepta cualquiera
+// ================== AUTH simple para el Inbox ==================
+const AGENT_TOKEN = process.env.AGENT_TOKEN || '';
 function validateToken(token) {
-  if (!AGENT_TOKEN) return true;
+  if (!AGENT_TOKEN) return true;               // si no configuras token, acepta cualquiera
   return token && token === AGENT_TOKEN;
 }
 function auth(req, res, next) {
   const h = req.headers.authorization || '';
   if (!h.startsWith('Bearer ')) return res.sendStatus(401);
-  const tok = h.slice(7).trim();
-  if (!validateToken(tok)) return res.sendStatus(401);
+  if (!validateToken(h.slice(7).trim())) return res.sendStatus(401);
   next();
 }
 
-// ========= SSE (EventSource) =========
+// ================== SSE (EventSource) ==================
 const sseClients = new Set();
 function sseBroadcast(event, data) {
   const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
@@ -69,167 +90,155 @@ app.get('/wa/agent/stream', (req, res) => {
   const token = String(req.query.token || '');
   if (!validateToken(token)) return res.sendStatus(401);
 
-  res.setHeader('Content-Type',  'text/event-stream; charset=utf-8');
+  res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
-  res.setHeader('Connection',    'keep-alive');
-  res.write(': ok\n\n');
+  res.setHeader('Connection', 'keep-alive');
+  res.write(': hi\n\n');
+
+  const ping = setInterval(() => {
+    try { res.write('event: ping\ndata: "💓"\n\n'); } catch {}
+  }, 25000);
+
   sseClients.add(res);
-  const ping = setInterval(() => { try { res.write('event: ping\ndata: "💓"\n\n'); } catch {} }, 25000);
   req.on('close', () => { clearInterval(ping); sseClients.delete(res); });
 });
 
-// ========= ESTADO EFÍMERO (solo UI) =========
-// "human" por chat (ya que Hoja 4 no guarda este flag)
-const HUMAN = new Map(); // id -> boolean
+// ================== Estado efímero (solo para UI) ==================
+const STATE = new Map(); // id -> { human:boolean, unread:number, last?:string, name?:string }
 
-// ========= INBOX API (Sheets Hoja 4) =========
-
-// Lista de conversaciones (desde Hoja 4)
-const INBOX_LIST_DAYS = Number(process.env.INBOX_HIST_DAYS || 30);
+// ================== API del Inbox (respaldado en Sheets Hoja 4) ==================
+// Lista de conversaciones (lee últimos 30 días de Hoja 4 y combina con STATE)
 app.get('/wa/agent/convos', auth, async (_req, res) => {
   try {
-    const rows = await summariesLastNDays(INBOX_LIST_DAYS);
-    const convos = rows
-      .map(r => ({
-        id: String(r.id),
-        name: r.name || String(r.id),
-        last: r.last || '',
-        unread: 0,                 // sin contador en Sheets
-        human: !!HUMAN.get(String(r.id)),
-      }))
-      // ordenar por "último ts" descendente (ya viene así; por si acaso)
-      .sort((a,b)=> (a.lastTs||0) < (b.lastTs||0) ? 1 : -1);
+    const items = await summariesLastNDays(30); // [{id,name,last,lastTs}]
+    // Combina con STATE (human/unread efímeros)
+    const convos = items.map(it => {
+      const st = STATE.get(it.id) || { human:false, unread:0 };
+      return {
+        id: it.id,
+        name: it.name || it.id,
+        last: it.last || '',
+        unread: st.unread || 0,
+        human: !!st.human,
+      };
+    })
+    // orden por ts desc (ya viene, pero por si acaso)
+    .sort((a,b)=> (b.lastTs||0) - (a.lastTs||0));
 
     res.json({ convos });
-  } catch (err) {
-    console.error('[convos]', err?.message || err);
-    res.status(500).json({ error: 'no se pudo listar' });
+  } catch (e) {
+    console.error('[convos]', e);
+    res.status(500).json({ error: 'no se pudo leer Hoja 4' });
   }
 });
 
-// Historial de un chat (desde Hoja 4)
-const INBOX_HIST_DAYS = Number(process.env.INBOX_HIST_DAYS || 90);
+// Historial de un chat (últimos 60 días)
 app.get('/wa/agent/history/:id', auth, async (req, res) => {
-  const id = String(req.params.id);
+  const id = String(req.params.id || '');
   try {
-    const hist = await historyForIdLastNDays(id, INBOX_HIST_DAYS);
-    const memory = hist.map(h => ({
-      role: (h.role || '').toLowerCase(),   // user|bot|agent|sys
-      content: h.content || '',
-      ts: Number(h.ts) || Date.now(),
-    }));
-    const name = (hist[hist.length-1]?.name || id);
-    res.json({ id, name, human: !!HUMAN.get(id), memory });
-  } catch (err) {
-    console.error('[history]', err?.message || err);
+    const rows = await historyForIdLastNDays(id, 60); // [{wa_id,name,ts,role,content}]
+    const memory = rows.map(r => ({ role:r.role, content:r.content, ts:r.ts }));
+    const name = rows[rows.length-1]?.name || id;
+
+    // setea last para UI
+    const last = memory[memory.length-1]?.content || '';
+    const st = STATE.get(id) || { human:false, unread:0 };
+    STATE.set(id, { ...st, last, name, unread:0 });
+
+    res.json({ id, name, human: !!st.human, memory });
+  } catch (e) {
+    console.error('[history]', e);
     res.status(500).json({ error: 'no se pudo leer historial' });
   }
 });
 
-// Enviar mensaje de ASESOR —> Hoja 4 (append) + SSE
+// Enviar texto del asesor (guarda en Hoja 4 y emite SSE)
 app.post('/wa/agent/send', auth, async (req, res) => {
   const { to, text } = req.body || {};
   if (!to || !text) return res.status(400).json({ error: 'to y text requeridos' });
-
   const id = String(to);
   const ts = Date.now();
+  const name = (STATE.get(id)?.name) || id;
 
   try {
-    // intentar leer el nombre actual (si existe en las últimas N horas)
-    let displayName = '';
-    try {
-      const hist = await historyForIdLastNDays(id, 180);
-      displayName = hist[hist.length-1]?.name || '';
-    } catch {}
+    await appendMessage({ waId:id, name, ts, role:'agent', content:String(text) });
 
-    await appendMessage({
-      waId: id,
-      name: displayName || id,
-      ts,
-      role: 'agent',
-      content: String(text),
-    });
+    const st = STATE.get(id) || { human:false, unread:0 };
+    STATE.set(id, { ...st, last:text, unread:0 });
 
-    // Notificar al Inbox
     sseBroadcast('msg', { id, role:'agent', content:String(text), ts });
-
-    res.json({ ok: true });
-  } catch (err) {
-    console.error('[send]', err?.message || err);
-    res.status(500).json({ error: 'falló envío' });
+    res.json({ ok:true });
+  } catch (e) {
+    console.error('[send]', e);
+    res.status(500).json({ error: 'no se pudo guardar en Hoja 4' });
   }
 });
 
-// Marcar como leído (efímero, no se guarda en Sheets)
+// Marcar como leído (solo efímero)
 app.post('/wa/agent/read', auth, (req, res) => {
-  // Como la persistencia es Sheets, no hay estado "unread" global.
-  // Respondemos OK para que la UI limpie el badge.
-  res.json({ ok: true });
+  const id = String(req.body?.to || '');
+  if (!id) return res.status(400).json({ error:'to requerido' });
+  const st = STATE.get(id) || { human:false, unread:0 };
+  STATE.set(id, { ...st, unread:0 });
+  res.json({ ok:true });
 });
 
-// Tomar/soltar por humano (efímero)
+// Tomar/soltar por humano (solo efímero para UI)
 app.post('/wa/agent/handoff', auth, (req, res) => {
-  const { to, mode } = req.body || {};
-  if (!to) return res.status(400).json({ error: 'to requerido' });
-  const id = String(to);
-  HUMAN.set(id, mode === 'human');
-  res.json({ ok: true });
+  const id = String(req.body?.to || '');
+  const mode = String(req.body?.mode || '');
+  if (!id) return res.status(400).json({ error:'to requerido' });
+  const st = STATE.get(id) || { human:false, unread:0 };
+  STATE.set(id, { ...st, human: mode === 'human' });
+  res.json({ ok:true });
 });
 
-// Envío de media -> Hoja 4 como líneas "📎 Archivo: ...", y caption si llega
+// Envío de media (solo “logea” líneas en historial para que el agente lo vea)
 const upload = multer({ storage: multer.memoryStorage() });
 app.post('/wa/agent/send-media', auth, upload.array('files'), async (req, res) => {
   const { to, caption = '' } = req.body || {};
-  const files = Array.isArray(req.files) ? req.files : [];
   if (!to) return res.status(400).json({ error: 'to requerido' });
-  if (!files.length) return res.status(400).json({ error: 'files vacío' });
 
   const id = String(to);
-  const tsBase = Date.now();
-
-  // intentar nombre
-  let displayName = '';
-  try {
-    const hist = await historyForIdLastNDays(id, 180);
-    displayName = hist[hist.length-1]?.name || '';
-  } catch {}
+  const baseTs = Date.now();
+  const files = Array.isArray(req.files) ? req.files : [];
+  if (!files.length) return res.status(400).json({ error: 'files vacío' });
 
   try {
-    let i = 0;
+    let idx = 0;
     for (const f of files) {
       const sizeKB = Math.round((Number(f.size || 0) / 1024) * 10) / 10;
       const line = `📎 Archivo: ${f.originalname} (${sizeKB} KB)`;
-      const ts = tsBase + i++;
-      await appendMessage({
-        waId: id,
-        name: displayName || id,
-        ts,
-        role: 'agent',
-        content: line,
-      });
+      const ts = baseTs + (idx++);
+      await appendMessage({ waId:id, name:STATE.get(id)?.name || id, ts, role:'agent', content:line });
       sseBroadcast('msg', { id, role:'agent', content:line, ts });
     }
-
     if (caption && caption.trim()) {
-      const ts = tsBase + files.length;
-      await appendMessage({
-        waId: id,
-        name: displayName || id,
-        ts,
-        role: 'agent',
-        content: String(caption),
-      });
+      const ts = baseTs + files.length;
+      await appendMessage({ waId:id, name:STATE.get(id)?.name || id, ts, role:'agent', content:String(caption) });
       sseBroadcast('msg', { id, role:'agent', content:String(caption), ts });
+      const st = STATE.get(id) || { human:false, unread:0 };
+      STATE.set(id, { ...st, last:caption, unread:0 });
     }
-
-    res.json({ ok: true, sent: files.length });
-  } catch (err) {
-    console.error('[send-media]', err?.message || err);
-    res.status(500).json({ error: 'falló envío media' });
+    res.json({ ok:true, sent: files.length });
+  } catch (e) {
+    console.error('[send-media]', e);
+    res.status(500).json({ error: 'no se pudo guardar en Hoja 4' });
   }
 });
 
-// ========= ARRANQUE =========
+// ================== (Opcional) endpoints de precios usando Hoja 3 ==================
+app.get('/api/prices', async (_req, res) => {
+  try {
+    const { prices, version, rate } = await readPrices();
+    res.json({ prices, version, rate });
+  } catch (e) {
+    console.error('[api/prices]', e);
+    res.status(500).json({ error:'no se pudo leer Hoja 3' });
+  }
+});
+
+// ================== Arranque ==================
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🚀 Server unificado escuchando en :${PORT}`);
@@ -241,6 +250,4 @@ app.listen(PORT, () => {
   console.log('   • Privacidad:       GET       /privacidad');
   console.log('   • Inbox UI:         GET       /inbox');
   console.log('   • Inbox API:        /wa/agent/* (convos, history, send, read, handoff, send-media, stream)');
-  console.log('   • Sheets:           Hoja 4 (historial chats) — SHEETS_SPREADSHEET_ID');
-  console.log('   • Días lista/hist:  INBOX_HIST_DAYS =', process.env.INBOX_HIST_DAYS || '(30/90 por defecto)');
 });
