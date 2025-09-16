@@ -4,19 +4,58 @@ import path from 'path';
 import PDFDocument from 'pdfkit';
 
 const TZ = process.env.TIMEZONE || 'America/La_Paz';
+
+// Paleta base
 const BRAND = {
   purple: '#8364a2',
   indigo: '#5a66ac',
   cyan:   '#46acc4',
 };
+
+// Tonos configurables (puedes cambiarlos libremente; el código los sanea)
 const TINT = {
-  headerPurple: '#9AA4AE', // morado un poco más fuerte para el encabezado
-  rowPurple:    '#F2F4F6', // morado muy suave para TODAS las filas de la tabla
-  totalBlue:    '#E9C46A', // celeste muy suave para los "Total USD/Bs"
+  headerPurple: '#9AA4AE', // gris/morado claro para encabezado (válido: "#9AA4AE" o "9AA4AE")
+  rowPurple:    '#F2F4F6', // fondo filas
+  totalBlue:    '#E9C46A', // fondo celdas total
 };
 
-const GRID = '#000000';     // líneas negras en toda la tabla
+// Color de grilla
+const GRID = '#000000';
 
+/* ========= Helpers de color (robustos) ========= */
+function normalizeHex(s, fallback = null) {
+  let v = String(s ?? '').trim();
+  if (!v) return fallback;
+  // Permitir "ABC" o "AABBCC" con o sin "#"
+  const m = v.match(/^#?([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$/);
+  if (!m) return fallback;
+  let hex = m[1];
+  if (hex.length === 3) {
+    // Expandir "ABC" -> "AABBCC"
+    hex = hex.split('').map(ch => ch + ch).join('');
+  }
+  return `#${hex.toUpperCase()}`;
+}
+const SAFE = {
+  headerBG: normalizeHex(TINT.headerPurple, '#E6E9EC'),
+  rowBG:    normalizeHex(TINT.rowPurple,    '#F7F9FB'),
+  totalBG:  normalizeHex(TINT.totalBlue,    '#E9C46A'),
+  grid:     normalizeHex(GRID,              '#000000'),
+};
+function fillRect(doc, x, y, w, h, color) {
+  doc.save();
+  doc.fillColor(color);
+  doc.rect(x, y, w, h).fill();
+  doc.restore();
+}
+function strokeRect(doc, x, y, w, h, color = SAFE.grid, width = 0.9) {
+  doc.save();
+  doc.strokeColor(color).lineWidth(width);
+  doc.rect(x, y, w, h).stroke();
+  doc.restore();
+}
+
+/* ========= Helpers de formato ========= */
 function fmtDateTZ(date = new Date(), tz = TZ) {
   try {
     const f = new Intl.DateTimeFormat('es-BO', {
@@ -33,10 +72,8 @@ function money(n){
   const s = (Number(n||0)).toFixed(2);
   return s.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 }
-
-// — Redondeo contable a 2 decimales (half-away-from-zero de Math.round) —
+// Redondeo/centavos
 function round2(n){ return Math.round((Number(n)||0) * 100) / 100; }
-// — Acumular en centavos para evitar drift —
 function toCents(n){ return Math.round((Number(n)||0) * 100); }
 
 function ensure(v, def){ return v==null || v==='' ? def : v; }
@@ -48,6 +85,7 @@ function findAsset(...relPaths){
   return null;
 }
 
+/* ========= Lookup de precios / packs ========= */
 function canonSku(s=''){
   return String(s||'')
     .trim()
@@ -106,7 +144,6 @@ function lookupFromCatalog(priceList=[], item={}){
   const usd = Number(row?.precio_usd||0);
   return Number.isFinite(usd) ? usd : 0;
 }
-
 function detectPackSize(it = {}){
   if (it.envase) {
     const m = String(it.envase).match(/(\d+(?:[.,]\d+)?)\s*(l|lt|lts|litros?|kg|kilos?)/i);
@@ -134,31 +171,22 @@ function detectPackSize(it = {}){
   }
   return null;
 }
-
-/* ===== Redondeo por pack (tus reglas) ===== */
 function roundQuantityByPack(originalQty, pack, itemUnitRaw){
   if (!pack || !(originalQty > 0)) return originalQty;
-
   const itemUnit = String(itemUnitRaw || '').toUpperCase();
   if (itemUnit && itemUnit !== pack.unit) return originalQty;
-
   const ratio = originalQty / pack.size;
-
-  // 1 Kg -> no redondear
-  if (pack.unit === 'KG' && Math.abs(pack.size - 1) < 1e-9) return originalQty;
-
-  // Packs grandes >=200 L -> floor si piden >=1; si <1, mínimo 1 pack
+  if (pack.unit === 'KG' && Math.abs(pack.size - 1) < 1e-9) return originalQty; // 1 Kg no redondea
   if (pack.unit === 'L' && pack.size >= 200) {
     if (ratio < 1) return pack.size;
     const mult = Math.floor(ratio + 1e-9);
     return mult * pack.size;
   }
-
-  // Resto -> ceil
   const mult = Math.ceil(ratio - 1e-9);
   return mult * pack.size;
 }
 
+/* ========= Render PDF ========= */
 export async function renderQuotePDF(quote, outPath, company = {}){
   const dir = path.dirname(outPath);
   try{ fs.mkdirSync(dir, { recursive:true }); }catch{}
@@ -178,7 +206,7 @@ export async function renderQuotePDF(quote, outPath, company = {}){
   const qrPath = company.qrPath
     || findAsset('./public/qr-pagos.png','./public/qr.png','./public/privacidad.png','./image/qr.png');
 
-  // Marca de agua sutil
+  // Marca de agua
   if (logoPath){
     doc.save();
     doc.opacity(0.10);
@@ -231,22 +259,19 @@ export async function renderQuotePDF(quote, outPath, company = {}){
   const tableX = xMargin;
   const tableW = cols.reduce((a,c)=>a+c.w,0);
 
-  // Encabezado: morado un poco más fuerte
+  // Encabezado
   const headerH = 28;
-  doc.save();
-  doc.rect(tableX, y, tableW, headerH).fill(TINT.headerPurple);
+  fillRect(doc, tableX, y, tableW, headerH, SAFE.headerBG);
   doc.fillColor('#111').font('Helvetica-Bold').fontSize(9);
   {
     let cx = tableX;
     for (const cdef of cols){
       const innerX = cx + 6;
       doc.text(cdef.label, innerX, y + (headerH-10)/2, { width: cdef.w-12, align: 'center' });
-      // Bordes negros del header
-      doc.rect(cx, y, cdef.w, headerH).strokeColor(GRID).lineWidth(0.9).stroke();
+      strokeRect(doc, cx, y, cdef.w, headerH, SAFE.grid, 0.9); // bordes
       cx += cdef.w;
     }
   }
-  doc.restore();
   y += headerH;
 
   const ensureSpace = (need = 90) => {
@@ -274,8 +299,6 @@ export async function renderQuotePDF(quote, outPath, company = {}){
   let accUsdCents = 0;
   let accBsCents  = 0;
 
-  let rowIndex = 0;
-
   for (const itRaw of (quote.items || [])){
     // 1) Precio unitario
     let precioUSD = Number(itRaw.precio_usd || 0);
@@ -283,7 +306,7 @@ export async function renderQuotePDF(quote, outPath, company = {}){
       precioUSD = lookupFromCatalog(quote.price_catalog || company.priceList || [], itRaw) || 0;
     }
     precioUSD = round2(precioUSD);
-    const precioBsUnit  = round2(precioUSD * rate); // 2 decimales estrictos
+    const precioBsUnit  = round2(precioUSD * rate);
 
     // 2) Cantidad (respeta redondeo por pack)
     const cantOrig  = Number(itRaw.cantidad || 0);
@@ -291,7 +314,7 @@ export async function renderQuotePDF(quote, outPath, company = {}){
     let cantidad = cantOrig;
     if (pack) cantidad = roundQuantityByPack(cantOrig, pack, itRaw.unidad);
 
-    // 3) Subtotales a 2 decimales exactos
+    // 3) Subtotales
     const subUSD = round2(precioUSD   * cantidad);
     const subBs  = round2(precioBsUnit * cantidad);
 
@@ -319,28 +342,25 @@ export async function renderQuotePDF(quote, outPath, company = {}){
     const rowH = Math.max(...cellHeights);
     ensureSpace(rowH + 10);
 
-    doc.save();
-    doc.rect(tableX, y, tableW, rowH).fill(TINT.rowPurple);
-    doc.restore();
-    
+    // Fondo fila
+    fillRect(doc, tableX, y, tableW, rowH, SAFE.rowBG);
 
-    // Contenido + bordes negros
+    // Contenido + bordes
     let tx = tableX;
     for (let i=0; i<cols.length; i++){
       const cdef = cols[i];
       const innerX = tx + 6;
       const innerW = cdef.w - 12;
-      doc.rect(tx, y, cdef.w, rowH).strokeColor(GRID).lineWidth(0.8).stroke();
+      strokeRect(doc, tx, y, cdef.w, rowH, SAFE.grid, 0.8);
       doc.fillColor('black')
          .font(cdef.key==='nombre' ? 'Helvetica-Bold' : 'Helvetica')
          .text(cellTexts[i], innerX, y + rowPadV, { width: innerW, align: cdef.align || 'left' });
       tx += cdef.w;
     }
     y += rowH;
-    rowIndex++;
   }
 
-  // Totales (suma de subtotales)
+  // Totales
   const totalUSD = accUsdCents / 100;
   const totalBs  = accBsCents  / 100;
 
@@ -351,23 +371,22 @@ export async function renderQuotePDF(quote, outPath, company = {}){
   const wCol8      = cols[7].w;
 
   // Línea superior separadora
-  doc.moveTo(tableX, y).lineTo(tableX + tableW, y).strokeColor(GRID).lineWidth(0.9).stroke();
+  doc.save();
+  doc.moveTo(tableX, y).lineTo(tableX + tableW, y).strokeColor(SAFE.grid).lineWidth(0.9).stroke();
+  doc.restore();
 
   const totalRowH = 26;
 
-  // Celda "Total" — EN BLANCO (solo bordes)
-  doc.rect(tableX, y, wUntilCol6, totalRowH).strokeColor(GRID).lineWidth(0.9).stroke();
+  // Celda "Total"
+  strokeRect(doc, tableX, y, wUntilCol6, totalRowH, SAFE.grid, 0.9);
   doc.font('Helvetica-Bold').fillColor('#111').text('Total', tableX, y+6, { width: wUntilCol6, align: 'center' });
 
-  doc.save();
-  doc.rect(tableX + wUntilCol6, y, wCol7, totalRowH).fill(TINT.totalBlue);
-  doc.rect(tableX + wUntilCol6 + wCol7, y, wCol8, totalRowH).fill(TINT.totalBlue);
-  doc.restore();
+  fillRect(doc, tableX + wUntilCol6, y, wCol7, totalRowH, SAFE.totalBG);
+  fillRect(doc, tableX + wUntilCol6 + wCol7, y, wCol8, totalRowH, SAFE.totalBG);
 
-
-  // Bordes negros
-  doc.rect(tableX + wUntilCol6, y, wCol7, totalRowH).strokeColor(GRID).lineWidth(0.9).stroke();
-  doc.rect(tableX + wUntilCol6 + wCol7, y, wCol8, totalRowH).strokeColor(GRID).lineWidth(0.9).stroke();
+  // Bordes de totales
+  strokeRect(doc, tableX + wUntilCol6, y, wCol7, totalRowH, SAFE.grid, 0.9);
+  strokeRect(doc, tableX + wUntilCol6 + wCol7, y, wCol8, totalRowH, SAFE.grid, 0.9);
 
   // Valores
   doc.font('Helvetica-Bold').fillColor('#111')
@@ -385,7 +404,12 @@ export async function renderQuotePDF(quote, outPath, company = {}){
   y += 22;
 
   // Lugar de entrega + link
-  const drawH2 = (t)=>{ ensureSpace(24); doc.font('Helvetica-Bold').fontSize(11).fillColor('#000').text(t, xMargin, y); doc.font('Helvetica').fontSize(10).fillColor('#000'); y = doc.y + 12; };
+  const drawH2 = (t)=>{
+    ensureSpace(24);
+    doc.font('Helvetica-Bold').fontSize(11).fillColor('#000').text(t, xMargin, y);
+    doc.font('Helvetica').fontSize(10).fillColor('#000');
+    y = doc.y + 12;
+  };
   drawH2('Lugar de entrega');
   const entrega = [
     'Almacén Central',
@@ -411,7 +435,7 @@ export async function renderQuotePDF(quote, outPath, company = {}){
   ];
   for (const line of conds){ ensureSpace(18); doc.font('Helvetica').text(line, xMargin, y); y = doc.y; }
 
-  // Aviso de facturación — centrado vertical y horizontal dentro del recuadro
+  // Aviso de facturación
   y += 18;
   ensureSpace(36);
   const important = 'IMPORTANTE: LA FACTURACIÓN DEBE EMITIRSE A NOMBRE DE QUIEN REALIZA EL PAGO.';
@@ -420,7 +444,7 @@ export async function renderQuotePDF(quote, outPath, company = {}){
   const textH = doc.heightOfString(important, { width: maxW - pad*2, align: 'center' });
   const boxH = Math.max(28, textH + pad*2);
   doc.save();
-  doc.roundedRect(xMargin, y, maxW, boxH, 10).fill('#EAF7FA'); // suave
+  doc.roundedRect(xMargin, y, maxW, boxH, 10).fill('#EAF7FA');
   doc.roundedRect(xMargin, y, maxW, boxH, 10).strokeColor(BRAND.cyan).lineWidth(1.2).stroke();
   doc.font('Helvetica-Bold').fillColor('#062b33')
      .text(important, xMargin + pad, y + (boxH - textH)/2, { width: maxW - pad*2, align: 'center' });
@@ -438,19 +462,19 @@ export async function renderQuotePDF(quote, outPath, company = {}){
   if (qrPath){
     try { doc.image(qrPath, rightX, bankTopY, { width: rightBoxW }); }
     catch {
-      doc.rect(rightX, bankTopY, rightBoxW, rightBoxW).strokeColor('#ccc').dash(4,{space:3}).stroke().undash();
+      strokeRect(doc, rightX, bankTopY, rightBoxW, rightBoxW, '#CCCCCC', 1);
       doc.font('Helvetica').fontSize(9).fillColor('#666')
          .text('QR no disponible', rightX, bankTopY + rightBoxW/2 - 6, { width: rightBoxW, align:'center' })
          .fillColor('black');
     }
   } else {
-    doc.rect(rightX, bankTopY, rightBoxW, rightBoxW).strokeColor('#ccc').dash(4,{space:3}).stroke().undash();
+    strokeRect(doc, rightX, bankTopY, rightBoxW, rightBoxW, '#CCCCCC', 1);
     doc.font('Helvetica').fontSize(9).fillColor('#666')
        .text('QR aquí', rightX, bankTopY + rightBoxW/2 - 6, { width: rightBoxW, align:'center' })
        .fillColor('black');
   }
 
-  // Tabla bancaria — nombres de bancos en NEGRITA (mismo color)
+  // Tabla bancaria
   y = bankTopY;
   const bankBox = (label, value)=>{
     ensureSpace(36);
@@ -461,7 +485,9 @@ export async function renderQuotePDF(quote, outPath, company = {}){
       doc.font('Helvetica').fillColor('#000').text(value, xMargin+100, y, { width: colW-100 });
     }
     y = doc.y + 8;
-    doc.moveTo(xMargin, y-2).lineTo(xMargin+colW, y-2).strokeColor('#bbb').stroke();
+    doc.save();
+    doc.moveTo(xMargin, y-2).lineTo(xMargin+colW, y-2).strokeColor('#BBB').stroke();
+    doc.restore();
   };
 
   bankBox('Titular:', 'New Chem Agroquímicos SRL');
@@ -470,7 +496,7 @@ export async function renderQuotePDF(quote, outPath, company = {}){
   bankBox('Banco:', 'BANCO UNIÓN');        bankBox('Cuenta Corriente:', '10000047057563');
   bankBox('Banco:', 'BANCO SOL');          bankBox('Cuenta Corriente:', '2784368-000-001');
 
-  // NIT — sin caja, tabulado a la izquierda, elegante
+  // NIT
   y += 14;
   ensureSpace(28);
   doc.font('Helvetica-Bold').fontSize(10).fillColor('#222')
@@ -480,6 +506,7 @@ export async function renderQuotePDF(quote, outPath, company = {}){
      .text('NIT: 154920027', xMargin, y, { width: usableW, align: 'left' });
   y = doc.y + 6;
 
+  // Cierre/flush
   doc.end();
   await new Promise((res, rej)=>{ stream.on('finish', res); stream.on('error', rej); });
   return outPath;
