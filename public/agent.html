@@ -81,6 +81,7 @@
     <div class="top">
       <input id="search" placeholder="Buscar...">
       <button class="btn sm" id="refresh" title="Refrescar (Sheets)">⟳</button>
+      <button class="btn sm" id="importAll" title="Importar WhatsApp (Sheets)">⬇️ Importar WA</button>
       <button class="btn sm" id="logout" title="Salir">Salir</button>
     </div>
     <div class="list" id="list"></div>
@@ -263,6 +264,25 @@ async function openChat(id){
     elStatus.style.display='none';
   }finally{ openLock = false; }
 }
+
+document.getElementById('importAll').onclick = async () => {
+  if (!confirm('Importar todos los chats desde Sheets (Hoja 4)?')) return;
+  try{
+    const r = await fetch('/wa/agent/import-whatsapp', {
+      method: 'POST',
+      headers: api.headers(),
+      body: JSON.stringify({ days: 3650 }) // ~10 años, ajusta si quieres
+    });
+    if (r.status === 401){ await forceReauth(); return document.getElementById('importAll').click(); }
+    if (!r.ok) throw 0;
+    const data = await r.json();
+    alert(`Listo. Importados ${data.imported||0} chats.`);
+    await refresh(true);
+  }catch{
+    alert('No se pudo importar desde Sheets.');
+  }
+};
+
 document.getElementById('send').onclick = async ()=>{
   const txt = box.value.trim(); if(!txt || !current) return;
   box.value=''; await api.send(current.id, txt);

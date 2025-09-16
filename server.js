@@ -236,7 +236,29 @@ app.get('/api/prices', async (_req, res) => {
     console.error('[api/prices]', e);
     res.status(500).json({ error:'no se pudo leer Hoja 3' });
   }
+
+  // ======= Importar todos los chats desde Sheets (Hoja 4) =======
+  app.post('/wa/agent/import-whatsapp', auth, async (req, res) => {
+  try {
+    const days = Number(req.body?.days || 365); // rango de lectura
+    const items = await summariesLastNDays(days); // [{id,name,last,lastTs}]
+
+    // Pre-cargar estado efímero para la UI (nombre/last)
+    for (const it of items) {
+      const st = STATE.get(it.id) || { human:false, unread:0 };
+      STATE.set(it.id, { ...st, name: it.name || it.id, last: it.last || '' });
+    }
+
+    res.json({ ok: true, imported: items.length });
+  } catch (e) {
+    console.error('[import-whatsapp]', e);
+    res.status(500).json({ error: 'no se pudo importar desde Sheets' });
+  }
 });
+
+});
+
+
 
 // ================== Arranque ==================
 const PORT = process.env.PORT || 3000;
