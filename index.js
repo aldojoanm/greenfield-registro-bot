@@ -58,6 +58,30 @@ function newSession(){
     expiresAt: Date.now() + SESSION_TTL_MS
   };
 }
+// Detecta cualquier variante del "Get Started" de Messenger
+function isGetStartedEvent(ev) {
+  const payload = (ev.postback?.payload || '').trim();
+  const title   = (ev.postback?.title   || '').trim().toLowerCase();
+  const text    = (ev.message?.text     || '').trim().toLowerCase();
+
+  // 1) Postbacks típicos
+  if (payload === 'GET_STARTED') return true;
+  if (/^(get_?started|start|empezar)$/i.test(payload)) return true;
+
+  // 2) Algunos botones envían title (localizado) o texto simple
+  if (/^(get started|start|empezar)$/.test(title)) return true;
+  if (/^(get started|start|empezar)$/.test(text))  return true;
+
+  // 3) Aperturas por referral del short link o chat plugin
+  if (ev.referral && ev.referral.type === 'OPEN_THREAD') return true;
+
+  // 4) Opt-ins antiguos
+  if (ev.optin) return true;
+
+  return false;
+}
+
+
 function getSession(psid){
   let s = sessions.get(psid);
   if(!s){ s = newSession(); sessions.set(psid, s); }
@@ -423,6 +447,14 @@ router.post('/webhook', async (req,res)=>{
 
         const s = getSession(psid);
 
+        // === GET_STARTED (postback, referral, opt-in) ===
+        if (isGetStartedEvent(ev)) {
+          s.flags.greeted = true;
+          s.flags.justOpenedAt = Date.now();
+          await sendText(psid, '👋 ¡Hola! Bienvenido(a) a New Chem.\nTenemos agroquímicos al mejor precio y calidad para tu campaña. 🌱');
+          await askName(psid);
+          continue;
+        }
         // GET_STARTED
         if(ev.postback?.payload === 'GET_STARTED'){
           s.flags.greeted = true;
