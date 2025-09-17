@@ -14,7 +14,7 @@ const BRAND = {
 
 // Tonos configurables (puedes cambiarlos libremente; el código los sanea)
 const TINT = {
-  headerPurple: '#9AA4AE', // gris/morado claro para encabezado (válido: "#9AA4AE" o "9AA4AE")
+  headerPurple: '#E5E7EB', // gris/morado claro para encabezado (válido: "#9AA4AE" o "9AA4AE")
   rowPurple:    '#F2F4F6', // fondo filas
   totalBlue:    '#E9C46A', // fondo celdas total
 };
