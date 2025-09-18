@@ -66,6 +66,175 @@ function formatDisplayDate(d){
   }
 }
 
+const TAB_CLIENTS = process.env.SHEETS_TAB_CLIENTS_NAME || 'WA_CLIENTES';
+
+const H_CLIENTS = {
+  telefono: 'Teléfono',
+  nombre: 'Nombre Completo',
+  ubicacion: 'Ubicación',
+  cultivo: 'Cultivo',
+  hectareas: 'Hectáreas',
+  campana: 'Campaña',
+  updated: 'Ultima_actualizacion'
+};
+
+function headerIndexMap(headers = []) {
+  const map = {};
+  headers.forEach((h, i) => { map[String(h).trim().toLowerCase()] = i; });
+  return (name) => {
+    const idx = map[String(name).trim().toLowerCase()];
+    return (typeof idx === 'number') ? idx : -1;
+  };
+}
+
+function splitUbicacion(ubi = '') {
+  const [dep, zona] = String(ubi).split(/\s*-\s*/);
+  return { dep: (dep || '').trim(), zona: (zona || '').trim() };
+}
+
+/**
+ * Busca un cliente por teléfono (solo dígitos).
+ * Devuelve: { telefono, nombre, ubicacion, cultivo, hectareas, campana, dep, subzona } | null
+ */
+export async function getClientByPhone(phoneRaw = '') {
+  const sheets = await getSheets();
+  const spreadsheetId = process.env.SHEETS_SPREADSHEET_ID;
+  if (!spreadsheetId) throw new Error('Falta SHEETS_SPREADSHEET_ID');
+
+  const phone = onlyDigits(phoneRaw);
+  if (!phone) return null;
+
+  const r = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${TAB_CLIENTS}!A1:Z10000`
+  });
+
+  const rows = r.data.values || [];
+  if (!rows.length) return null;
+
+  const headers = rows[0];
+  const idx = headerIndexMap(headers);
+
+  const iTel   = idx(H_CLIENTS.telefono);
+  const iNom   = idx(H_CLIENTS.nombre);
+  const iUbi   = idx(H_CLIENTS.ubicacion);
+  const iCult  = idx(H_CLIENTS.cultivo);
+  const iHa    = idx(H_CLIENTS.hectareas);
+  const iCamp  = idx(H_CLIENTS.campana);
+
+  if (iTel < 0) return null;
+
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i] || [];
+    const tel = onlyDigits(row[iTel] || '');
+    if (!tel) continue;
+    if (tel === phone) {
+      const ubicacion = row[iUbi] || '';
+      const { dep, zona } = splitUbicacion(ubicacion);
+      return {
+        telefono: tel,
+        nombre: row[iNom] || '',
+        ubicacion,
+        cultivo: row[iCult] || '',
+        hectareas: row[iHa] || '',
+        campana: row[iCamp] || '',
+        dep, subzona: zona
+      };
+    }
+  }
+  return null;
+}
+
+/**
+ * Inserta o actualiza (por Teléfono) una fila en WA_CLIENTES.
+ * record: { telefono, nombre, ubicacion, cultivo, hectareas, campana }
+ */
+export async function upsertClientByPhone(record = {}) {
+  const sheets = await getSheets();
+  const spreadsheetId = process.env.SHEETS_SPREADSHEET_ID;
+  if (!spreadsheetId) throw new Error('Falta SHEETS_SPREADSHEET_ID');
+
+  const telefono = onlyDigits(record.telefono || '');
+  if (!telefono) return false;
+
+  // Leer hoja completa una vez
+  const r = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${TAB_CLIENTS}!A1:Z10000`
+  });
+  const rows = r.data.values || [];
+  const headers = rows[0] || [
+    H_CLIENTS.telefono, H_CLIENTS.nombre, H_CLIENTS.ubicacion,
+    H_CLIENTS.cultivo, H_CLIENTS.hectareas, H_CLIENTS.campana, H_CLIENTS.updated
+  ];
+
+  // Asegurar encabezados si la hoja estaba vacía
+  if (rows.length === 0) {
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `${TAB_CLIENTS}!A1`,
+      valueInputOption: 'RAW',
+      requestBody: { values: [headers] }
+    });
+  }
+
+  const idx = headerIndexMap(headers);
+  const iTel   = idx(H_CLIENTS.telefono);
+  const iNom   = idx(H_CLIENTS.nombre);
+  const iUbi   = idx(H_CLIENTS.ubicacion);
+  const iCult  = idx(H_CLIENTS.cultivo);
+  const iHa    = idx(H_CLIENTS.hectareas);
+  const iCamp  = idx(H_CLIENTS.campana);
+  const iUpd   = idx(H_CLIENTS.updated);
+
+  const now = new Date();
+  const updated = formatDisplayDate(now);
+
+  // Buscar fila existente
+  let foundRowIndex = -1; // índice absoluta en hoja (0-based)
+  for (let i = 1; i < rows.length; i++) {
+    const tel = onlyDigits((rows[i] || [])[iTel] || '');
+    if (tel === telefono) { foundRowIndex = i; break; }
+  }
+
+  // Construir la fila con posición de columnas correcta
+  const rowOut = new Array(headers.length).fill('');
+  // Rellenar existentes para no borrar otras columnas que el usuario hubiera agregado
+  if (foundRowIndex >= 0) {
+    const prev = rows[foundRowIndex] || [];
+    for (let c = 0; c < headers.length; c++) rowOut[c] = prev[c] || '';
+  }
+
+  if (iTel  >= 0) rowOut[iTel]  = telefono;
+  if (iNom  >= 0) rowOut[iNom]  = record.nombre || rowOut[iNom] || '';
+  if (iUbi  >= 0) rowOut[iUbi]  = record.ubicacion || rowOut[iUbi] || '';
+  if (iCult >= 0) rowOut[iCult] = record.cultivo || rowOut[iCult] || '';
+  if (iHa   >= 0) rowOut[iHa]   = record.hectareas || rowOut[iHa] || '';
+  if (iCamp >= 0) rowOut[iCamp] = record.campana || rowOut[iCamp] || '';
+  if (iUpd  >= 0) rowOut[iUpd]  = updated;
+
+  if (foundRowIndex >= 0) {
+    // UPDATE fila existente (foundRowIndex es 0-based; +1 para 1-based de Sheets)
+    const rowNumber = foundRowIndex + 1;
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `${TAB_CLIENTS}!A${rowNumber}`,
+      valueInputOption: 'RAW',
+      requestBody: { values: [rowOut] }
+    });
+  } else {
+    // APPEND nueva fila
+    await sheets.spreadsheets.values.append({
+      spreadsheetId,
+      range: `${TAB_CLIENTS}!A1`,
+      valueInputOption: 'RAW',
+      insertDataOption: 'INSERT_ROWS',
+      requestBody: { values: [rowOut] }
+    });
+  }
+  return true;
+}
+
 /* =====================================
    Construcción de filas para "Hoja 1"
    (NO TOCAR lo existente)

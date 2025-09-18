@@ -5,6 +5,7 @@ import path from 'path';
 import { appendFromSession, parseAndAppendClientResponse } from './sheets.js';
 import { appendChatHistoryRow, purgeOldChatHistory } from './sheets.js'; // ← NUEVO (Hoja 4)
 import { sendAutoQuotePDF } from './quote.js';
+import { getClientByPhone, upsertClientByPhone } from './sheets.js';
 
 const router = express.Router();
 router.use(express.json());
@@ -399,6 +400,22 @@ function fuzzyCandidate(text){
   if (best && bestScore >= 0.75) return { prod: best, score: bestScore };
   return null;
 }
+function buildClientRecordFromSession(s, phoneDigits) {
+  const dep  = s?.vars?.departamento || '';
+  const zona = s?.vars?.subzona || '';
+  const ubicacion = [dep, zona].filter(Boolean).join(' - ');
+
+  return {
+    telefono: String(phoneDigits || '').trim(),
+    nombre: s?.profileName || '',
+    ubicacion,
+    cultivo: (s?.vars?.cultivos && s.vars.cultivos[0]) || '',
+    hectareas: s?.vars?.hectareas || '',
+    campana: s?.vars?.campana || ''
+  };
+}
+
+
 function getProductsByCategory(cat){
   const key = norm(cat||'');
   return (CATALOG||[]).filter(p=>{
@@ -1146,6 +1163,51 @@ router.post('/wa/webhook', async (req,res)=>{
     const leadData = (msg.type === 'text') ? parseMessengerLead(textRaw) : null;
 
 
+    // ===== Precarga desde WA_CLIENTES (si ya existe el número) =====
+try {
+  if (!s.meta) s.meta = {};
+  if (!s.meta.preloadedFromSheet) {
+    const rec = await getClientByPhone(fromId);
+    s.meta.preloadedFromSheet = true; // para no repetir lecturas en cada msg
+    if (rec) {
+      // Poblar sesión
+      if (rec.nombre) s.profileName = rec.nombre;
+      if (rec.dep)    s.vars.departamento = rec.dep;
+      if (rec.subzona) s.vars.subzona = rec.subzona;
+      if (rec.cultivo) s.vars.cultivos = [rec.cultivo];
+      if (rec.hectareas) s.vars.hectareas = rec.hectareas;
+      if (rec.campana)  s.vars.campana  = rec.campana;
+
+      // Marcar preguntas como respondidas (para saltarlas)
+      s.asked = s.asked || {};
+      if (s.profileName) s.asked.nombre = true;
+      if (s.vars.departamento) s.asked.departamento = true;
+      if (s.vars.subzona) s.asked.subzona = true;
+      if (s.vars.cultivos?.length) s.asked.cultivo = true;
+      if (s.vars.hectareas) s.asked.hectareas = true;
+      if (s.vars.campana) s.asked.campana = true;
+
+      // Marca saludado y persiste
+      s.greeted = true;
+      persistS(fromId);
+
+      // Saludo breve con nombre (sin confirmar nada)
+      if (s.profileName) {
+        await toText(fromId, `Hola ${s.profileName} 👋`);
+      }
+
+      // Salta directo al siguiente paso de producto/cotización
+      await nextStep(fromId);
+      return res.sendStatus(200);
+    } else {
+      persistS(fromId); // ya marcamos preloadedFromSheet
+    }
+  }
+} catch (e) {
+  console.error('preload WA_CLIENTES error:', e);
+}
+
+
    // 🙋 Modo humano (bot pausado)
 if (isHuman(fromId)) {
   if (textRaw) remember(fromId, 'user', textRaw);
@@ -1280,6 +1342,20 @@ if (isAdvisor(fromId)) {
           console.error('Sheets append error:', err);
         }
 
+        try {
+    const rec = {
+      telefono: String(fromId),
+      nombre: s.profileName || '',
+      ubicacion: [s?.vars?.departamento || '', s?.vars?.subzona || ''].filter(Boolean).join(' - '),
+      cultivo: (s?.vars?.cultivos && s.vars.cultivos[0]) || '',
+      hectareas: s?.vars?.hectareas || '',
+      campana: s?.vars?.campana || ''
+    };
+    await upsertClientByPhone(rec);
+  } catch (e) {
+    console.error('upsert WA_CLIENTES al finalizar error:', e);
+  }
+
         // 3) Mensajes al cliente (igual que antes)
         await toText(fromId, '¡Gracias por escribirnos! Te envió la *cotización en PDF*. Si requieres mas información, estamos a tu disposición.');
         await toText(fromId, 'Para volver a activar el asistente, por favor, escribe *Asistente New Chem*.');
@@ -1329,6 +1405,7 @@ if (isAdvisor(fromId)) {
             console.error('[ADVISOR] error al reenviar PDF:', err);
           }
         }
+
 
         // 5) Cierre (igual que antes)
         humanOn(fromId, 4);
