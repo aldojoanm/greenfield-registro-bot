@@ -1193,7 +1193,7 @@ try {
 
       // Saludo breve con nombre (sin confirmar nada)
       if (s.profileName) {
-        await toText(fromId, `Hola ${s.profileName} 👋`);
+        await toText(fromId, `Hola ${s.profileName}. ¡Qué gusto saludarte nuevamente! Soy el asistente virtual de New Chem Agroquímicos.`);
       }
 
       // Salta directo al siguiente paso de producto/cotización

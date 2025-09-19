@@ -106,17 +106,21 @@ async function waSendDocument(to, mediaId, filename, caption=''){
 export async function sendAutoQuotePDF(to, session){
   await _acquire();
   try{
-    // ⚠️ ahora es ASYNC: trae lista de precios desde Sheets
     const quote = await buildQuoteFromSession(session);
 
     const cleanName = (s='') => String(s).normalize('NFD').replace(/\p{Diacritic}/gu,'').replace(/[\\/:*?"<>|]+/g,'').replace(/\s+/g,' ').trim().slice(0,80);
     const clienteName = cleanName(quote?.cliente?.nombre || session?.profileName || 'Cliente');
 
+    // Nombre interno (archivo en disco) con timestamp para evitar colisiones
     const stamp = new Date().toISOString().replace(/[:.]/g,'-');
-    const filename = `${cleanName(`COT - ${clienteName} - ${stamp}`)}.pdf`;
+    const filenameFS = `${cleanName(`COT - ${clienteName} - ${stamp}`)}.pdf`;
+
+    // Nombre visible para WhatsApp
+    const filenameDisplay = (cleanName(`COT NEW CHEM AGROQUIMICOS - ${clienteName}`)).toUpperCase() + `.pdf`;
+
     const outDir = path.resolve('./data/quotes');
     try { fs.mkdirSync(outDir, { recursive:true }); } catch {}
-    const filePath = path.join(outDir, filename);
+    const filePath = path.join(outDir, filenameFS);
 
     await renderQuotePDF(quote, filePath, { brand: 'New Chem Agroquímicos' });
 
@@ -124,14 +128,14 @@ export async function sendAutoQuotePDF(to, session){
     if (!mediaId) throw new Error('No se pudo subir el PDF a WhatsApp.');
 
     const caption = `Cotización - ${clienteName}`;
-    const ok = await waSendDocument(to, mediaId, filename, caption);
+    const ok = await waSendDocument(to, mediaId, filenameDisplay, caption);
     if (!ok) throw new Error('No se pudo enviar el PDF por WhatsApp.');
 
     if (DELETE_AFTER_MS > 0) {
       setTimeout(() => { try { fs.unlinkSync(filePath); } catch {} }, DELETE_AFTER_MS).unref?.();
     }
 
-    return { ok:true, mediaId, path:filePath, filename, caption, quoteId: quote?.id };
+    return { ok:true, mediaId, path:filePath, filename: filenameDisplay, caption, quoteId: quote?.id };
   } finally {
     _release();
   }
