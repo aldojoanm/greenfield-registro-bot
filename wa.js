@@ -26,15 +26,14 @@ const WA_TOKEN        = process.env.WHATSAPP_TOKEN || '';
 const WA_PHONE_ID     = process.env.WHATSAPP_PHONE_ID || '';
 const CATALOG_URL     = process.env.CATALOG_URL || 'https://tinyurl.com/f4euhvzk';
 const PRICE_LIST_URL = process.env.PRICE_LIST_URL || 'https://tinyurl.com/z8yxwcn9';
-const STORE_LAT       = process.env.STORE_LAT || '-17.7580406';
-const STORE_LNG       = process.env.STORE_LNG || '-63.1532503';
+const STORE_MAP_URL  = process.env.STORE_MAP_URL || 'https://share.google/HOzxeQjoNKAFYUaJY';
 const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || '').replace(/\/+$/, '');
 const AGENT_TOKEN     = process.env.AGENT_TOKEN || '';
 
 const DEBUG_LOGS = process.env.DEBUG_LOGS === '1';
 const dbg = (...args) => { if (DEBUG_LOGS) console.log(...args); };
-const ADVISOR_NAME = process.env.ADVISOR_NAME || 'Jonathan Arteaga';
-const ADVISOR_ROLE = process.env.ADVISOR_ROLE || 'Encargado de Negocios de New Chem Agroquímicos';
+const ADVISOR_NAME = process.env.ADVISOR_NAME || 'Equipo Greenfield';
+const ADVISOR_ROLE = process.env.ADVISOR_ROLE || 'Asesor comercial de Greenfield';
 
 function advisorProductList(s){
   const items = (s.vars.cart && s.vars.cart.length)
@@ -88,10 +87,12 @@ const FAQS    = loadJSON('./knowledge/faqs.json');
 const DEPARTAMENTOS = ['Santa Cruz','Cochabamba','La Paz','Chuquisaca','Tarija','Oruro','Potosí','Beni','Pando'];
 const SUBZONAS_SCZ  = ['Norte','Este','Sur','Valles','Chiquitania'];
 const CAT_QR = [
-  { title: 'Herbicida',   payload: 'CAT_HERBICIDA' },
-  { title: 'Insecticida', payload: 'CAT_INSECTICIDA' },
-  { title: 'Fungicida',   payload: 'CAT_FUNGICIDA' }
+  { title: 'Fertilizantes',          payload: 'CAT_FERTILIZANTE' },
+  { title: 'Bioestimulantes',        payload: 'CAT_BIOESTIMULANTE' },
+  { title: 'Acondicionadores',       payload: 'CAT_ACONDICIONADOR' },
+  { title: 'Inductores de Defensa',  payload: 'CAT_INDUCTOR_DEFENSA' }
 ];
+
 const CROP_OPTIONS = [
   { title:'Soya',     payload:'CROP_SOYA'     },
   { title:'Maíz',     payload:'CROP_MAIZ'     },
@@ -116,7 +117,7 @@ const HECTARE_OPTIONS = [
   { title:'1,000–3,000 ha',  payload:'HA_1000_3000' },
   { title:'3,001–5,000 ha',  payload:'HA_3001_5000' },
   { title:'+5,000 ha',       payload:'HA_5000_MAS' },
-  { title:'Otras cantidades', payload:'HA_OTRA' } // mantiene el flujo de entrada libre
+  { title:'Otras cantidades', payload:'HA_OTRA' } 
 ];
 
 const HA_LABEL = {
@@ -129,7 +130,8 @@ const HA_LABEL = {
 };
 
 
-const linkMaps  = () => `https://www.google.com/maps?q=${encodeURIComponent(`${STORE_LAT},${STORE_LNG}`)}`;
+const linkMaps  = () =>
+  STORE_MAP_URL || `https://www.google.com/maps?q=${encodeURIComponent(`${STORE_LAT},${STORE_LNG}`)}`;
 
 const LIST_TITLE_MAX = 24;
 const LIST_DESC_MAX  = 72;
@@ -314,13 +316,15 @@ setInterval(() => {
 }, 6 * 60 * 60 * 1000).unref?.();
 
 
-const normalizeCatLabel = (c='')=>{
-  const t=norm(c);
-  if(t.includes('fungicida')) return 'Fungicida';
-  if(t.includes('herbicida')) return 'Herbicida';
-  if(t.includes('insecticida')||t.includes('acaricida')) return 'Insecticida';
+const normalizeCatLabel = (c='') => {
+  const t = norm(c);
+  if (t.includes('fertiliz'))       return 'Fertilizante';
+  if (t.includes('bioestimul'))     return 'Bioestimulante';
+  if (t.includes('acondicion'))     return 'Acondicionador';
+  if (t.includes('inductor') || t.includes('defensa')) return 'Inductor de Defensa';
   return null;
 };
+
 function findProduct(text){
   const nt = norm(text);
   return (CATALOG||[]).find(p=>{
@@ -334,28 +338,9 @@ function hasEarlyIntent(t=''){
       || !!findProduct(t) || findProductsByIA(t).length>0 || !!detectCategory(t);
 }
 
-const IA_SYNONYMS = {
-  'glifo':'glifosato', 'glifosate':'glifosato', 'glyphosate':'glifosato',
-  'paraquat':'paraquat', 'paraquat dichloride':'paraquat',
-  'dicloruro de paraquat':'paraquat', 'paraquat dicloruro':'paraquat',
-  'atrazina':'atrazine',
-  'clethodim':'clethodim', 'cletodim':'clethodim', 'cleto':'clethodim',
-  'abamectina':'abamectin', 'abamectin':'abamectin',
-  'emamectina':'emamectin', 'emamectin':'emamectin',
-  'tiametoxam':'thiametoxam', 'thiametoxam':'thiametoxam',
-  'thiamethoxam':'thiametoxam', 'tiametoxan':'thiametoxam', 'thiametoxan':'thiametoxam',
-  'bifentrina':'bifenthrin', 'bifentrin':'bifenthrin', 'bifenthrin':'bifenthrin',
-  'fipronil':'fipronil',
-  'mancoceb':'mancozeb', 'mancozeb':'mancozeb'
-};
-
 function canonIA(t){
   const x = norm(t).replace(/[^a-z0-9\s\.,\/\-\+]/g,' ').replace(/\s+/g,' ').trim();
   return IA_SYNONYMS[x] || x;
-}
-function splitIAText(ia=''){
-  const t = canonIA(ia);
-  return t.split(/[,\+\/;]| y | con /g).map(s=>s.trim()).filter(w=>w.length>=3);
 }
 
 function findProductsByIA(text){
@@ -417,15 +402,13 @@ function buildClientRecordFromSession(s, phoneDigits) {
 
 
 function getProductsByCategory(cat){
-  const key = norm(cat||'');
+  const key = (normalizeCatLabel(cat||'') || '').toLowerCase();
   return (CATALOG||[]).filter(p=>{
-    const c = norm(p.categoria||'');
-    if(key==='herbicida') return c.includes('herbicida');
-    if(key==='insecticida') return c.includes('insecticida') || c.includes('acaricida') || c.includes('insecticida-acaricida');
-    if(key==='fungicida')   return c.includes('fungicida');
-    return false;
+    const c = (normalizeCatLabel(p.categoria||'') || '').toLowerCase();
+    return !!key && key === c;
   });
 }
+
 const parseCantidad = text=>{
   const m = String(text).match(/(\d{1,6}(?:[.,]\d{1,2})?)\s*(l|lt|lts|litro?s|kg|kilos?|unid|unidad(?:es)?)/i);
   return m ? `${m[1].replace(',','.') } ${m[2].toLowerCase()}` : null;
@@ -452,13 +435,13 @@ function detectSubzona(text){
 }
 function detectCategory(text){
   const t = norm(text);
-  if (/fungicida/.test(t)) return 'Fungicida';
-  if (/insecticida\s*\+\s*acaricida|ins\.\s*\+\s*acaricida|insecticida-?acaricida|acaricida/.test(t)) return 'Insecticida';
-  if (/herbicida/.test(t)) return 'Herbicida';
-  if (/insecticida/.test(t)) return 'Insecticida';
+  if (/fertiliz/.test(t))       return 'Fertilizante';
+  if (/bioestimul/.test(t))     return 'Bioestimulante';
+  if (/acondicion/.test(t))     return 'Acondicionador';
+  if (/inductor|defensa/.test(t)) return 'Inductor de Defensa';
   return null;
 }
-const mentionsAcaricida = t => /acaricida|insecticida\s*\+\s*acaricida|insecticida-?acaricida/i.test(norm(t));
+
 const wantsCatalog  = t => /cat[aá]logo|portafolio|lista de precios/i.test(t) || /portafolio[- _]?newchem/i.test(norm(t));
 const wantsLocation = t => /(ubicaci[oó]n|direcci[oó]n|mapa|d[oó]nde est[aá]n|donde estan)/i.test(t);
 const wantsClose    = t => /(no gracias|gracias|eso es todo|listo|nada m[aá]s|ok gracias|est[aá] bien|finalizar)/i.test(norm(t));
@@ -466,7 +449,7 @@ const wantsBuy      = t => /(comprar|cerrar pedido|prepara pedido|proforma)/i.te
 const asksPrice     = t => /(precio|cu[aá]nto vale|cu[aá]nto cuesta|cotizar|costo)/i.test(t);
 const wantsAgentPlus = t => /asesor(a)?|agente|ejecutiv[oa]|vendedor(a)?|representante|soporte|hablar con (alguien|una persona|humano)|persona real|humano|contact(a|o|arme|en)|que me (llamen|llamen)|llamada|ll[aá]mame|me pueden (contactar|llamar)|comercial/i.test(norm(t));
 const wantsAnother  = t => /(otro|agregar|añadir|sumar|incluir).*(producto|art[ií]culo|item)|cotizar otro/i.test(norm(t));
-const wantsBotBack = t => /([Aa]sistente [Nn]ew [Cc]hem)/i.test(t);
+const wantsBotBack = t => /([Gg]reenfield)/i.test(t);
 
 function parseMessengerLead(text){
   const t = String(text || '');
@@ -499,11 +482,14 @@ function looksLikeFullName(t=''){
 
 function productFromReferral(ref){
   try{
-    const bits = [ref?.headline, ref?.body, ref?.source_url, ref?.adgroup_name, ref?.campaign_name]
+    const bits = [
+     ref?.headline, ref?.body, ref?.source_url, ref?.adgroup_name, ref?.campaign_name,
+     ref?.deeplink_url, ref?.image_url, ref?.video_url
+    ]
       .filter(Boolean).join(' ');
     let byQS=null;
     try{
-      const u = new URL(ref?.source_url||'');
+      const u = new URL(ref?.deeplink_url || ref?.source_url || '');
       const q = (k)=>u.searchParams.get(k);
       const sku = q('sku') || q('SKU');
       const pn  = q('product') || q('producto') || q('p') || q('ref');
@@ -514,8 +500,16 @@ function productFromReferral(ref){
         byQS = findProduct(pn) || (fuzzyCandidate(pn)||{}).prod || null;
       }
     }catch{}
+    // extra: intenta con nombre de archivo de imagen/video del anuncio
+    let byMedia = null;
+    const mediaUrl = ref?.image_url || ref?.video_url || '';
+    if (mediaUrl) {
+      const base = mediaUrl.split('/').pop() || '';
+      const stem = base.replace(/\.[a-z0-9]+$/i,'').replace(/[_\-]/g,' ');
+      byMedia = findProduct(stem) || ((fuzzyCandidate(stem)||{}).prod) || null;
+    }
     const byText = findProduct(bits) || ((fuzzyCandidate(bits)||{}).prod) || null;
-    return byQS || byText || null;
+    return byQS || byMedia || byText || null;
   }catch{ return null; }
 }
 
@@ -585,25 +579,67 @@ function alphaIA(str=''){
 }
 
 // ===== IMÁGENES =====
-function productImageSource(prod){
-  const direct = prod.image_url || prod.imagen || (Array.isArray(prod.images)&&prod.images[0]) || prod.img;
+// Reemplaza tu productImageSource por esta versión
+function productImageSource(prod) {
+  const direct = prod.image_url || prod.imagen || (Array.isArray(prod.images) && prod.images[0]) || prod.img;
   if (direct && /^https?:\/\//i.test(direct)) return { url: direct };
-  const name = upperNoDia(prod?.nombre || '').trim();
-  if(!name) return null;
-  const baseA = name.replace(/[^A-Z0-9]/g,'');
-  const baseB = name.replace(/[^A-Z0-9]+/g,'_');
-  const exts = ['.png','.jpg','.jpeg','.webp'];
-  for(const b of [baseA, baseB]){
-    for(const ext of exts){
-      const localPath = `image/${b}${ext}`;
-      if (fs.existsSync(localPath)) {
-        if (PUBLIC_BASE_URL) return { url: `${PUBLIC_BASE_URL}/image/${b}${ext}` };
-        else return { path: localPath };
+
+  const raw = String(prod?.nombre || '').trim();
+  if (!raw) return null;
+
+  const noDia = upperNoDia(raw);             // NITRO GREEN → NITRO GREEN (sin acentos)
+  const baseA = noDia.replace(/[^A-Z0-9]/g, '');     // NITROGREEN
+  const baseB = noDia.replace(/[^A-Z0-9]+/g, '_');   // NITRO_GREEN
+  const variants = new Set([
+    baseA,
+    baseB,
+    baseA.toLowerCase(),
+    baseB.toLowerCase(),
+    raw.replace(/\s+/g, ''),                  // NitroGreen
+    raw.replace(/\s+/g, '_'),                 // Nitro_Green
+  ]);
+
+  const exts = ['.png', '.jpg', '.jpeg', '.webp'];
+  const dir = path.resolve('image');
+
+  // 1) Intento directo (paths exactos)
+  for (const v of variants) {
+    for (const ext of exts) {
+      const p = path.join(dir, `${v}${ext}`);
+      if (fs.existsSync(p)) {
+        return PUBLIC_BASE_URL ? { url: `${PUBLIC_BASE_URL}/image/${encodeURIComponent(`${v}${ext}`)}` } : { path: p };
       }
     }
   }
+
+  // 2) Búsqueda case-insensitive por basename normalizado
+  try {
+    const files = fs.readdirSync(dir);
+    const wanted = [...variants];
+    for (const f of files) {
+      const ext = path.extname(f).toLowerCase();
+      if (!exts.includes(ext)) continue;
+      const stem = path.basename(f, ext);
+
+      // normalizamos como en variants
+      const normStem = upperNoDia(stem).replace(/[^A-Z0-9]/g, '');
+      const normUnd  = upperNoDia(stem).replace(/[^A-Z0-9]+/g, '_');
+
+      if (wanted.some(w =>
+        w === stem ||
+        w.toUpperCase() === normStem ||
+        w.toUpperCase() === normUnd ||
+        w.toLowerCase() === stem.toLowerCase()
+      )) {
+        const full = path.join(dir, f);
+        return PUBLIC_BASE_URL ? { url: `${PUBLIC_BASE_URL}/image/${encodeURIComponent(f)}` } : { path: full };
+      }
+    }
+  } catch {}
+
   return null;
 }
+
 
 // ===== RESET PRODUCT STATE =====
 function resetProductState(s, { clearCategory = true } = {}) {
@@ -816,9 +852,6 @@ async function askCategory(to){
   s.asked.categoria=true;
   persistS(to); 
 
-  await toText(to, `Te dejo nuestro *catálogo* para que puedas ver nuestras opciones \nhttps://tinyurl.com/f4euhvzk`);
-  await toText(to, `Y nuestra *lista de precios* actualizada:\n${PRICE_LIST_URL}`);
-
   await toButtons(
     to,
     '¿Qué tipo de producto necesitas?',
@@ -884,7 +917,6 @@ async function listByCategory(to){
   if(remaining > show) rows.push({ title:'Ver más…', payload:`CAT_MORE_${offset+show}` });
 
   await toList(to, `${s.vars.category} disponibles`, 'Elegir producto', rows);
-  if(offset===0) await toText(to, `Decime cuál te interesa y te paso el detalle. *Compra mínima: US$ 3.000*`);
 }
 
 const shouldShowDetail = (s, sku) => s.vars.last_detail_sku !== sku || (Date.now() - (s.vars.last_detail_ts||0)) > 60000;
@@ -1028,11 +1060,11 @@ async function nextStep(to){
       const p=(CATALOG||[]).find(pp=>norm(pp.nombre||'')===norm(s.vars.last_product));
       const c=normalizeCatLabel(p?.categoria||''); if(c) s.vars.category=c;
     }
-    if(!s.vars.last_product && !s.vars.category){
-      if(stale('categoria') || s.lastPrompt!=='categoria') return askCategory(to);
-      return;
-    }
 
+    if(!s.vars.last_product && !s.vars.category){
+    if(stale('categoria') || s.lastPrompt!=='categoria') return askCategory(to);
+    return;
+    }
     // (7) Listado por categoría si aún no hay producto elegido
     if(!s.vars.last_product) return listByCategory(to);
 
@@ -1193,7 +1225,7 @@ try {
 
       // Saludo breve con nombre (sin confirmar nada)
       if (s.profileName) {
-        await toText(fromId, `Hola ${s.profileName}. ¡Qué gusto saludarte nuevamente! Soy el asistente virtual de New Chem Agroquímicos.`);
+        await toText(fromId, `Hola *${s.profileName}*. ¡Qué gusto saludarte nuevamente! Soy el asistente virtual de *Greenfield*.`);
       }
 
       // Salta directo al siguiente paso de producto/cotización
@@ -1256,7 +1288,7 @@ if (isHuman(fromId)) {
     resetProductState(s, { clearCategory: true });
     persistS(fromId);
     const quien = s.profileName ? `, ${s.profileName}` : '';
-    await toText(fromId, `Listo${quien} 🙌. Reactivé el *Asistente Virtual de New Chem Agroquímicos*.`);
+    await toText(fromId, `Listo${quien} 🙌. Reactivé el *Asistente Virtual de Greenfield*.`);
     await askCategory(fromId);
 
     return res.sendStatus(200);
@@ -1282,6 +1314,7 @@ if (isAdvisor(fromId)) {
       s.meta.referralHandled = true;
       s.meta.origin = 'facebook';
       s.meta.referral = referral;
+      resetProductState(s, { clearCategory: true });
       persistS(fromId);
       const prod = productFromReferral(referral);
       if (prod){
@@ -1299,9 +1332,10 @@ if (isAdvisor(fromId)) {
     if(!s.greeted){
       s.greeted = true; 
       persistS(fromId);
+      resetProductState(s, { clearCategory: true });
 
       if(!isLeadMsg){
-        await toText(fromId, PLAY?.greeting || '¡Qué gusto saludarte!, Soy el asistente virtual de *New Chem*. Estoy para ayudarte 🙂');
+        await toText(fromId, PLAY?.greeting || '¡Qué gusto saludarte!, Soy el asistente virtual de *Greenfield*. Estoy para ayudarte 🙂');
       }
       if(!isLeadMsg && !s.asked.nombre){
         await askNombre(fromId);
@@ -1358,7 +1392,7 @@ if (isAdvisor(fromId)) {
 
         // 3) Mensajes al cliente (igual que antes)
         await toText(fromId, '¡Gracias por escribirnos! Te envió la *cotización en PDF*. Si requieres mas información, estamos a tu disposición.');
-        await toText(fromId, 'Para volver a activar el asistente, por favor, escribe *Asistente New Chem*.');
+        await toText(fromId, 'Para volver a activar el asistente, por favor, escribe *Greenfield*.');
 
         // 4) Aviso al/los asesores + REENVÍO DEL PDF
         if (ADVISOR_WA_NUMBERS.length) {
@@ -1492,7 +1526,12 @@ if (isAdvisor(fromId)) {
       }
       if(/^CAT_/.test(id)){
         const key = id.replace('CAT_','').toLowerCase();
-        s.vars.category = key==='herbicida' ? 'Herbicida' : key==='insecticida' ? 'Insecticida' : 'Fungicida';
+        s.vars.category =
+          key==='fertilizante'       ? 'Fertilizante' :
+          key==='bioestimulante'     ? 'Bioestimulante' :
+          key==='acondicionador'     ? 'Acondicionador' :
+          key==='inductor_defensa'   ? 'Inductor de Defensa' :
+          null;
         s.vars.catOffset = 0; s.stage='product'; s.pending=null; s.lastPrompt=null; persistS(fromId);
         await nextStep(fromId); res.sendStatus(200); return;
       }
@@ -1573,7 +1612,7 @@ if (isAdvisor(fromId)) {
 
     persistS(fromId);
     const quien = s.profileName ? ` ${s.profileName}` : '';
-    await toText(fromId, `👋 Hola${quien}, gracias por continuar con *New Chem* vía WhatsApp.\nAquí encontrarás los agroquímicos esenciales para tu cultivo, al mejor precio. 🌱`);
+    await toText(fromId, `👋 Hola${quien}, gracias por continuar con *Greenfield* vía WhatsApp.\nAquí encontrarás los agroquímicos esenciales para tu cultivo, al mejor precio. 🌱`);
     await askCultivo(fromId);
     res.sendStatus(200);
     return;
@@ -1652,11 +1691,6 @@ if (isAdvisor(fromId)) {
 
       if(/horario|atienden|abren|cierran/i.test(tnorm)){ await toText(fromId, `Atendemos ${FAQS?.horarios || 'Lun–Vie 8:00–17:00'} 🙂`); res.sendStatus(200); return; }
       if(wantsLocation(text)){ await toText(fromId, `Nuestra ubicación en Google Maps 👇\nVer ubicación: ${linkMaps()}`); await toButtons(fromId,'¿Hay algo más en lo que pueda ayudarte?',[{title:'Seguir',payload:'QR_SEGUIR'},{title:'Finalizar',payload:'QR_FINALIZAR'}]); res.sendStatus(200); return; }
-      if(wantsCatalog(text)){
-        await toText(fromId, `Este es nuestro catálogo completo\nhttps://tinyurl.com/f4euhvzk`);
-        await toButtons(fromId,'¿Quieres que te ayude a elegir o añadir un producto ahora?',[{title:'Añadir producto', payload:'ADD_MORE'},{title:'Finalizar', payload:'QR_FINALIZAR'}]);
-        res.sendStatus(200); return;
-      }
       if(wantsClose(text)){
         await toText(fromId,'¡Gracias por escribirnos! Si más adelante te surge algo, aquí estoy para ayudarte. 👋');
         humanOn(fromId, 4);
@@ -1702,7 +1736,6 @@ if (isAdvisor(fromId)) {
       if(catTyped2){
         S(fromId).vars.category=catTyped2; S(fromId).vars.catOffset=0; S(fromId).asked.categoria=true; S(fromId).stage='product';
         persistS(fromId);
-        if (mentionsAcaricida(text) && catTyped2==='Insecticida') await toText(fromId,'Te muestro Insecticidas que cubren ácaros.');
       }
 
       const depTyped = detectDepartamento(text);
@@ -1729,7 +1762,6 @@ if (isAdvisor(fromId)) {
       }
 
       if(asksPrice(text)){
-        if (mentionsAcaricida(text)) await toText(fromId, 'Te muestro Insecticidas que cubren ácaros.');
         await toText(fromId,'Con gusto te preparo una *cotización* con un precio a medida. Solo necesito que me compartas unos datos para poder recomendarte la mejor opción para tu zona y cultivo');
       }
 

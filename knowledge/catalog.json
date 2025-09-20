@@ -1,132 +1,161 @@
 [
   {
-    "sku": "SEAL-20L",
-    "nombre": "SEAL",
-    "ingrediente_activo": "Atrazine 500 g/l SC",
-    "categoria": "Herbicida",
-    "cultivo": ["Maíz", "Sorgo"],
-    "plaga": ["Verdolaga", "Quinuilla", "Malva taporita", "Chiori"],
-    "dosis": "3–4 L/ha (maíz) | 3 L/ha (sorgo)",
-    "formulacion": "Herbicida selectivo de pre y postemergencia. Acción sistémica y contacto.",
-    "presentaciones": ["20 L"],
-    "precio_bs": 0,
-    "link_ficha": "https://tinyurl.com/PORTAFOLIO-NEWCHEM"
+    "sku": "KELIK-KS-1-5-25L",
+    "nombre": "Kelik Potasio",
+    "categoria": "Fertilizante potásico + azufre (líquido)",
+    "composicion": [
+      { "componente": "Potasio (K2O) soluble en agua", "pp": "30 % p/p", "pv": "46.5 % p/v" },
+      { "componente": "Azufre (S) soluble en agua", "pp": "30 % p/p", "pv": "46.5 % p/v" }
+    ],
+    "aspecto": "Líquido, amarillento",
+    "usos": "Mejora calidad de fruto y apoya el manejo de plagas por efecto desalojante. Sin cloruros. Bajo índice salino, alta compatibilidad en mezclas.",
+    "dosis": {
+      "foliar": "1.0–2.0 L/ha",
+      "fertirriego": "2.0–3.0 L/ha"
+    },
+    "cultivos": ["Frutales", "Hortalizas", "Soya", "Vid", "Caña"],
+    "compatibilidad": "Bajo índice salino; no contiene cloruros. Evitar mezclar con productos fuertemente alcalinos.",
+    "presentaciones": ["1 L", "5 L", "25 L"],
+    "almacenamiento": "Almacenar en lugar fresco y ventilado.",
+    "link_ficha": "https://tinyurl.com/greenfield-kelik",
+    "precio_bs": 0
   },
   {
-    "sku": "SINERGY-10-20L",
-    "nombre": "SINERGY",
-    "ingrediente_activo": "Clethodim 240 g/l EC",
-    "categoria": "Herbicida",
-    "cultivo": ["Soya"],
-    "plaga": ["Rogelia", "Orizahá", "Cadillo", "Pata de gallina", "Pata de gallo"],
-    "dosis": "0.3–0.5 L/ha",
-    "formulacion": "Herbicida selectivo post emergente. Rápida absorción y amplio uso sobre el espectro de malezas.",
-    "presentaciones": ["10 L", "20 L"],
-    "precio_bs": 0,
-    "link_ficha": "https://tinyurl.com/PORTAFOLIO-NEWCHEM"
+    "sku": "BALANZER-1-5-6L",
+    "nombre": "Balanzer",
+    "categoria": "Bioestimulante metabólico (aminoácidos + fitohormonas)",
+    "composicion": [
+      { "componente": "Aminoácidos libres", "pp": "12 % p/p" },
+      { "componente": "NPK + microelementos traza", "pp": "—" },
+      { "componente": "Citoquininas", "pp": "50 ppm" },
+      { "componente": "Auxinas", "pp": "25 ppm" }
+    ],
+    "aspecto": "Líquido marrón",
+    "usos": "Estimula crecimiento, ramificación y rendimiento. Formulado para coaplicarse con glifosato.",
+    "beneficios": [
+      "Bioestimulación",
+      "Mayor ramificación",
+      "Más rendimiento",
+      "Menor estrés",
+      "Más vainas"
+    ],
+    "dosis": {
+      "foliar": "0.5–1.0 L/ha",
+      "con_glifosato": "0.25–0.5 L/ha"
+    },
+    "cultivos": ["Soya", "Maíz", "Trigo", "Algodón"],
+    "compatibilidad": "Diseñado para mezclas con glifosato. Realizar prueba de jarra.",
+    "presentaciones": ["1 L", "5 L", "6 L"],
+    "almacenamiento": "Lugar fresco y ventilado.",
+    "link_ficha": "https://tinyurl.com/greenfield-balanzer",
+    "precio_bs": 0
   },
   {
-    "sku": "DRIER-20-200L",
-    "nombre": "DRIER",
-    "ingrediente_activo": "Paraquat dichloride 276 g/l SL",
-    "categoria": "Herbicida",
-    "cultivo": ["Barbecho químico"],
-    "plaga": ["Chiori"],
-    "dosis": "2 L/ha",
-    "formulacion": "Herbicida de contacto y desecante. Rápida acción sobre las malezas.",
-    "presentaciones": ["20 L", "200 L"],
-    "precio_bs": 0,
-    "link_ficha": "https://tinyurl.com/PORTAFOLIO-NEWCHEM"
+    "sku": "NEWFIX-1-5-20L",
+    "nombre": "New Fix",
+    "categoria": "Coadyuvante regulador de pH y antiespumante",
+    "composicion": [
+      { "componente": "Agentes tensioactivos no iónicos", "pp": "15 % p/p" },
+      { "componente": "Regulador de pH", "pp": "20 % p/p" },
+      { "componente": "Antiespumante", "pp": "2 % p/p" }
+    ],
+    "aspecto": "Líquido incoloro a ligeramente azulado",
+    "usos": "Optimiza caldos de aplicación: estabiliza pH y controla espuma. Mejora tamaño de gota y reduce deriva.",
+    "beneficios": [
+      "Estabiliza el pH de la mezcla",
+      "Controla la formación de espuma",
+      "Reduce pérdidas por viento (mejor tamaño de gota)",
+      "Aumenta la vida útil de cada gota"
+    ],
+    "dosis": {
+      "coadyuvante": "50–150 mL por 100 L de agua"
+    },
+    "cultivos": ["Todos los cultivos"],
+    "compatibilidad": "Compatible con la mayoría de fitosanitarios y fertilizantes. Añadir primero al tanque.",
+    "presentaciones": ["1 L", "5 L", "20 L"],
+    "almacenamiento": "Almacenar en lugar fresco y ventilado.",
+    "link_ficha": "https://tinyurl.com/greenfield-newfix",
+    "precio_bs": 0
   },
   {
-    "sku": "GLISATO-20-200L",
-    "nombre": "GLISATO",
-    "ingrediente_activo": "Glifosato Sal IPA 480 g/l SL",
-    "categoria": "Herbicida",
-    "cultivo": ["Barbecho químico"],
-    "plaga": ["Rogelia", "Torito", "Verdolaga camba", "Emilia", "Leche leche", "Sanana", "Chiori", "Malva taporita", "Chupurujume", "Maicillo"],
-    "dosis": "2.5–3 L/ha",
-    "formulacion": "Herbicida no selectivo de acción sistémica y por translocación. Buena performance.",
-    "presentaciones": ["20 L", "200 L"],
-    "precio_bs": 0,
-    "link_ficha": "https://tinyurl.com/PORTAFOLIO-NEWCHEM"
+    "sku": "VOXY-5-20L",
+    "nombre": "Voxy",
+    "categoria": "Fertilizante especial con cobre (inductor de resistencia)",
+    "composicion": [
+      { "componente": "Cobre (Cu) complejado", "pp": "5 % p/p" },
+      { "componente": "Aditivos sanitizantes", "pp": "—" }
+    ],
+    "aspecto": "Suspensión blanquecina",
+    "usos": "Apoya la resistencia natural de la planta y el manejo sanitario del cultivo.",
+    "beneficios": [
+      "Inductor de resistencia",
+      "Aditivos con acción desinfectante",
+      "Aporte de cobre (Cu) a la nutrición",
+      "Apoyo en programas preventivos"
+    ],
+    "dosis": {
+      "foliar": "1.0–1.5 L/ha"
+    },
+    "cultivos": ["Soya", "Hortalizas", "Frutales"],
+    "compatibilidad": "Evitar mezclar con aceites minerales o productos de reacción fuertemente alcalina.",
+    "presentaciones": ["5 L", "20 L"],
+    "almacenamiento": "Lugar fresco y ventilado.",
+    "link_ficha": "https://tinyurl.com/greenfield-voxy",
+    "precio_bs": 0
   },
   {
-    "sku": "NICOXAM-10L",
-    "nombre": "NICOXAM",
-    "ingrediente_activo": "Thiametoxan 333 g/l SC",
-    "categoria": "Insecticida-Acaricida",
-    "cultivo": ["Soya"],
-    "plaga": ["Chinche verde pequeño"],
-    "dosis": "0.2–0.25 L/ha",
-    "formulacion": "Insecticida de contacto e ingestión. Excelente control para chinches.",
-    "presentaciones": ["10 L"],
-    "precio_bs": 0,
-    "link_ficha": "https://tinyurl.com/PORTAFOLIO-NEWCHEM"
+    "sku": "FITOMARE-1-5-20L",
+    "nombre": "Fitomare",
+    "categoria": "Bioestimulante a base de extractos de algas",
+    "composicion": [
+      { "componente": "Extracto de algas marinas (Ascophyllum nodosum)", "pp": "20 % p/p" },
+      { "componente": "Aminoácidos", "pp": "5 % p/p" },
+      { "componente": "Macro y microelementos", "pp": "trazas" }
+    ],
+    "aspecto": "Líquido marrón oscuro",
+    "usos": "Estimula floración, fecundación y cuajado. Favorece el desarrollo radicular y ayuda a superar estrés (fitotoxicidad, sequía y heladas).",
+    "beneficios": [
+      "Bioestimulante con extracto de algas",
+      "Ayuda a contrarrestar situaciones de estrés",
+      "Promotor de citoquininas y función osnoprotectora",
+      "Favorece brotación, floración y cuajado"
+    ],
+    "dosis": {
+      "foliar": "1.0–2.0 L/ha",
+      "fertirriego": "2.0–3.0 L/ha"
+    },
+    "cultivos": ["Soya", "Maíz", "Trigo", "Frutales", "Hortalizas"],
+    "compatibilidad": "Generalmente compatible; realizar prueba de jarra.",
+    "presentaciones": ["1 L", "5 L", "20 L"],
+    "almacenamiento": "Evitar heladas y altas temperaturas. Mantener en lugar fresco y ventilado.",
+    "link_ficha": "https://tinyurl.com/greenfield-fitomare",
+    "precio_bs": 0
   },
   {
-    "sku": "TRENCH-10L",
-    "nombre": "TRENCH",
-    "ingrediente_activo": "Bifenthrin 100 g/l EC",
-    "categoria": "Insecticida-Acaricida",
-    "cultivo": ["Soya"],
-    "plaga": ["Chinche café panza verde", "Mosca barrenadora"],
-    "dosis": "0.3–0.4 L/ha",
-    "formulacion": "Insecticida que actúa por contacto e ingestión. Excelente efecto de choque y volteo en plagas.",
-    "presentaciones": ["10 L"],
-    "precio_bs": 0,
-    "link_ficha": "https://tinyurl.com/PORTAFOLIO-NEWCHEM"
-  },
-  {
-    "sku": "MEXIN-5-10L",
-    "nombre": "MEXIN",
-    "ingrediente_activo": "Abamectin 50 g/l EC",
-    "categoria": "Insecticida-Acaricida",
-    "cultivo": ["Soya"],
-    "plaga": ["Ácaro"],
-    "dosis": "0.11–0.14 L/ha",
-    "formulacion": "Insecticida-Acaricida de contacto e ingestión. Control eficaz sobre ácaros.",
-    "presentaciones": ["5 L", "10 L"],
-    "precio_bs": 0,
-    "link_ficha": "https://tinyurl.com/PORTAFOLIO-NEWCHEM"
-  },
-  {
-    "sku": "FENPRONIL-1KG",
-    "nombre": "FENPRONIL",
-    "ingrediente_activo": "Fipronil 800 g/kg WG",
-    "categoria": "Insecticida-Acaricida",
-    "cultivo": ["Soya"],
-    "plaga": ["Picudo gris pequeño", "Trips"],
-    "dosis": "45–60 g/100 kg de semilla o 80 g/ha",
-    "formulacion": "Insecticida de contacto e ingestión. Altamente efectivo y contundente sobre un amplio rango de plagas.",
-    "presentaciones": ["1 Kg"],
-    "precio_bs": 0,
-    "link_ficha": "https://tinyurl.com/PORTAFOLIO-NEWCHEM"
-  },
-  {
-    "sku": "NOATO-1KG",
-    "nombre": "NOATO",
-    "ingrediente_activo": "Emamectin Benzoato 57 g/kg WG",
-    "categoria": "Insecticida-Acaricida",
-    "cultivo": ["Soya"],
-    "plaga": ["Pegador de hoja"],
-    "dosis": "0.125–0.2 Kg/ha",
-    "formulacion": "Insecticida de contacto e ingestión. Formulación diferenciada, no tranca boquillas.",
-    "presentaciones": ["1 Kg"],
-    "precio_bs": 0,
-    "link_ficha": "https://tinyurl.com/PORTAFOLIO-NEWCHEM"
-  },
-  {
-    "sku": "LAYER-25KG",
-    "nombre": "LAYER",
-    "ingrediente_activo": "Mancozeb 800 g/kg WP",
-    "categoria": "Fungicida",
-    "cultivo": ["Soya"],
-    "plaga": ["Roya Asiática"],
-    "dosis": "2–3 Kg/ha",
-    "formulacion": "Fungicida de contacto, preventivo, curativo, erradicante, protector-multisitio. Buen control sobre enfermedades de fin de ciclo.",
-    "presentaciones": ["25 Kg"],
-    "precio_bs": 0,
-    "link_ficha": "https://tinyurl.com/PORTAFOLIO-NEWCHEM"
+    "sku": "NITROGREEN-S-50KG",
+    "nombre": "NitroGreen S",
+    "categoria": "Fertilizante nitrogenado con azufre (granulado)",
+    "composicion": [
+      { "componente": "Nitrógeno (N)", "pp": "36 % p/p" },
+      { "componente": "Azufre (S)", "pp": "10 % p/p" }
+    ],
+    "aspecto": "Sólido granulado",
+    "usos": "Aplicación al suelo de liberación controlada con granulometría uniforme para mayor tiempo de disponibilidad.",
+    "beneficios": [
+      "Azufre con disponibilidad inmediata",
+      "Aplicaciones al voleo",
+      "Nitrógeno protegido",
+      "Granulometría uniforme",
+      "Máximo tiempo disponible para el cultivo"
+    ],
+    "dosis": {
+      "suelo": "100–300 kg/ha (ajustar según análisis de suelo)"
+    },
+    "cultivos": ["Soya", "Maíz", "Trigo", "Girasol", "Pasturas"],
+    "compatibilidad": "Mezclable con la mayoría de fertilizantes granulados.",
+    "presentaciones": ["50 Kg"],
+    "almacenamiento": "Mantener en lugar seco y ventilado; evitar humedad.",
+    "link_ficha": "https://tinyurl.com/greenfield-nitrogreen",
+    "precio_bs": 0
   }
 ]

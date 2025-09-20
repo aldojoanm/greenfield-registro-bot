@@ -3,6 +3,11 @@ import 'dotenv/config';
 import { google } from 'googleapis';
 let _sheets;
 
+// --- Marca / asesor (configurable por .env) ---
+const BRAND_NAME   = process.env.BRAND_NAME   || 'Greenfield';
+const ADVISOR_NAME = process.env.ADVISOR_NAME || 'Equipo Greenfield';
+const ADVISOR_ROLE = process.env.ADVISOR_ROLE || 'Asesor comercial de Greenfield';
+
 /* ===========================
    Autorización / cliente API
    =========================== */
@@ -281,12 +286,11 @@ function buildClientMessage({ nombre, items }) {
     return `• ${it.nombre}${pres}${cant}`;
   });
   return [
-    `Hola ${quien}, soy Jonathan Arteaga, Encargado de Negocios de New Chem Agroquímicos.`,
-    `Te escribo por tu cotización con los siguientes productos:`,
+    `Hola ${quien}, soy ${ADVISOR_NAME}, ${ADVISOR_ROLE}.`,
+    `Te escribo por tu cotización de ${BRAND_NAME} con los siguientes productos:`,
     ...lines
   ].join('\n');
 }
-
 function buildWaLinkTo(numberDigits, message) {
   const to = onlyDigits(numberDigits);
   const text = encodeURIComponent(message);
