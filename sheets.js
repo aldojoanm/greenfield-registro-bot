@@ -3,13 +3,10 @@ import { google } from 'googleapis';
 
 let _sheets;
 
-/** ====== Auth & cliente Sheets ====== */
 export async function getSheets() {
   if (_sheets) return _sheets;
-
   let auth;
   const raw = process.env.GOOGLE_CREDENTIALS_JSON;
-
   if (raw && raw.trim()) {
     const creds = JSON.parse(raw);
     auth = new google.auth.GoogleAuth({
@@ -24,13 +21,11 @@ export async function getSheets() {
   } else {
     throw new Error('No hay credenciales de Google. Define GOOGLE_CREDENTIALS_JSON o GOOGLE_APPLICATION_CREDENTIALS.');
   }
-
   const client = await auth.getClient();
   _sheets = google.sheets({ version: 'v4', auth: client });
   return _sheets;
 }
 
-/** ====== Utiles fecha/numero ====== */
 const pad2 = (n) => String(n).padStart(2, '0');
 const LOCAL_TZ = process.env.LOCAL_TZ || 'America/La_Paz';
 
@@ -50,7 +45,6 @@ export function nowDisplay() {
 }
 
 export function todayISODate() {
-  // YYYY-MM-DD (en TZ local)
   try {
     const parts = new Intl.DateTimeFormat('en-CA', {
       timeZone: LOCAL_TZ,
@@ -64,30 +58,24 @@ export function todayISODate() {
   }
 }
 
-/** ====== Hoja por empleado ======
- * Encabezados (A..N):
- * A:id, B:fecha, C:detalle, D:factura-recibo, E:combustible, F:kilometraje vehiculo,
- * G:alimentacion, H:hospedaje, I:peajes, J:aceites, K:llantas, L:frenos, M:otros, N:totales
- */
 export const HEADERS = [
   'id','fecha','detalle','factura-recibo','combustible','kilometraje vehiculo',
   'alimentacion','hospedaje','peajes','aceites','llantas','frenos','otros','totales'
 ];
 
 const MONEY_COL_INDEXES = {
-  combustible: 4,   // E
-  alimentacion: 6,  // G
-  hospedaje: 7,     // H
-  peajes: 8,        // I
-  aceites: 9,       // J
-  llantas: 10,      // K
-  frenos: 11,       // L
-  otros: 12         // M
+  combustible: 4,
+  alimentacion: 6,
+  hospedaje: 7,
+  peajes: 8,
+  aceites: 9,
+  llantas: 10,
+  frenos: 11,
+  otros: 12
 };
-const KM_COL_INDEX = 5; // F
+const KM_COL_INDEX = 5;
 
 function canonSheetName(name='') {
-  // Máx 99 chars, sin caracteres raros
   return String(name || 'Empleado').trim().slice(0, 99);
 }
 
@@ -103,11 +91,8 @@ export async function ensureEmployeeSheet(empleadoNombre) {
   if (!exists) {
     await sheets.spreadsheets.batchUpdate({
       spreadsheetId,
-      requestBody: {
-        requests: [{ addSheet: { properties: { title } } }]
-      }
+      requestBody: { requests: [{ addSheet: { properties: { title } } }] }
     });
-    // set headers
     await sheets.spreadsheets.values.update({
       spreadsheetId,
       range: `${title}!A1:N1`,
@@ -121,22 +106,13 @@ export async function ensureEmployeeSheet(empleadoNombre) {
 export async function getNextId(hoja) {
   const sheets = await getSheets();
   const spreadsheetId = process.env.SHEETS_SPREADSHEET_ID;
-
-  const r = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: `${hoja}!A:A`
-  });
+  const r = await sheets.spreadsheets.values.get({ spreadsheetId, range: `${hoja}!A:A` });
   const rows = r.data.values || [];
-  if (rows.length <= 1) return 1; // solo encabezado o vacío
-  // Último id en columna A
+  if (rows.length <= 1) return 1;
   const last = rows.slice(1).map(x => Number(x?.[0] || 0)).filter(n => Number.isFinite(n));
   return last.length ? Math.max(...last) + 1 : 1;
 }
 
-/** rowObj = {
- *   detalle, factura, categoria, monto (para categoría monetaria), km (para kilometraje)
- * }
- */
 export async function appendExpenseRow(hoja, rowObj) {
   const sheets = await getSheets();
   const spreadsheetId = process.env.SHEETS_SPREADSHEET_ID;
@@ -144,23 +120,20 @@ export async function appendExpenseRow(hoja, rowObj) {
   const id = await getNextId(hoja);
   const fecha = nowDisplay();
 
-  // base row con strings/números
   const row = new Array(HEADERS.length).fill('');
   row[0] = id;
   row[1] = fecha;
   row[2] = rowObj.detalle || '';
   row[3] = rowObj.factura || '';
 
-  // set categoría elegida
   if (rowObj.categoria === 'kilometraje vehiculo') {
     row[KM_COL_INDEX] = Number(rowObj.km || 0);
   } else {
-    const key = rowObj.categoria; // e.g. "combustible", "alimentacion", etc.
+    const key = rowObj.categoria;
     const colIndex = MONEY_COL_INDEXES[key] ?? null;
     if (colIndex !== null) row[colIndex] = Number(rowObj.monto || 0);
   }
 
-  // totales = suma monetaria (E,G,H,I,J,K,L,M)
   const moneyCols = Object.values(MONEY_COL_INDEXES);
   const total = moneyCols.reduce((sum, colIdx) => sum + (Number(row[colIdx] || 0)), 0);
   row[13] = total;
@@ -179,7 +152,7 @@ export async function appendExpenseRow(hoja, rowObj) {
 export async function todayTotalFor(hoja) {
   const sheets = await getSheets();
   const spreadsheetId = process.env.SHEETS_SPREADSHEET_ID;
-  const today = todayISODate(); // 'YYYY-MM-DD'
+  const today = todayISODate();
 
   const r = await sheets.spreadsheets.values.get({
     spreadsheetId,
@@ -189,10 +162,9 @@ export async function todayTotalFor(hoja) {
 
   let total = 0;
   for (const row of rows) {
-    const fecha = row[1] || ''; // 'YYYY-MM-DD HH:mm'
+    const fecha = row[1] || '';
     const isToday = String(fecha).slice(0, 10) === today;
     if (!isToday) continue;
-    // suma columnas monetarias
     for (const colIdx of Object.values(MONEY_COL_INDEXES)) {
       total += Number(row[colIdx] || 0);
     }
