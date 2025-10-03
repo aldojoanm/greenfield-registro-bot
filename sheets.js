@@ -4,7 +4,7 @@ import { google } from 'googleapis';
 let _sheets;
 
 /** ====== Auth & cliente Sheets ====== */
-async function getSheets() {
+export async function getSheets() {
   if (_sheets) return _sheets;
 
   let auth;
