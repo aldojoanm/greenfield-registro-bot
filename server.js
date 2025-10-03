@@ -9,14 +9,6 @@ import waRouter from './wa.js';
 import messengerRouter from './index.js';
 import pricesRouter from './prices.js';
 
-// ========= Sheets =========
-import {
-  summariesLastNDays,
-  historyForIdLastNDays,
-  appendMessage,
-  readPrices, writePrices, readRate, writeRate,
-} from './sheets.js';
-
 const app = express();
 app.disable('x-powered-by');
 app.set('trust proxy', 1);
