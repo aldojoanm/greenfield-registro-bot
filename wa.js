@@ -1,5 +1,5 @@
 import express from "express";
-import { ensureEmployeeSheet, upsertDailyExpenseRow, todayTotalFor } from "./sheets.js";
+import { ensureEmployeeSheet, upsertDailyExpenseRow, todayTotalFor, todaySummary } from "./sheets.js";
 
 const router = express.Router();
 
@@ -125,8 +125,8 @@ router.post("/wa/webhook", async (req, res) => {
 
       if (idU === "RESUMEN") {
         if (!s.empleado) { s.etapa = "ask_personal"; setS(from, s); await pedirPersonal(from); return res.sendStatus(200); }
-        const total = await todayTotalFor(s.empleado);
-        await toText(from, `Total de hoy para ${s.empleado}: Bs ${total.toFixed(2)}. ¿Deseas registrar algo más?`);
+        const txt = await todaySummary(s.empleado);
+        await toText(from, txt);
         await pedirCategoria(from);
         return res.sendStatus(200);
       }
@@ -141,8 +141,8 @@ router.post("/wa/webhook", async (req, res) => {
       if (/^(menu|inicio)$/i.test(text)) { s.etapa = "ask_personal"; setS(from, s); await pedirPersonal(from); return res.sendStatus(200); }
       if (/^resumen$/i.test(text) || /^ver\s+resumen$/i.test(text)) {
         if (!s.empleado) { s.etapa = "ask_personal"; setS(from, s); await pedirPersonal(from); return res.sendStatus(200); }
-        const total = await todayTotalFor(s.empleado);
-        await toText(from, `Total de hoy para ${s.empleado}: Bs ${total.toFixed(2)}. ¿Deseas registrar algo más?`);
+        const txt = await todaySummary(s.empleado);
+        await toText(from, txt);
         await pedirCategoria(from);
         return res.sendStatus(200);
       }

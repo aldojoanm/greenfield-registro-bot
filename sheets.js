@@ -45,12 +45,14 @@ export function todayISODate() {
   }
 }
 
-export const HEADERS = ["id","fecha","detalle","factura-recibo","combustible","kilometraje vehiculo","alimentacion","hospedaje","peajes","aceites","llantas","frenos","otros","totales"];
+export const HEADERS = ["id","fecha","detalle","factura-recibo","combustible","kilometraje vehiculo","alimentacion","hospedaje","peajes","aceites","llantas","frenos","otros","totales","memo"];
 
 const MONEY_COL_INDEXES = { combustible: 4, alimentacion: 6, hospedaje: 7, peajes: 8, aceites: 9, llantas: 10, frenos: 11, otros: 12 };
 const KM_COL_INDEX = 5;
+const MEMO_COL_INDEX = 14;
 
 function canonSheetName(name = "") { return String(name || "Empleado").trim().slice(0, 99); }
+function num(x) { if (typeof x === "number") return x; const s = String(x ?? "").replace(/\s+/g, "").replace(/,/g, "."); const n = Number(s); return Number.isFinite(n) ? n : 0; }
 
 export async function ensureEmployeeSheet(empleadoNombre) {
   const sheets = await getSheets();
@@ -61,7 +63,11 @@ export async function ensureEmployeeSheet(empleadoNombre) {
   const exists = meta.data.sheets?.some((s) => s.properties?.title === title);
   if (!exists) {
     await sheets.spreadsheets.batchUpdate({ spreadsheetId, requestBody: { requests: [{ addSheet: { properties: { title } } }] } });
-    await sheets.spreadsheets.values.update({ spreadsheetId, range: `${title}!A1:N1`, valueInputOption: "RAW", requestBody: { values: [HEADERS] } });
+    await sheets.spreadsheets.values.update({ spreadsheetId, range: `${title}!A1:O1`, valueInputOption: "RAW", requestBody: { values: [HEADERS] } });
+  } else {
+    await sheets.spreadsheets.values.get({ spreadsheetId, range: `${title}!A1:O1` }).catch(async () => {
+      await sheets.spreadsheets.values.update({ spreadsheetId, range: `${title}!A1:O1`, valueInputOption: "RAW", requestBody: { values: [HEADERS] } });
+    });
   }
   return title;
 }
@@ -81,7 +87,7 @@ export async function upsertDailyExpenseRow(hoja, rowObj) {
   const spreadsheetId = process.env.SHEETS_SPREADSHEET_ID;
   const today = todayISODate();
 
-  const r = await sheets.spreadsheets.values.get({ spreadsheetId, range: `${hoja}!A2:N100000` });
+  const r = await sheets.spreadsheets.values.get({ spreadsheetId, range: `${hoja}!A2:O100000` });
   const rows = r.data.values || [];
 
   let rowIndex = -1;
@@ -95,35 +101,42 @@ export async function upsertDailyExpenseRow(hoja, rowObj) {
     const base = new Array(HEADERS.length).fill("");
     base[0] = id;
     base[1] = nowDisplay();
-    base[2] = "";
-    base[3] = "";
     base[13] = 0;
+    base[14] = "{}";
     await sheets.spreadsheets.values.append({ spreadsheetId, range: `${hoja}!A1`, valueInputOption: "RAW", insertDataOption: "INSERT_ROWS", requestBody: { values: [base] } });
     rowIndex = rows.length + 2;
   }
 
-  const rowRange = `${hoja}!A${rowIndex}:N${rowIndex}`;
+  const rowRange = `${hoja}!A${rowIndex}:O${rowIndex}`;
   const current = await sheets.spreadsheets.values.get({ spreadsheetId, range: rowRange });
   const row = current.data.values?.[0] || new Array(HEADERS.length).fill("");
 
-  const detallePrev = row[2] || "";
-  const facturaPrev = row[3] || "";
+  let memo = {};
+  try { memo = JSON.parse(row[MEMO_COL_INDEX] || "{}") || {}; } catch { memo = {}; }
 
   if (rowObj.categoria === "kilometraje vehiculo") {
-    const prev = Number(row[KM_COL_INDEX] || 0);
-    row[KM_COL_INDEX] = prev + Number(rowObj.km || 0);
+    const prev = num(row[KM_COL_INDEX]);
+    row[KM_COL_INDEX] = prev + num(rowObj.km || 0);
+    memo.kilometraje = memo.kilometraje || [];
+    memo.kilometraje.push({ km: num(rowObj.km || 0), ts: nowDisplay() });
   } else {
     const col = MONEY_COL_INDEXES[rowObj.categoria];
-    const prev = Number(row[col] || 0);
-    row[col] = prev + Number(rowObj.monto || 0);
+    const prev = num(row[col]);
+    row[col] = prev + num(rowObj.monto || 0);
+    memo[rowObj.categoria] = memo[rowObj.categoria] || [];
+    memo[rowObj.categoria].push({ monto: num(rowObj.monto || 0), detalle: rowObj.detalle || "", factura: rowObj.factura || "", ts: nowDisplay() });
   }
 
+  const detallePrev = String(row[2] || "");
+  const facturaPrev = String(row[3] || "");
   if (rowObj.detalle) row[2] = detallePrev ? `${detallePrev} | ${rowObj.detalle}` : rowObj.detalle;
   if (rowObj.factura) row[3] = facturaPrev ? `${facturaPrev} | ${rowObj.factura}` : rowObj.factura;
 
   let total = 0;
-  for (const colIdx of Object.values(MONEY_COL_INDEXES)) total += Number(row[colIdx] || 0);
+  for (const colIdx of Object.values(MONEY_COL_INDEXES)) total += num(row[colIdx]);
   row[13] = total;
+
+  row[MEMO_COL_INDEX] = JSON.stringify(memo);
 
   await sheets.spreadsheets.values.update({ spreadsheetId, range: rowRange, valueInputOption: "RAW", requestBody: { values: [row] } });
 
@@ -134,11 +147,39 @@ export async function todayTotalFor(hoja) {
   const sheets = await getSheets();
   const spreadsheetId = process.env.SHEETS_SPREADSHEET_ID;
   const today = todayISODate();
-  const r = await sheets.spreadsheets.values.get({ spreadsheetId, range: `${hoja}!A2:N100000` });
+  const r = await sheets.spreadsheets.values.get({ spreadsheetId, range: `${hoja}!A2:O100000` });
   const rows = r.data.values || [];
   for (const row of rows) {
     const fecha = row[1] || "";
-    if (String(fecha).slice(0, 10) === today) return Number(row[13] || 0);
+    if (String(fecha).slice(0, 10) === today) return num(row[13] || 0);
   }
   return 0;
+}
+
+export async function todaySummary(hoja) {
+  const sheets = await getSheets();
+  const spreadsheetId = process.env.SHEETS_SPREADSHEET_ID;
+  const today = todayISODate();
+  const r = await sheets.spreadsheets.values.get({ spreadsheetId, range: `${hoja}!A2:O100000` });
+  const rows = r.data.values || [];
+  let row = null;
+  for (const x of rows) { if (String(x[1] || "").slice(0, 10) === today) { row = x; break; } }
+  if (!row) return "No hay registros hoy.";
+  let memo = {};
+  try { memo = JSON.parse(row[MEMO_COL_INDEX] || "{}") || {}; } catch { memo = {}; }
+  const parts = [];
+  if (Array.isArray(memo.kilometraje) && memo.kilometraje.length) {
+    const sumKm = memo.kilometraje.reduce((a,b)=>a+num(b.km),0);
+    parts.push(`• Kilometraje: ${sumKm} km`);
+  }
+  for (const k of Object.keys(MONEY_COL_INDEXES)) {
+    const arr = memo[k] || [];
+    if (!arr.length) continue;
+    const total = arr.reduce((a,b)=>a+num(b.monto),0);
+    const lines = arr.map(e=>`   - ${e.detalle ? e.detalle+" " : ""}${e.factura ? `(Fac ${e.factura}) ` : ""}Bs ${e.monto.toFixed(2)}`);
+    parts.push(`• ${k[0].toUpperCase()+k.slice(1)}: Bs ${total.toFixed(2)}\n${lines.join("\n")}`);
+  }
+  const tot = num(row[13] || 0);
+  parts.push(`• Total del día: Bs ${tot.toFixed(2)}`);
+  return parts.join("\n");
 }
