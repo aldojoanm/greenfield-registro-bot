@@ -1,108 +1,95 @@
-import express from 'express';
-import { ensureEmployeeSheet, appendExpenseRow, todayTotalFor } from './sheets.js';
+// wa.js
+import express from "express";
+import { ensureEmployeeSheet, appendExpenseRow, todayTotalFor } from "./sheets.js";
 
 const router = express.Router();
 
-const VERIFY_TOKEN = process.env.VERIFY_TOKEN || 'VERIFY_123';
-const WA_TOKEN = process.env.WHATSAPP_TOKEN || '';
-const WA_PHONE_ID = process.env.WHATSAPP_PHONE_ID || '';
-const DEBUG = process.env.DEBUG_LOGS === '1';
-const dbg = (...a) => { if (DEBUG) console.log('[DBG]', ...a); };
+const VERIFY_TOKEN = process.env.VERIFY_TOKEN || "VERIFY_123";
+const WA_TOKEN = process.env.WHATSAPP_TOKEN || "";
+const WA_PHONE_ID = process.env.WHATSAPP_PHONE_ID || "";
+const DEBUG = process.env.DEBUG_LOGS === "1";
+const dbg = (...a) => { if (DEBUG) console.log("[DBG]", ...a); };
 
 const S = new Map();
-const getS = (id) => { if (!S.has(id)) S.set(id, { etapa: 'ask_nombre' }); return S.get(id); };
+const getS = (id) => { if (!S.has(id)) S.set(id, { etapa: "ask_nombre" }); return S.get(id); };
 const setS = (id, v) => S.set(id, v);
 
 async function waSendQ(to, payload) {
   const url = `https://graph.facebook.com/v20.0/${WA_PHONE_ID}/messages`;
   const r = await fetch(url, {
-    method: 'POST',
-    headers: { 'Authorization': `Bearer ${WA_TOKEN}`, 'Content-Type': 'application/json' },
+    method: "POST",
+    headers: { Authorization: `Bearer ${WA_TOKEN}`, "Content-Type": "application/json" },
     body: JSON.stringify(payload)
   });
   if (!r.ok) {
-    const t = await r.text().catch(()=> '');
-    console.error('[WA SEND ERROR]', r.status, t);
+    const t = await r.text().catch(() => "");
+    console.error("[WA SEND ERROR]", r.status, t);
   }
 }
 
 const toText = (to, body) => waSendQ(to, {
-  messaging_product: 'whatsapp', to, type: 'text',
+  messaging_product: "whatsapp", to, type: "text",
   text: { body: String(body).slice(0, 4096), preview_url: false }
 });
 
-const clamp = (t, n=20)=> (String(t).length<=n? String(t) : String(t).slice(0,n-1)+'…');
+const clamp = (t, n = 20) => (String(t).length <= n ? String(t) : String(t).slice(0, n - 1) + "…");
 
-const toButtons = (to, body, buttons=[]) => waSendQ(to, {
-  messaging_product:'whatsapp', to, type:'interactive',
-  interactive:{
-    type:'button',
-    body:{ text: String(body).slice(0,1024) },
-    action:{ buttons: buttons.slice(0,3).map(b=>({ type:'reply', reply:{ id:b.payload || b.id, title: clamp(b.title) }})) }
+const toButtons = (to, body, buttons = []) => waSendQ(to, {
+  messaging_product: "whatsapp", to, type: "interactive",
+  interactive: {
+    type: "button",
+    body: { text: String(body).slice(0, 1024) },
+    action: { buttons: buttons.slice(0, 3).map(b => ({ type: "reply", reply: { id: b.payload || b.id, title: clamp(b.title) } })) }
   }
 });
 
-const toList = (to, body, title, rows=[]) => waSendQ(to, {
-  messaging_product:'whatsapp', to, type:'interactive',
-  interactive:{
-    type:'list',
-    body:{ text:String(body).slice(0,1024) },
-    action:{
-      button: title.slice(0,20),
-      sections:[{ title, rows: rows.slice(0,10).map(r=>{
-        const id = r.payload || r.id;
-        const t  = clamp(r.title ?? '', 24);
-        return { id, title: t };
-      }) }]
+const toList = (to, body, title, rows = []) => waSendQ(to, {
+  messaging_product: "whatsapp", to, type: "interactive",
+  interactive: {
+    type: "list",
+    body: { text: String(body).slice(0, 1024) },
+    action: {
+      button: title.slice(0, 20),
+      sections: [{ title, rows: rows.slice(0, 10).map(r => ({ id: r.payload || r.id, title: clamp(r.title ?? "", 24) })) }]
     }
   }
 });
 
-const CATEGORIAS_MONETARIAS = [
-  'combustible','alimentacion','hospedaje','peajes','aceites','llantas','frenos','otros'
-];
-const TODAS_CATEGORIAS = [...CATEGORIAS_MONETARIAS, 'kilometraje vehiculo'];
+const CATEGORIAS_MONETARIAS = ["combustible", "alimentacion", "hospedaje", "peajes", "aceites", "llantas", "frenos", "otros"];
+const TODAS_CATEGORIAS = [...CATEGORIAS_MONETARIAS, "kilometraje vehiculo"];
 
-function saludo() {
-  return `👋 Hola, soy el *Bot de Gastos*.\nRegistraré tus gastos en tu hoja personal de Excel (Google Sheets).`;
-}
-function pedirNombre() {
-  return `¿Cuál es tu *nombre y apellido*? (Lo usaré como nombre de tu hoja; ejemplo: "Juan Pérez")`;
-}
+const saludo = () => "Hola, soy el asistente de Greenfield. Te ayudaré a registrar gastos y kilometraje en tu hoja personal.";
+const pedirNombre = () => "Indícame tu nombre y apellido (ej.: “Juan Pérez”).";
 async function pedirCategoria(to) {
-  const items = TODAS_CATEGORIAS.map(c => ({ title: c[0].toUpperCase()+c.slice(1), payload: `CAT_${c.toUpperCase().replace(/\s+/g,'_')}` }));
-  await toList(to, '¿Qué deseas *registrar* ahora?', 'Elegir categoría', items);
+  const items = TODAS_CATEGORIAS.map(c => ({ title: c[0].toUpperCase() + c.slice(1), payload: `CAT_${c.toUpperCase().replace(/\s+/g, "_")}` }));
+  await toList(to, "¿Qué deseas registrar ahora?", "Seleccionar categoría", items);
 }
-async function pedirDetalle(to) {
-  await toText(to, 'Escribe un *detalle* breve (ej.: "Ruta a Warnes", "Cambio pastillas").');
-}
-async function pedirFactura(to) {
-  await toText(to, 'Número/serie de *factura o recibo* (si no aplica, escribe "ninguno").');
-}
+async function pedirDetalle(to) { await toText(to, "Describe brevemente el gasto (ej.: “Ruta Warnes”, “Cambio de pastillas”)."); }
+async function pedirFactura(to) { await toText(to, "Número de factura o recibo. Si no corresponde, escribe “ninguno”."); }
 async function pedirMonto(to, categoria) {
-  if (categoria === 'kilometraje vehiculo') await toText(to, 'Indica los *kilómetros* (solo número).');
-  else await toText(to, 'Indica el *monto* en Bs (solo número, ej.: 120.50).');
+  if (categoria === "kilometraje vehiculo") await toText(to, "Ingresa los kilómetros recorridos (solo número).");
+  else await toText(to, "Ingresa el monto en bolivianos (solo número, ej.: 120.50).");
 }
-function parseNumberFlexible(s='') {
-  const t = String(s).replace(/\s+/g,'').replace(/,/g,'.');
+function parseNumberFlexible(s = "") {
+  const t = String(s).replace(/\s+/g, "").replace(/,/g, ".");
   const n = Number(t);
   return Number.isFinite(n) ? n : NaN;
 }
 
-router.get('/wa/webhook', (req,res) => {
-  const mode  = req.query['hub.mode'];
-  const token = req.query['hub.verify_token'];
-  const chall = req.query['hub.challenge'];
-  if (mode === 'subscribe' && token === VERIFY_TOKEN) return res.status(200).send(String(chall || ''));
+router.get("/wa/webhook", (req, res) => {
+  const mode = req.query["hub.mode"];
+  const token = req.query["hub.verify_token"];
+  const chall = req.query["hub.challenge"];
+  if (mode === "subscribe" && token === VERIFY_TOKEN) return res.status(200).send(String(chall || ""));
   return res.sendStatus(403);
 });
 
-router.post('/wa/webhook', async (req,res) => {
+router.post("/wa/webhook", async (req, res) => {
   try {
-    const entry  = req.body?.entry?.[0];
+    const entry = req.body?.entry?.[0];
     const change = entry?.changes?.[0];
-    const value  = change?.value;
-    const msg    = value?.messages?.[0];
+    const value = change?.value;
+    const msg = value?.messages?.[0];
     if (!msg) return res.sendStatus(200);
 
     const from = msg.from;
@@ -111,149 +98,154 @@ router.post('/wa/webhook', async (req,res) => {
     if (!s.greeted) {
       s.greeted = true;
       await toText(from, saludo());
-      await toText(from, 'Escribe tu nombre y luego elige categoría. Para *kilometraje* solo te pediré los km. Con *resumen* ves el total de hoy.');
       await toText(from, pedirNombre());
-      s.etapa = 'ask_nombre';
+      s.etapa = "ask_nombre";
       setS(from, s);
       return res.sendStatus(200);
     }
 
-    if (msg.type === 'interactive') {
+    if (msg.type === "interactive") {
       const br = msg.interactive?.button_reply;
       const lr = msg.interactive?.list_reply;
-      const id = br?.id || lr?.id;
-      if (id?.startsWith('CAT_')) {
-        const categoria = id.replace('CAT_','').toLowerCase().replace(/_/g,' ');
+      const id = (br?.id || lr?.id || "").toString();
+      const idU = id.toUpperCase();
+
+      if (idU.startsWith("CAT_")) {
+        const categoria = id.replace("CAT_", "").toLowerCase().replace(/_/g, " ");
         s.ultimaCategoria = categoria;
-        s.pend = { detalle:'', factura:'', monto:null, km:null };
-        if (categoria === 'kilometraje vehiculo') {
-          s.etapa = 'ask_monto';
+        s.pend = { detalle: "", factura: "", monto: null, km: null };
+        if (categoria === "kilometraje vehiculo") {
+          s.etapa = "ask_monto";
           await pedirMonto(from, categoria);
         } else {
-          s.etapa = 'ask_detalle';
+          s.etapa = "ask_detalle";
           await pedirDetalle(from);
         }
         setS(from, s);
         return res.sendStatus(200);
       }
-      if (id === 'SEGUIR') {
-        s.etapa = 'ask_categoria';
+
+      if (idU === "SEGUIR") {
+        s.etapa = "ask_categoria";
         await pedirCategoria(from);
         setS(from, s);
         return res.sendStatus(200);
       }
-      if (id === 'RESUMEN') {
+
+      if (idU === "RESUMEN") {
         if (!s.empleado) {
-          s.etapa = 'ask_nombre';
-          await toText(from, 'Necesito tu *nombre* para crear/usar tu hoja.');
+          s.etapa = "ask_nombre";
+          await toText(from, "Antes, confirma tu nombre para crear o usar tu hoja.");
           await toText(from, pedirNombre());
           setS(from, s);
           return res.sendStatus(200);
         }
         const total = await todayTotalFor(s.empleado);
-        await toText(from, `📅 *Total de HOY* para *${s.empleado}*: Bs ${total.toFixed(2)}.\n¿Registrar otra cosa?`);
+        await toText(from, `Total de hoy para ${s.empleado}: Bs ${total.toFixed(2)}. ¿Deseas registrar algo más?`);
         await pedirCategoria(from);
         return res.sendStatus(200);
       }
+
       return res.sendStatus(200);
     }
 
-    if (msg.type === 'text') {
-      const text = (msg.text?.body || '').trim();
+    if (msg.type === "text") {
+      const text = (msg.text?.body || "").trim();
 
       if (/^cambiar\s+nombre$/i.test(text)) {
-        s.etapa = 'ask_nombre';
-        await toText(from, 'Ok, vamos a actualizar tu nombre/hoja.');
+        s.etapa = "ask_nombre";
+        await toText(from, "Perfecto, actualicemos tu nombre.");
         await toText(from, pedirNombre());
         setS(from, s);
         return res.sendStatus(200);
       }
-      if (/^resumen$/i.test(text)) {
+
+      if (/^resumen$/i.test(text) || /^ver\s+resumen$/i.test(text)) {
         if (!s.empleado) {
-          await toText(from, 'Primero necesito tu *nombre* para crear/usar tu hoja.');
-          s.etapa = 'ask_nombre';
+          await toText(from, "Antes, confirma tu nombre.");
+          s.etapa = "ask_nombre";
           await toText(from, pedirNombre());
           setS(from, s);
           return res.sendStatus(200);
         }
         const total = await todayTotalFor(s.empleado);
-        await toText(from, `📅 *Total de HOY* para *${s.empleado}*: Bs ${total.toFixed(2)}.\n¿Registrar otra cosa?`);
+        await toText(from, `Total de hoy para ${s.empleado}: Bs ${total.toFixed(2)}. ¿Deseas registrar algo más?`);
         await pedirCategoria(from);
         return res.sendStatus(200);
       }
 
-      if (s.etapa === 'ask_nombre') {
-        const nombre = text.replace(/\s+/g,' ').trim();
+      if (s.etapa === "ask_nombre") {
+        const nombre = text.replace(/\s+/g, " ").trim();
         if (nombre.length < 3 || !/\s/.test(nombre)) {
-          await toText(from, 'Por favor, envía *nombre y apellido*. Ej.: "María López".');
+          await toText(from, "Por favor, envía nombre y apellido (ej.: “María López”).");
           return res.sendStatus(200);
         }
         const hoja = await ensureEmployeeSheet(nombre);
         s.empleado = hoja;
-        s.etapa = 'ask_categoria';
-        await toText(from, `✅ Usaremos la hoja: *${hoja}*`);
+        s.etapa = "ask_categoria";
+        await toText(from, `Hoja seleccionada: ${hoja}`);
         await pedirCategoria(from);
         setS(from, s);
         return res.sendStatus(200);
       }
 
-      if (s.etapa === 'ask_categoria') {
+      if (s.etapa === "ask_categoria") {
         const t = text.toLowerCase();
         const hit = TODAS_CATEGORIAS.find(c => t.includes(c));
         if (!hit) {
-          await toText(from, 'Elige/Escribe una *categoría* válida.');
+          await toText(from, "Selecciona una categoría de la lista.");
           await pedirCategoria(from);
           return res.sendStatus(200);
         }
         s.ultimaCategoria = hit;
-        s.pend = { detalle:'', factura:'', monto:null, km:null };
-        if (hit === 'kilometraje vehiculo') {
-          s.etapa = 'ask_monto';
+        s.pend = { detalle: "", factura: "", monto: null, km: null };
+        if (hit === "kilometraje vehiculo") {
+          s.etapa = "ask_monto";
           await pedirMonto(from, hit);
         } else {
-          s.etapa = 'ask_detalle';
+          s.etapa = "ask_detalle";
           await pedirDetalle(from);
         }
         setS(from, s);
         return res.sendStatus(200);
       }
 
-      if (s.etapa === 'ask_detalle') {
+      if (s.etapa === "ask_detalle") {
         s.pend.detalle = text;
-        s.etapa = 'ask_factura';
+        s.etapa = "ask_factura";
         await pedirFactura(from);
         setS(from, s);
         return res.sendStatus(200);
       }
 
-      if (s.etapa === 'ask_factura') {
-        s.pend.factura = /^ninguno$/i.test(text) ? '' : text;
-        s.etapa = 'ask_monto';
+      if (s.etapa === "ask_factura") {
+        s.pend.factura = /^ninguno$/i.test(text) ? "" : text;
+        s.etapa = "ask_monto";
         await pedirMonto(from, s.ultimaCategoria);
         setS(from, s);
         return res.sendStatus(200);
       }
 
-      if (s.etapa === 'ask_monto') {
-        if (s.ultimaCategoria === 'kilometraje vehiculo') {
+      if (s.etapa === "ask_monto") {
+        if (s.ultimaCategoria === "kilometraje vehiculo") {
           const km = parseNumberFlexible(text);
           if (!Number.isFinite(km) || km < 0) {
-            await toText(from, 'Por favor, envía un *número* válido de *kilómetros* (ej.: 35).');
+            await toText(from, "Envía un número válido de kilómetros.");
             return res.sendStatus(200);
           }
           s.pend.km = km;
         } else {
           const monto = parseNumberFlexible(text);
           if (!Number.isFinite(monto) || monto < 0) {
-            await toText(from, 'Por favor, envía un *monto* válido en Bs (ej.: 120.50).');
+            await toText(from, "Envía un monto válido (ej.: 120.50).");
             return res.sendStatus(200);
           }
           s.pend.monto = monto;
         }
 
         if (!s.empleado) {
-          await toText(from, 'Falta tu *nombre* para crear/usar tu hoja.');
-          s.etapa = 'ask_nombre';
+          await toText(from, "Confirma tu nombre para continuar.");
+          s.etapa = "ask_nombre";
           await toText(from, pedirNombre());
           setS(from, s);
           return res.sendStatus(200);
@@ -261,8 +253,8 @@ router.post('/wa/webhook', async (req,res) => {
 
         const { detalle, factura, monto, km } = s.pend;
         const saved = await appendExpenseRow(s.empleado, {
-          detalle: s.ultimaCategoria === 'kilometraje vehiculo' ? '' : detalle,
-          factura: s.ultimaCategoria === 'kilometraje vehiculo' ? '' : factura,
+          detalle: s.ultimaCategoria === "kilometraje vehiculo" ? "" : detalle,
+          factura: s.ultimaCategoria === "kilometraje vehiculo" ? "" : factura,
           categoria: s.ultimaCategoria,
           monto,
           km
@@ -271,44 +263,38 @@ router.post('/wa/webhook', async (req,res) => {
         const totalHoy = await todayTotalFor(s.empleado);
 
         const resumen =
-          `✅ *Guardado* en *${s.empleado}*\n` +
+          `Guardado en ${s.empleado}\n` +
           `• Categoría: ${s.ultimaCategoria}\n` +
-          (s.ultimaCategoria === 'kilometraje vehiculo'
+          (s.ultimaCategoria === "kilometraje vehiculo"
             ? `• Km: ${km}\n`
-            : `• Detalle: ${detalle}\n` +
-              (factura ? `• Fact/Rec: ${factura}\n` : `• Fact/Rec: —\n`) +
+            : `• Detalle: ${detalle || "—"}\n` +
+              `• Fact/Rec: ${factura || "—"}\n` +
               `• Monto: Bs ${monto?.toFixed(2)}\n`) +
           `• ID: ${saved.id} — Fecha: ${saved.fecha}\n\n` +
-          `📅 *Total de HOY*: Bs ${totalHoy.toFixed(2)}`;
+          `Total de hoy: Bs ${totalHoy.toFixed(2)}`;
 
         await toText(from, resumen);
 
-        s.etapa = 'ask_categoria';
+        s.etapa = "ask_categoria";
         s.pend = null;
-        await toButtons(from, '¿Registrar otra cosa?', [
-          { title:'Sí, seguir', payload:'SEGUIR' },
-          { title:'Ver resumen', payload:'RESUMEN' }
+        await toButtons(from, "¿Deseas registrar algo más?", [
+          { title: "Sí, seguir", payload: "SEGUIR" },
+          { title: "Ver resumen", payload: "RESUMEN" }
         ]);
         setS(from, s);
         return res.sendStatus(200);
       }
 
       if (/seguir/i.test(text)) {
-        s.etapa = 'ask_categoria';
+        s.etapa = "ask_categoria";
         await pedirCategoria(from);
         setS(from, s);
         return res.sendStatus(200);
       }
-      if (/^ver\s+resumen$/i.test(text) || /^resumen$/i.test(text)) {
-        const total = await todayTotalFor(s.empleado);
-        await toText(from, `📅 *Total de HOY* para *${s.empleado}*: Bs ${total.toFixed(2)}.\n¿Registrar otra cosa?`);
-        await pedirCategoria(from);
-        return res.sendStatus(200);
-      }
 
-      if (s.etapa === 'ask_categoria') {
+      if (s.etapa === "ask_categoria") {
         await pedirCategoria(from);
-      } else if (s.etapa === 'ask_nombre') {
+      } else if (s.etapa === "ask_nombre") {
         await toText(from, pedirNombre());
       }
 
@@ -317,7 +303,7 @@ router.post('/wa/webhook', async (req,res) => {
 
     res.sendStatus(200);
   } catch (e) {
-    console.error('Webhook error:', e);
+    console.error("Webhook error:", e);
     res.sendStatus(500);
   }
 });
