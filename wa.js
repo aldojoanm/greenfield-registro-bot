@@ -74,7 +74,7 @@ async function pedirCategoria(to) {
   await toList(to, '¿Qué deseas *registrar* ahora?', 'Elegir categoría', items);
 }
 async function pedirDetalle(to) {
-  await toText(to, 'Escribe un *detalle* breve (ej.: "Ruta a Warnes", "Cambio pastillas", etc.).');
+  await toText(to, 'Escribe un *detalle* breve (ej.: "Ruta a Warnes", "Cambio pastillas").');
 }
 async function pedirFactura(to) {
   await toText(to, 'Número/serie de *factura o recibo* (si no aplica, escribe "ninguno").');
@@ -111,8 +111,7 @@ router.post('/wa/webhook', async (req,res) => {
     if (!s.greeted) {
       s.greeted = true;
       await toText(from, saludo());
-      await toText(from, '✨ *Flujo:* nombre → categoría → detalle → factura → monto/km → guardado → total del día.');
-      await toText(from, 'También puedes escribir: "resumen" para ver total del día, o "cambiar nombre".');
+      await toText(from, 'Escribe tu nombre y luego elige categoría. Para *kilometraje* solo te pediré los km. Con *resumen* ves el total de hoy.');
       await toText(from, pedirNombre());
       s.etapa = 'ask_nombre';
       setS(from, s);
@@ -126,10 +125,34 @@ router.post('/wa/webhook', async (req,res) => {
       if (id?.startsWith('CAT_')) {
         const categoria = id.replace('CAT_','').toLowerCase().replace(/_/g,' ');
         s.ultimaCategoria = categoria;
-        s.pend = { detalle:null, factura:null, monto:null, km:null };
-        s.etapa = 'ask_detalle';
-        await pedirDetalle(from);
+        s.pend = { detalle:'', factura:'', monto:null, km:null };
+        if (categoria === 'kilometraje vehiculo') {
+          s.etapa = 'ask_monto';
+          await pedirMonto(from, categoria);
+        } else {
+          s.etapa = 'ask_detalle';
+          await pedirDetalle(from);
+        }
         setS(from, s);
+        return res.sendStatus(200);
+      }
+      if (id === 'SEGUIR') {
+        s.etapa = 'ask_categoria';
+        await pedirCategoria(from);
+        setS(from, s);
+        return res.sendStatus(200);
+      }
+      if (id === 'RESUMEN') {
+        if (!s.empleado) {
+          s.etapa = 'ask_nombre';
+          await toText(from, 'Necesito tu *nombre* para crear/usar tu hoja.');
+          await toText(from, pedirNombre());
+          setS(from, s);
+          return res.sendStatus(200);
+        }
+        const total = await todayTotalFor(s.empleado);
+        await toText(from, `📅 *Total de HOY* para *${s.empleado}*: Bs ${total.toFixed(2)}.\n¿Registrar otra cosa?`);
+        await pedirCategoria(from);
         return res.sendStatus(200);
       }
       return res.sendStatus(200);
@@ -183,9 +206,14 @@ router.post('/wa/webhook', async (req,res) => {
           return res.sendStatus(200);
         }
         s.ultimaCategoria = hit;
-        s.pend = { detalle:null, factura:null, monto:null, km:null };
-        s.etapa = 'ask_detalle';
-        await pedirDetalle(from);
+        s.pend = { detalle:'', factura:'', monto:null, km:null };
+        if (hit === 'kilometraje vehiculo') {
+          s.etapa = 'ask_monto';
+          await pedirMonto(from, hit);
+        } else {
+          s.etapa = 'ask_detalle';
+          await pedirDetalle(from);
+        }
         setS(from, s);
         return res.sendStatus(200);
       }
@@ -233,8 +261,8 @@ router.post('/wa/webhook', async (req,res) => {
 
         const { detalle, factura, monto, km } = s.pend;
         const saved = await appendExpenseRow(s.empleado, {
-          detalle,
-          factura,
+          detalle: s.ultimaCategoria === 'kilometraje vehiculo' ? '' : detalle,
+          factura: s.ultimaCategoria === 'kilometraje vehiculo' ? '' : factura,
           categoria: s.ultimaCategoria,
           monto,
           km
@@ -242,15 +270,18 @@ router.post('/wa/webhook', async (req,res) => {
 
         const totalHoy = await todayTotalFor(s.empleado);
 
-        await toText(from,
+        const resumen =
           `✅ *Guardado* en *${s.empleado}*\n` +
           `• Categoría: ${s.ultimaCategoria}\n` +
-          `• Detalle: ${detalle}\n` +
-          (factura ? `• Fact/Rec: ${factura}\n` : `• Fact/Rec: —\n`) +
-          (s.ultimaCategoria === 'kilometraje vehiculo' ? `• Km: ${km}\n` : `• Monto: Bs ${monto?.toFixed(2)}\n`) +
+          (s.ultimaCategoria === 'kilometraje vehiculo'
+            ? `• Km: ${km}\n`
+            : `• Detalle: ${detalle}\n` +
+              (factura ? `• Fact/Rec: ${factura}\n` : `• Fact/Rec: —\n`) +
+              `• Monto: Bs ${monto?.toFixed(2)}\n`) +
           `• ID: ${saved.id} — Fecha: ${saved.fecha}\n\n` +
-          `📅 *Total de HOY*: Bs ${totalHoy.toFixed(2)}`
-        );
+          `📅 *Total de HOY*: Bs ${totalHoy.toFixed(2)}`;
+
+        await toText(from, resumen);
 
         s.etapa = 'ask_categoria';
         s.pend = null;
@@ -262,7 +293,7 @@ router.post('/wa/webhook', async (req,res) => {
         return res.sendStatus(200);
       }
 
-      if (/^seguir$/i.test(text)) {
+      if (/seguir/i.test(text)) {
         s.etapa = 'ask_categoria';
         await pedirCategoria(from);
         setS(from, s);
