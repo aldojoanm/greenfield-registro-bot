@@ -1,4 +1,3 @@
-// sheets.js
 import "dotenv/config";
 import { google } from "googleapis";
 
@@ -46,7 +45,7 @@ export function todayISODate() {
   }
 }
 
-export const HEADERS = ["id", "fecha", "detalle", "factura-recibo", "combustible", "kilometraje vehiculo", "alimentacion", "hospedaje", "peajes", "aceites", "llantas", "frenos", "otros", "totales"];
+export const HEADERS = ["id","fecha","detalle","factura-recibo","combustible","kilometraje vehiculo","alimentacion","hospedaje","peajes","aceites","llantas","frenos","otros","totales"];
 
 const MONEY_COL_INDEXES = { combustible: 4, alimentacion: 6, hospedaje: 7, peajes: 8, aceites: 9, llantas: 10, frenos: 11, otros: 12 };
 const KM_COL_INDEX = 5;
@@ -67,38 +66,68 @@ export async function ensureEmployeeSheet(empleadoNombre) {
   return title;
 }
 
-export async function getNextId(hoja) {
+async function getNextId(hoja) {
   const sheets = await getSheets();
   const spreadsheetId = process.env.SHEETS_SPREADSHEET_ID;
   const r = await sheets.spreadsheets.values.get({ spreadsheetId, range: `${hoja}!A:A` });
   const rows = r.data.values || [];
   if (rows.length <= 1) return 1;
-  const last = rows.slice(1).map((x) => Number(x?.[0] || 0)).filter((n) => Number.isFinite(n));
+  const last = rows.slice(1).map(x => Number(x?.[0] || 0)).filter(n => Number.isFinite(n));
   return last.length ? Math.max(...last) + 1 : 1;
 }
 
-export async function appendExpenseRow(hoja, rowObj) {
+export async function upsertDailyExpenseRow(hoja, rowObj) {
   const sheets = await getSheets();
   const spreadsheetId = process.env.SHEETS_SPREADSHEET_ID;
-  const id = await getNextId(hoja);
-  const fecha = nowDisplay();
-  const row = new Array(HEADERS.length).fill("");
-  row[0] = id;
-  row[1] = fecha;
-  row[2] = rowObj.detalle || "";
-  row[3] = rowObj.factura || "";
-  if (rowObj.categoria === "kilometraje vehiculo") {
-    row[KM_COL_INDEX] = Number(rowObj.km || 0);
-  } else {
-    const key = rowObj.categoria;
-    const colIndex = MONEY_COL_INDEXES[key] ?? null;
-    if (colIndex !== null) row[colIndex] = Number(rowObj.monto || 0);
+  const today = todayISODate();
+
+  const r = await sheets.spreadsheets.values.get({ spreadsheetId, range: `${hoja}!A2:N100000` });
+  const rows = r.data.values || [];
+
+  let rowIndex = -1;
+  for (let i = 0; i < rows.length; i++) {
+    const fecha = rows[i]?.[1] || "";
+    if (String(fecha).slice(0, 10) === today) { rowIndex = i + 2; break; }
   }
-  const moneyCols = Object.values(MONEY_COL_INDEXES);
-  const total = moneyCols.reduce((sum, colIdx) => sum + (Number(row[colIdx] || 0)), 0);
+
+  if (rowIndex === -1) {
+    const id = await getNextId(hoja);
+    const base = new Array(HEADERS.length).fill("");
+    base[0] = id;
+    base[1] = nowDisplay();
+    base[2] = "";
+    base[3] = "";
+    base[13] = 0;
+    await sheets.spreadsheets.values.append({ spreadsheetId, range: `${hoja}!A1`, valueInputOption: "RAW", insertDataOption: "INSERT_ROWS", requestBody: { values: [base] } });
+    rowIndex = rows.length + 2;
+  }
+
+  const rowRange = `${hoja}!A${rowIndex}:N${rowIndex}`;
+  const current = await sheets.spreadsheets.values.get({ spreadsheetId, range: rowRange });
+  const row = current.data.values?.[0] || new Array(HEADERS.length).fill("");
+
+  const detallePrev = row[2] || "";
+  const facturaPrev = row[3] || "";
+
+  if (rowObj.categoria === "kilometraje vehiculo") {
+    const prev = Number(row[KM_COL_INDEX] || 0);
+    row[KM_COL_INDEX] = prev + Number(rowObj.km || 0);
+  } else {
+    const col = MONEY_COL_INDEXES[rowObj.categoria];
+    const prev = Number(row[col] || 0);
+    row[col] = prev + Number(rowObj.monto || 0);
+  }
+
+  if (rowObj.detalle) row[2] = detallePrev ? `${detallePrev} | ${rowObj.detalle}` : rowObj.detalle;
+  if (rowObj.factura) row[3] = facturaPrev ? `${facturaPrev} | ${rowObj.factura}` : rowObj.factura;
+
+  let total = 0;
+  for (const colIdx of Object.values(MONEY_COL_INDEXES)) total += Number(row[colIdx] || 0);
   row[13] = total;
-  await sheets.spreadsheets.values.append({ spreadsheetId, range: `${hoja}!A1`, valueInputOption: "RAW", insertDataOption: "INSERT_ROWS", requestBody: { values: [row] } });
-  return { id, fecha, totalFila: total };
+
+  await sheets.spreadsheets.values.update({ spreadsheetId, range: rowRange, valueInputOption: "RAW", requestBody: { values: [row] } });
+
+  return { id: row[0], fecha: row[1] };
 }
 
 export async function todayTotalFor(hoja) {
@@ -107,16 +136,9 @@ export async function todayTotalFor(hoja) {
   const today = todayISODate();
   const r = await sheets.spreadsheets.values.get({ spreadsheetId, range: `${hoja}!A2:N100000` });
   const rows = r.data.values || [];
-  let total = 0;
   for (const row of rows) {
     const fecha = row[1] || "";
-    const isToday = String(fecha).slice(0, 10) === today;
-    if (!isToday) continue;
-    for (const colIdx of Object.values(MONEY_COL_INDEXES)) {
-      const v = row[colIdx];
-      const n = typeof v === "number" ? v : Number(String(v ?? "").replace(/\s+/g, "").replace(/,/g, "."));
-      total += Number.isFinite(n) ? n : 0;
-    }
+    if (String(fecha).slice(0, 10) === today) return Number(row[13] || 0);
   }
-  return total;
+  return 0;
 }

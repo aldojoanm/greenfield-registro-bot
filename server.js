@@ -1,4 +1,3 @@
-// server.js
 import "dotenv/config";
 import express from "express";
 import waRouter from "./wa.js";
@@ -6,7 +5,7 @@ import waRouter from "./wa.js";
 const app = express();
 app.disable("x-powered-by");
 app.set("trust proxy", 1);
-app.use(express.json({ limit: "2mb" }));
+app.use(express.json({ limit: "5mb" }));
 
 app.get("/", (_req, res) => res.send("OK"));
 app.get("/healthz", (_req, res) => res.json({ ok: true }));

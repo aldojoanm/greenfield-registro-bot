@@ -1,6 +1,5 @@
-// wa.js
 import express from "express";
-import { ensureEmployeeSheet, appendExpenseRow, todayTotalFor } from "./sheets.js";
+import { ensureEmployeeSheet, upsertDailyExpenseRow, todayTotalFor } from "./sheets.js";
 
 const router = express.Router();
 
@@ -8,6 +7,7 @@ const VERIFY_TOKEN = process.env.VERIFY_TOKEN || "VERIFY_123";
 const WA_TOKEN = process.env.WHATSAPP_TOKEN || "";
 const WA_PHONE_ID = process.env.WHATSAPP_PHONE_ID || "";
 const DEBUG = process.env.DEBUG_LOGS === "1";
+const log = (...a) => console.log("[WA]", ...a);
 const dbg = (...a) => { if (DEBUG) console.log("[DBG]", ...a); };
 
 const S = new Map();
@@ -16,6 +16,7 @@ const setS = (id, v) => S.set(id, v);
 
 async function waSendQ(to, payload) {
   const url = `https://graph.facebook.com/v20.0/${WA_PHONE_ID}/messages`;
+  dbg("SEND", { to, type: payload.type || payload?.interactive?.type });
   const r = await fetch(url, { method: "POST", headers: { Authorization: `Bearer ${WA_TOKEN}`, "Content-Type": "application/json" }, body: JSON.stringify(payload) });
   if (!r.ok) {
     const t = await r.text().catch(() => "");
@@ -36,19 +37,22 @@ const toList = (to, body, title, rows = []) => waSendQ(to, {
   interactive: { type: "list", body: { text: String(body).slice(0, 1024) }, action: { button: title.slice(0, 20), sections: [{ title, rows: rows.slice(0, 10).map(r => ({ id: r.payload || r.id, title: clamp(r.title ?? "", 24) })) }] } }
 });
 
-const CATEGORIAS_MONETARIAS = ["combustible", "alimentacion", "hospedaje", "peajes", "aceites", "llantas", "frenos", "otros"];
-const TODAS_CATEGORIAS = [...CATEGORIAS_MONETARIAS, "kilometraje vehiculo"];
+const CAT_MON = ["combustible","alimentacion","hospedaje","peajes","aceites","llantas","frenos","otros"];
+const CATS = [...CAT_MON, "kilometraje vehiculo"];
 
-const saludo = () => "Hola, soy el asistente de Greenfield. Registraré gastos y kilometrajes en tu hoja.";
+const saludo = () => "Hola, soy el asistente de Greenfield. Te ayudo a registrar gastos y kilometrajes.";
+
 async function pedirPersonal(to) {
   const rows = Array.from({ length: 10 }, (_, i) => ({ title: `Personal ${i + 1}`, payload: `EMP_${i + 1}` }));
   await toList(to, "Selecciona al responsable", "Elegir personal", rows);
 }
+
 async function pedirCategoria(to) {
-  const items = TODAS_CATEGORIAS.map(c => ({ title: c[0].toUpperCase() + c.slice(1), payload: `CAT_${c.toUpperCase().replace(/\s+/g, "_")}` }));
+  const items = CATS.map(c => ({ title: c[0].toUpperCase() + c.slice(1), payload: `CAT_${c.toUpperCase().replace(/\s+/g, "_")}` }));
   await toList(to, "¿Qué deseas registrar ahora?", "Seleccionar categoría", items);
 }
-async function pedirDetalle(to) { await toText(to, "Escribe una descripción breve del gasto."); }
+
+async function pedirDetalle(to) { await toText(to, "Describe brevemente el gasto."); }
 async function pedirFactura(to) { await toText(to, "Número de factura o recibo. Si no corresponde, escribe “ninguno”."); }
 async function pedirMonto(to, categoria) { if (categoria === "kilometraje vehiculo") await toText(to, "Ingresa los kilómetros recorridos (solo número)."); else await toText(to, "Ingresa el monto en bolivianos (solo número, ej.: 120.50)."); }
 function parseNumberFlexible(s = "") { const t = String(s).replace(/\s+/g, "").replace(/,/g, "."); const n = Number(t); return Number.isFinite(n) ? n : NaN; }
@@ -63,6 +67,7 @@ router.get("/wa/webhook", (req, res) => {
 
 router.post("/wa/webhook", async (req, res) => {
   try {
+    if (DEBUG) log("BODY", JSON.stringify(req.body));
     const entry = req.body?.entry?.[0];
     const change = entry?.changes?.[0];
     const value = change?.value;
@@ -158,7 +163,7 @@ router.post("/wa/webhook", async (req, res) => {
 
       if (s.etapa === "ask_categoria") {
         const t = text.toLowerCase();
-        const hit = TODAS_CATEGORIAS.find(c => t.includes(c));
+        const hit = CATS.find(c => t.includes(c));
         if (!hit) { await pedirCategoria(from); return res.sendStatus(200); }
         s.ultimaCategoria = hit;
         s.pend = { detalle: "", factura: "", monto: null, km: null };
@@ -197,7 +202,7 @@ router.post("/wa/webhook", async (req, res) => {
         if (!s.empleado) { s.etapa = "ask_personal"; setS(from, s); await pedirPersonal(from); return res.sendStatus(200); }
 
         const { detalle, factura, monto, km } = s.pend;
-        const saved = await appendExpenseRow(s.empleado, {
+        const saved = await upsertDailyExpenseRow(s.empleado, {
           detalle: s.ultimaCategoria === "kilometraje vehiculo" ? "" : detalle,
           factura: s.ultimaCategoria === "kilometraje vehiculo" ? "" : factura,
           categoria: s.ultimaCategoria,
@@ -209,10 +214,12 @@ router.post("/wa/webhook", async (req, res) => {
           `Guardado en ${s.empleado}\n` +
           `• Categoría: ${s.ultimaCategoria}\n` +
           (s.ultimaCategoria === "kilometraje vehiculo"
-            ? `• Km: ${km}\n`
-            : `• Detalle: ${detalle || "—"}\n• Fact/Rec: ${factura || "—"}\n• Monto: Bs ${monto?.toFixed(2)}\n`) +
-          `• ID: ${saved.id} — Fecha: ${saved.fecha}\n\n` +
-          `Total de hoy: Bs ${totalHoy.toFixed(2)}`;
+            ? `• Km agregados: ${km}\n`
+            : `• Monto agregado: Bs ${monto?.toFixed(2)}\n` +
+              `• Detalle: ${detalle || "—"}\n` +
+              `• Fact/Rec: ${factura || "—"}\n`) +
+          `• ID fila: ${saved.id} — Fecha: ${saved.fecha}\n` +
+          `Total acumulado hoy: Bs ${totalHoy.toFixed(2)}`;
         await toText(from, resumen);
 
         s.etapa = "ask_categoria";
