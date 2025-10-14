@@ -4,6 +4,7 @@ import {
   appendExpenseRow,
   todayTotalFor,
   todaySummary,
+  lastKm,
 } from "./sheets.js";
 
 const router = express.Router();
@@ -18,7 +19,7 @@ const dbg = (...a) => { if (DEBUG) console.log("[DBG]", ...a); };
 /* ======================= Estado ======================= */
 const S = new Map();
 const getS = (id) => {
-  if (!S.has(id)) S.set(id, { etapa: "ask_area", pageIdx: 0, flow: null });
+  if (!S.has(id)) S.set(id, { etapa: "ask_area", pageIdx: 0, flow: null, lastKm: null });
   return S.get(id);
 };
 const setS = (id, v) => S.set(id, v);
@@ -59,9 +60,9 @@ const toButtons = (to, body, buttons = []) =>
     },
   });
 
-/** Lista con paginación: WhatsApp permite máximo 10 filas en total */
+/** Lista paginada (máx 10 filas por mensaje) */
 async function toPagedList(to, { body, buttonTitle, rows, pageIdx, title }) {
-  const PAGE_SIZE = 8; // 8 opciones + Prev + Next = 10
+  const PAGE_SIZE = 8; // 8 + Prev + Next = 10
   const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
   const p = Math.min(Math.max(0, pageIdx || 0), totalPages - 1);
   const start = p * PAGE_SIZE;
@@ -88,7 +89,7 @@ async function toPagedList(to, { body, buttonTitle, rows, pageIdx, title }) {
   });
 }
 
-/* ======================= Cat/Campos ======================= */
+/* ======================= Categorías ======================= */
 const CATS = ["combustible", "alimentacion", "hospedaje", "peajes", "aceites", "llantas", "frenos", "otros"];
 
 /* ======== Prefiltro por Área + Responsables ======== */
@@ -111,9 +112,9 @@ const AREAS = {
 };
 
 const saludo = () =>
-  "Hola, soy el asistente de Greenfield. Registraré tus gastos por categoría, 1 registro = 1 fila, y calcularé el total del día.";
+  "Hola, soy el asistente de Greenfield. Registraré tus gastos por categoría (1 registro = 1 fila) y calcularé el total del día.";
 
-/* ==== UI: elegir área ==== */
+/* ==== UI ==== */
 async function pedirArea(to) {
   await toButtons(to, "Primero, elige el área:", [
     { title: "Hortifrut", payload: "AREA_HORTIFRUT" },
@@ -121,7 +122,6 @@ async function pedirArea(to) {
   ]);
 }
 
-/* ==== UI: elegir responsable con paginación ==== */
 async function pedirResponsable(to, areaKey, pageIdx = 0) {
   const key = String(areaKey || "").toUpperCase();
   const names = (AREAS[key] || []).map((n, i) => ({ id: `EMP_${i}`, title: n }));
@@ -134,7 +134,6 @@ async function pedirResponsable(to, areaKey, pageIdx = 0) {
   });
 }
 
-/* ==== UI: elegir categoría ==== */
 async function pedirCategoria(to) {
   const rows = CATS.map((c) => ({ id: `CAT_${c}`, title: c[0].toUpperCase() + c.slice(1) }));
   await toPagedList(to, {
@@ -149,7 +148,6 @@ async function pedirCategoria(to) {
 /* ============ Flujo dinámico por categoría ============ */
 function buildFlow(categoria) {
   const cat = String(categoria || "").toLowerCase();
-  // Cada paso: { key, prompt, parse? }
   if (cat === "combustible") {
     return [
       { key: "lugar", prompt: "📍 ¿Dónde cargaste combustible? (ciudad/ubicación)" },
@@ -179,6 +177,21 @@ function parseNumberFlexible(s = "") {
   const t = String(s).replace(/\s+/g, "").replace(/,/g, ".");
   const n = Number(t);
   return Number.isFinite(n) ? n : NaN;
+}
+
+/** Pregunta el paso actual, con recordatorio de KM si aplica */
+async function askCurrentStep(to, s) {
+  const step = s.flow.steps[s.flow.i];
+  if (step.key === "km") {
+    // Traer último KM y guardarlo en sesión
+    const prev = await lastKm(s.empleado);
+    s.lastKm = prev;
+    setS(to, s); // small trick: map key is phone; here we reuse "to" which is 'from'
+    const tip = prev != null ? ` (último registrado: *${prev}*)` : " (no hay KM previo)";
+    await toText(to, step.prompt + tip);
+  } else {
+    await toText(to, step.prompt);
+  }
 }
 
 /* ======================= Webhook ======================= */
@@ -222,7 +235,6 @@ router.post("/wa/webhook", async (req, res) => {
       const idU = id.toUpperCase();
       dbg("INTERACTIVE", idU, "ETAPA", s.etapa);
 
-      // Navegación de listas
       if (idU === "NAV_NEXT" && s.etapa === "ask_personal") {
         s.pageIdx = (s.pageIdx || 0) + 1;
         setS(from, s);
@@ -236,7 +248,6 @@ router.post("/wa/webhook", async (req, res) => {
         return res.sendStatus(200);
       }
 
-      // Área
       if (idU === "AREA_HORTIFRUT" || idU === "AREA_AGROINDUSTRIA") {
         s.area = idU.replace("AREA_", "");
         s.etapa = "ask_personal";
@@ -246,12 +257,12 @@ router.post("/wa/webhook", async (req, res) => {
         return res.sendStatus(200);
       }
 
-      // Responsable
       if (idU.startsWith("EMP_") && s.etapa === "ask_personal" && s.area) {
         const idx = Number(idU.replace("EMP_", "")) || 0;
         const names = AREAS[s.area] || [];
         const nombre = names[idx] || names[0] || "Responsable";
         s.empleado = await ensureEmployeeSheet(nombre);
+        s.lastKm = await lastKm(s.empleado); // precargar
         await toText(from, `Responsable seleccionado: *${nombre}*`);
         s.etapa = "ask_categoria";
         setS(from, s);
@@ -259,19 +270,13 @@ router.post("/wa/webhook", async (req, res) => {
         return res.sendStatus(200);
       }
 
-      // Categoría
       if (idU.startsWith("CAT_")) {
         const categoria = id.replace("CAT_", "").toLowerCase();
-        s.flow = {
-          categoria,
-          steps: buildFlow(categoria),
-          data: { categoria },
-          i: 0,
-        };
+        s.flow = { categoria, steps: buildFlow(categoria), data: { categoria }, i: 0 };
         s.etapa = "flow_step";
         setS(from, s);
         await toText(from, `Categoría: *${categoria[0].toUpperCase() + categoria.slice(1)}*`);
-        await toText(from, s.flow.steps[0].prompt);
+        await askCurrentStep(from, s);
         return res.sendStatus(200);
       }
 
@@ -296,7 +301,6 @@ router.post("/wa/webhook", async (req, res) => {
     /* =================== TEXTO =================== */
     if (msg.type === "text") {
       const text = (msg.text?.body || "").trim();
-      dbg("TEXT", { text, etapa: s.etapa });
 
       if (/^(menu|inicio)$/i.test(text)) {
         s.etapa = "ask_area";
@@ -304,12 +308,12 @@ router.post("/wa/webhook", async (req, res) => {
         s.empleado = null;
         s.pageIdx = 0;
         s.flow = null;
+        s.lastKm = null;
         setS(from, s);
         await pedirArea(from);
         return res.sendStatus(200);
       }
 
-      // Área por texto
       if (s.etapa === "ask_area") {
         if (/hortifrut/i.test(text)) {
           s.area = "HORTIFRUT"; s.etapa = "ask_personal"; s.pageIdx = 0; setS(from, s);
@@ -322,13 +326,13 @@ router.post("/wa/webhook", async (req, res) => {
         await pedirArea(from); return res.sendStatus(200);
       }
 
-      // Responsable por texto
       if (s.etapa === "ask_personal" && s.area) {
         const names = (AREAS[s.area] || []);
         const pickIdx = names.findIndex((n) => n.toLowerCase().includes(text.toLowerCase()));
         if (pickIdx >= 0) {
           const nombre = names[pickIdx];
           s.empleado = await ensureEmployeeSheet(nombre);
+          s.lastKm = await lastKm(s.empleado);
           await toText(from, `Responsable seleccionado: *${nombre}*`);
           s.etapa = "ask_categoria";
           setS(from, s);
@@ -339,7 +343,6 @@ router.post("/wa/webhook", async (req, res) => {
         return res.sendStatus(200);
       }
 
-      // Categoría por texto
       if (s.etapa === "ask_categoria") {
         const hit = CATS.find((c) => text.toLowerCase().includes(c));
         if (!hit) { await pedirCategoria(from); return res.sendStatus(200); }
@@ -347,11 +350,11 @@ router.post("/wa/webhook", async (req, res) => {
         s.etapa = "flow_step";
         setS(from, s);
         await toText(from, `Categoría: *${hit[0].toUpperCase() + hit.slice(1)}*`);
-        await toText(from, s.flow.steps[0].prompt);
+        await askCurrentStep(from, s);
         return res.sendStatus(200);
       }
 
-      // Recolección de pasos del flujo
+      // Recolección de pasos
       if (s.etapa === "flow_step" && s.flow) {
         const step = s.flow.steps[s.flow.i];
         const k = step.key;
@@ -363,6 +366,15 @@ router.post("/wa/webhook", async (req, res) => {
             await toText(from, k === "km" ? "Por favor envía un número válido de *kilómetros*." : "Por favor envía un *monto* válido en Bs (ej.: 120.50).");
             return res.sendStatus(200);
           }
+          if (k === "km") {
+            // Validación contra último km
+            const prev = s.lastKm ?? (s.empleado ? await lastKm(s.empleado) : null);
+            s.lastKm = prev;
+            if (prev != null && n < prev) {
+              await toText(from, `El kilometraje ingresado (*${n}*) es menor al último registrado (*${prev}*). Corrige el valor.`);
+              return res.sendStatus(200);
+            }
+          }
           val = n;
         }
         if (k === "factura" && /^ninguno$/i.test(text)) val = "";
@@ -371,7 +383,7 @@ router.post("/wa/webhook", async (req, res) => {
         s.flow.i += 1;
 
         if (s.flow.i < s.flow.steps.length) {
-          await toText(from, s.flow.steps[s.flow.i].prompt);
+          await askCurrentStep(from, s);
           setS(from, s);
           return res.sendStatus(200);
         }
@@ -379,7 +391,7 @@ router.post("/wa/webhook", async (req, res) => {
         // Fin de flujo → guardar fila
         if (!s.empleado) { s.etapa = "ask_area"; s.flow = null; setS(from, s); await pedirArea(from); return res.sendStatus(200); }
 
-        const { categoria, lugar = "", detalle = "", km = 0, factura = "", monto = 0 } = s.flow.data;
+        const { categoria, lugar = "", detalle = "", km = undefined, factura = "", monto = 0 } = s.flow.data;
         const saved = await appendExpenseRow(s.empleado, { categoria, lugar, detalle, km, factura, monto });
         const totalHoy = await todayTotalFor(s.empleado);
 
@@ -389,7 +401,7 @@ router.post("/wa/webhook", async (req, res) => {
           `• Categoría: ${prettyCat}`,
           lugar ? `• Lugar: ${lugar}` : null,
           detalle ? `• Detalle: ${detalle}` : null,
-          km ? `• Kilometraje: ${km} km` : null,
+          (km !== undefined && km !== null && String(km) !== "") ? `• Kilometraje: ${km} km` : null,
           factura ? `• Factura/Recibo: ${factura}` : "• Factura/Recibo: —",
           `• Monto: Bs ${Number(monto).toFixed(2)}`,
           `• ID: ${saved.id} — Fecha: ${saved.fecha}`,

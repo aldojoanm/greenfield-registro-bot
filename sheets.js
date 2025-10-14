@@ -69,7 +69,6 @@ export function todayISODate() {
 }
 
 /**
- * Estructura de columnas: una FILA por registro
  * A  id
  * B  fecha (YYYY-MM-DD HH:mm)
  * C  categoria
@@ -78,7 +77,7 @@ export function todayISODate() {
  * F  km
  * G  factura
  * H  monto_bs
- * I  total_dia_bs (acumulado del día)
+ * I  total_dia_bs (acumulado)
  */
 export const HEADERS = [
   "id",
@@ -123,7 +122,6 @@ export async function ensureEmployeeSheet(empleadoNombre) {
       requestBody: { values: [HEADERS] },
     });
   } else {
-    // Garantiza encabezados
     const r = await sheets.spreadsheets.values.get({
       spreadsheetId,
       range: `${title}!A1:I1`,
@@ -157,26 +155,38 @@ async function getNextId(hoja) {
   return last.length ? Math.max(...last) + 1 : 1;
 }
 
-/**
- * Inserta fila por registro. Si es el primer registro de un nuevo día,
- * inserta una FILA EN BLANCO como separador antes.
- */
+/** KM anterior no vacío (último de la hoja) */
+export async function lastKm(hoja) {
+  const sheets = await getSheets();
+  const spreadsheetId = process.env.SHEETS_SPREADSHEET_ID;
+  const r = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${hoja}!A2:I100000`,
+  });
+  const rows = r.data.values || [];
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const v = rows[i]?.[5];
+    const n = num(v);
+    if (String(v ?? "") !== "" && Number.isFinite(n) && n > 0) return n;
+  }
+  return null;
+}
+
+/** Inserta registro. Si cambia de día, inserta fila en blanco como separador. */
 export async function appendExpenseRow(
   hoja,
-  { categoria, lugar = "", detalle = "", km = 0, factura = "", monto = 0 }
+  { categoria, lugar = "", detalle = "", km = undefined, factura = "", monto = 0 }
 ) {
   const sheets = await getSheets();
   const spreadsheetId = process.env.SHEETS_SPREADSHEET_ID;
   const today = todayISODate();
 
-  // Leer todo lo necesario una vez
   const r = await sheets.spreadsheets.values.get({
     spreadsheetId,
     range: `${hoja}!A2:I100000`,
   });
   const rows = r.data.values || [];
 
-  // ¿Debemos insertar fila en blanco? (cambio de día)
   let lastDate = "";
   if (rows.length) {
     const lastRow = rows[rows.length - 1];
@@ -192,7 +202,6 @@ export async function appendExpenseRow(
     });
   }
 
-  // Calcular total del día (suma de H con fecha de hoy)
   const totalPrev = rows
     .filter((rw) => String(rw?.[1] || "").slice(0, 10) === today)
     .reduce((a, rw) => a + num(rw?.[7] || 0), 0);
@@ -200,7 +209,13 @@ export async function appendExpenseRow(
   const id = await getNextId(hoja);
   const fecha = nowDisplay();
   const montoN = num(monto);
-  const kmN = num(km);
+
+  // KM: vacío si no se proporcionó; número si sí se proporcionó
+  let kmOut = "";
+  if (km !== undefined && km !== null && String(km) !== "") {
+    kmOut = num(km);
+  }
+
   const totalDia = totalPrev + montoN;
 
   const out = [
@@ -209,7 +224,7 @@ export async function appendExpenseRow(
     String(categoria || "").toLowerCase(),
     lugar,
     detalle,
-    kmN || 0,
+    kmOut,            // ← ahora puede quedar "" (vacío)
     factura,
     montoN || 0,
     totalDia,
@@ -252,7 +267,6 @@ export async function todaySummary(hoja) {
   const todays = rows.filter((rw) => String(rw?.[1] || "").slice(0, 10) === today);
   if (!todays.length) return "Hoy no registraste gastos.";
 
-  // Agrupar por categoría
   const byCat = new Map();
   for (const rw of todays) {
     const cat = String(rw[2] || "").toLowerCase();
@@ -270,10 +284,14 @@ export async function todaySummary(hoja) {
       const lugar = rw[3] ? `@ ${rw[3]} ` : "";
       const det = rw[4] ? `— ${rw[4]} ` : "";
       const fac = rw[6] ? `(Fac ${rw[6]}) ` : "";
-      const km = num(rw[5]) ? `| ${num(rw[5])} km ` : "";
+      const km = String(rw[5] ?? "") !== "" ? `| ${num(rw[5])} km ` : "";
       return `   - ${lugar}${det}${fac}${km}Bs ${fmt(rw[7])}`;
     });
-    parts.push(`• ${cat[0].toUpperCase() + cat.slice(1)}: Bs ${fmt(totalCat)}\n${lines.join("\n")}${kmCat ? `\n   Total km ${cat}: ${kmCat} km` : ""}`);
+    parts.push(
+      `• ${cat[0].toUpperCase() + cat.slice(1)}: Bs ${fmt(totalCat)}\n${lines.join("\n")}${
+        kmCat ? `\n   Total km ${cat}: ${kmCat} km` : ""
+      }`
+    );
   }
 
   const totalDia = todays.reduce((a, rw) => a + num(rw[7] || 0), 0);
